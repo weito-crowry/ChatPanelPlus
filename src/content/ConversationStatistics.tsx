@@ -9,6 +9,7 @@ import { findComposerForm } from './conversation-statistics-send-intent.ts';
 import { AnswerCompletionSoundPlayer } from './answer-completion-sound.ts';
 import { createChromeSoundAssetRepository } from '../shared/answer-completion-sound-assets.ts';
 import { DEFAULT_COMPLETION_SOUND_ID } from '../shared/answer-completion-sound-definitions.ts';
+import { DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT } from '../shared/answer-completion-sound-volume.ts';
 import { calculateStatisticsPopoverPlacement, type StatisticsPopoverPlacement } from './conversation-statistics-popover-position.ts';
 
 const EMPTY_STATE: ConversationStatisticsViewState = {
@@ -45,6 +46,7 @@ function scanMessage(state: ConversationStatisticsViewState): string | null {
 export interface ConversationStatisticsProps {
   readonly answerCompletionSoundEnabled?: boolean;
   readonly answerCompletionSoundId?: string;
+  readonly answerCompletionSoundVolumePercent?: number;
   readonly soundTogglePending?: boolean;
   readonly soundToggleError?: string;
   readonly onToggleAnswerCompletionSound?: (enabled: boolean) => Promise<void>;
@@ -53,6 +55,7 @@ export interface ConversationStatisticsProps {
 export function ConversationStatistics({
   answerCompletionSoundEnabled = false,
   answerCompletionSoundId = DEFAULT_COMPLETION_SOUND_ID,
+  answerCompletionSoundVolumePercent = DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT,
   soundTogglePending = false,
   soundToggleError = '',
   onToggleAnswerCompletionSound,
@@ -66,6 +69,8 @@ export function ConversationStatistics({
   soundEnabled.current = answerCompletionSoundEnabled;
   const soundId = useRef(answerCompletionSoundId);
   soundId.current = answerCompletionSoundId;
+  const soundVolumePercent = useRef(answerCompletionSoundVolumePercent);
+  soundVolumePercent.current = answerCompletionSoundVolumePercent;
   const togglePending = useRef(false);
   const [localToggleError, setLocalToggleError] = useState('');
   const [optimisticEnabled, setOptimisticEnabled] = useState<boolean | null>(null);
@@ -81,6 +86,7 @@ export function ConversationStatistics({
     });
     soundPlayer.current = player;
     player.setSoundId(soundId.current);
+    player.setVolumePercent(soundVolumePercent.current);
     player.setEnabled(soundEnabled.current);
     const active = new ConversationStatisticsController({
       document,
@@ -106,6 +112,10 @@ export function ConversationStatistics({
   useEffect(() => {
     soundPlayer.current?.setSoundId(answerCompletionSoundId);
   }, [answerCompletionSoundId]);
+
+  useEffect(() => {
+    soundPlayer.current?.setVolumePercent(answerCompletionSoundVolumePercent);
+  }, [answerCompletionSoundVolumePercent]);
 
   async function toggleSound() {
     if (togglePending.current || soundTogglePending || !onToggleAnswerCompletionSound) return;

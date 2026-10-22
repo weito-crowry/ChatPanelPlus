@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { type ResolvedButton } from '../shared/default-ui';
 import { createChromeSettingsRepository, type SettingsRepository, type StoredViewState } from '../shared/settings-repository';
 import { DEFAULT_SETTINGS, type ExtensionSettings } from '../shared/settings';
+import { DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT } from '../shared/answer-completion-sound-volume.ts';
 import { captureSelectionForPaste, clearComposer, insertAtBeginning, replaceCurrentSelection, type SelectionSnapshot } from './editor/adapter';
 import { ClipboardPasteController, requiresManualPasteDialog, type ClipboardPasteResult } from './clipboard';
 import { debugPasteStrategy } from './clipboard-debug';
@@ -284,6 +285,7 @@ export function ChatPanel() {
         <ConversationStatistics
           answerCompletionSoundEnabled={soundToggleOptimistic ?? settings.answerCompletionSoundEnabled === true}
           answerCompletionSoundId={settings.answerCompletionSoundId ?? 'tone-660'}
+          answerCompletionSoundVolumePercent={settings.answerCompletionSoundVolumePercent ?? DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT}
           soundTogglePending={soundTogglePending}
           soundToggleError={soundToggleError}
           onToggleAnswerCompletionSound={(enabled) => toggleAnswerCompletionSound(enabled)}

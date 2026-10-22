@@ -21,9 +21,11 @@ import { decodeSoundData, previewCompletionSound } from '../../src/shared/answer
 interface AnswerCompletionSoundSettingsProps {
   readonly selectedSoundId: string;
   readonly enabled: boolean;
+  readonly volumePercent: number;
   readonly disabled: boolean;
   readonly onSelect: (soundId: string) => void;
   readonly onToggleEnabled: (enabled: boolean) => void;
+  readonly onVolumeChange: (volumePercent: number) => void;
   readonly onBeforeDelete: (soundId: string) => Promise<boolean>;
 }
 
@@ -57,9 +59,11 @@ function audioContextFactory(): AudioContext | undefined {
 export function AnswerCompletionSoundSettings({
   selectedSoundId,
   enabled,
+  volumePercent,
   disabled,
   onSelect,
   onToggleEnabled,
+  onVolumeChange,
   onBeforeDelete,
 }: AnswerCompletionSoundSettingsProps) {
   const repository = useMemo(() => createChromeSoundAssetRepository(), []);
@@ -124,10 +128,15 @@ export function AnswerCompletionSoundSettings({
 
   async function preview(soundId: string, asset?: SoundAsset) {
     if (busy || previewingId) return;
+    if (volumePercent === 0) {
+      setError('');
+      setMessage('音量0%のため試聴・通知音は再生されません。');
+      return;
+    }
     setPreviewingId(soundId);
     setError('');
     setMessage('');
-    const played = await previewCompletionSound(document, soundId, asset, () => audioContextFactory());
+    const played = await previewCompletionSound(document, soundId, asset, () => audioContextFactory(), volumePercent);
     setPreviewingId('');
     if (played) setMessage('試聴を開始しました。');
     else setError('試聴を開始できませんでした。ページ上の再生制限を確認してください。');
@@ -176,6 +185,24 @@ export function AnswerCompletionSoundSettings({
         ChatGPTの回答完了時に音を鳴らす
       </label>
       <p>初期状態は無効です。有効にした後、ChatGPTページで操作すると再生できるようになります。</p>
+      <div className="sound-volume-control">
+        <label htmlFor="answer-completion-sound-volume">音量</label>
+        <div className="sound-volume-control-row">
+          <input
+            id="answer-completion-sound-volume"
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={volumePercent}
+            aria-valuetext={`${volumePercent}%`}
+            disabled={disabled}
+            onChange={(event) => onVolumeChange(Number(event.currentTarget.value))}
+          />
+          <output htmlFor="answer-completion-sound-volume">{volumePercent}%</output>
+        </div>
+      </div>
+      {volumePercent === 0 && <p className="sound-settings-status" role="status">音量0%のため試聴・通知音は再生されません。</p>}
       <label className="field-label sound-select-label">
         通知音
         <select
@@ -192,7 +219,7 @@ export function AnswerCompletionSoundSettings({
       <button
         type="button"
         className="sound-preview-button"
-        disabled={disabled || busy || !!previewingId}
+        disabled={disabled || busy || !!previewingId || volumePercent === 0}
         onClick={() => { void preview(previewSoundId, selectedAsset); }}
       >{previewingId === previewSoundId ? '試聴中…' : '選択中の音を試聴'}</button>
       {selectedMissing && assetsReady && <p className="sound-settings-warning" role="status">選択音源を読み込めません。再生時は短音（660 Hz）を使用します。</p>}
@@ -220,7 +247,7 @@ export function AnswerCompletionSoundSettings({
           <li key={asset.id}>
             <span className="sound-asset-name">{asset.name}</span>
             <span className="sound-asset-size">{Math.ceil(asset.sizeBytes / 1024)} KiB</span>
-            <button type="button" disabled={disabled || busy || !!previewingId} onClick={() => { void preview(asset.id, asset); }}>
+            <button type="button" disabled={disabled || busy || !!previewingId || volumePercent === 0} onClick={() => { void preview(asset.id, asset); }}>
               {previewingId === asset.id ? '試聴中…' : '試聴'}
             </button>
             <button type="button" disabled={disabled || busy} onClick={() => { void remove(asset); }}>削除</button>

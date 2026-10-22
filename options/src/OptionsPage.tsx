@@ -9,6 +9,7 @@ import {
 } from '../../src/shared/default-ui';
 import { createChromeSettingsRepository } from '../../src/shared/settings-repository';
 import { DEFAULT_COMPLETION_SOUND_ID } from '../../src/shared/answer-completion-sound-definitions.ts';
+import { DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT } from '../../src/shared/answer-completion-sound-volume.ts';
 import { CustomButtonCreator } from './CustomButtonCreator';
 import { AnswerCompletionSoundSettings } from './AnswerCompletionSoundSettings';
 import { prepareSoundAssetDeletion } from './answer-completion-sound-actions.ts';
@@ -126,6 +127,11 @@ export function OptionsPage() {
 
   function updateAnswerCompletionSoundId(soundId: string) {
     setDraft((current) => ({ ...current, answerCompletionSoundId: soundId }));
+    setStatus('未保存の変更があります。');
+  }
+
+  function updateAnswerCompletionSoundVolume(volumePercent: number) {
+    setDraft((current) => ({ ...current, answerCompletionSoundVolumePercent: volumePercent }));
     setStatus('未保存の変更があります。');
   }
 
@@ -400,9 +406,11 @@ export function OptionsPage() {
         <AnswerCompletionSoundSettings
           selectedSoundId={draft.answerCompletionSoundId ?? DEFAULT_COMPLETION_SOUND_ID}
           enabled={draft.answerCompletionSoundEnabled === true}
+          volumePercent={draft.answerCompletionSoundVolumePercent ?? DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT}
           disabled={!ready || saving}
           onSelect={updateAnswerCompletionSoundId}
           onToggleEnabled={updateAnswerCompletionSound}
+          onVolumeChange={updateAnswerCompletionSoundVolume}
           onBeforeDelete={prepareAnswerCompletionSoundDeletion}
         />
       </fieldset>

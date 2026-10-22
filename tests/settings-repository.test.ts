@@ -138,6 +138,7 @@ test('同時の別Options設定はWeb Lockで直列化され、異なるfield変
   assert.equal(results.every(({ ok }) => ok), true);
   assert.deepEqual(fake.data[CONFIG_STORAGE_KEY], {
     schemaVersion: 1,
+    answerCompletionSoundVolumePercent: 60,
     buttonOverrides: { 'full-btn': { label: '左', color: '#123456' } },
   });
   assert.deepEqual(locks.names, ['chatPanelPlus.config.write', 'chatPanelPlus.config.write']);
@@ -157,7 +158,10 @@ test('回答完了音の設定を保存・再読込し、既定値への全置�
   assert.equal((await repository.saveSettings(loaded.settings, DEFAULT_SETTINGS, { replaceKnownFields: true })).ok, true);
   const reset = await repository.loadSettings();
   assert.equal(reset.ok, true);
-  if (reset.ok) assert.equal(reset.settings.answerCompletionSoundEnabled ?? false, false);
+  if (reset.ok) {
+    assert.equal(reset.settings.answerCompletionSoundEnabled ?? false, false);
+    assert.equal(reset.settings.answerCompletionSoundVolumePercent, 60);
+  }
 });
 
 test('選択音を保存して再読込し、同じ項目の競合は外部値を保持する', async () => {
@@ -174,6 +178,23 @@ test('選択音を保存して再読込し、同じ項目の競合は外部値�
   fake.data[CONFIG_STORAGE_KEY] = external;
   const conflict = await repository.saveSettings(loaded.settings, { ...loaded.settings, answerCompletionSoundId: 'tone-660' });
   assert.deepEqual(conflict, { ok: false, reason: 'conflict', fields: ['answerCompletionSoundId'] });
+  assert.deepEqual(fake.data[CONFIG_STORAGE_KEY], external);
+});
+
+test('音量を保存・再読込し、同じ音量fieldの競合は外部値を保持する', async () => {
+  const fake = storage();
+  const repository = new SettingsRepository(fake.area);
+  const selected = { ...DEFAULT_SETTINGS, answerCompletionSoundVolumePercent: 42 };
+  assert.equal((await repository.saveSettings(DEFAULT_SETTINGS, selected)).ok, true);
+  const loaded = await repository.loadSettings();
+  assert.equal(loaded.ok, true);
+  if (!loaded.ok) return;
+  assert.equal(loaded.settings.answerCompletionSoundVolumePercent, 42);
+
+  const external = { ...loaded.settings, answerCompletionSoundVolumePercent: 81 };
+  fake.data[CONFIG_STORAGE_KEY] = external;
+  const conflict = await repository.saveSettings(loaded.settings, { ...loaded.settings, answerCompletionSoundVolumePercent: 19 });
+  assert.deepEqual(conflict, { ok: false, reason: 'conflict', fields: ['answerCompletionSoundVolumePercent'] });
   assert.deepEqual(fake.data[CONFIG_STORAGE_KEY], external);
 });
 
@@ -203,6 +224,7 @@ test('Web Locksが使えない場合も逐次保存は最新値へfield単位で
   assert.equal((await repository.saveSettings(DEFAULT_SETTINGS, second)).ok, true);
   assert.deepEqual(fake.data[CONFIG_STORAGE_KEY], {
     schemaVersion: 1,
+    answerCompletionSoundVolumePercent: 60,
     buttonOverrides: { 'full-btn': { label: '左', color: '#123456' } },
   });
 });

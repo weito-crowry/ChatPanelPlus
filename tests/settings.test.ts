@@ -10,7 +10,7 @@ import {
 import { DEFAULT_BUTTONS } from '../src/shared/default-ui.ts';
 
 test('the default settings use the current schema version', () => {
-  assert.deepEqual(DEFAULT_SETTINGS, { schemaVersion: 1 });
+  assert.deepEqual(DEFAULT_SETTINGS, { schemaVersion: 1, answerCompletionSoundVolumePercent: 60 });
   assert.equal(isExtensionSettings(DEFAULT_SETTINGS), true);
 });
 
@@ -54,7 +54,10 @@ test('JSON import/exportは設定だけ往復し、不正JSONと未知schemaを�
 test('回答完了音はschema 1の旧設定でOFFとなり、boolean値だけをJSON往復する', () => {
   const oldSettings = validateExtensionSettings({ schemaVersion: 1 });
   assert.equal(oldSettings.ok, true);
-  if (oldSettings.ok) assert.equal(oldSettings.settings.answerCompletionSoundEnabled ?? false, false);
+  if (oldSettings.ok) {
+    assert.equal(oldSettings.settings.answerCompletionSoundEnabled ?? false, false);
+    assert.equal(oldSettings.settings.answerCompletionSoundVolumePercent ?? DEFAULT_SETTINGS.answerCompletionSoundVolumePercent, 60);
+  }
 
   const enabled = parseSettingsJson(serializeSettings({ schemaVersion: 1, answerCompletionSoundEnabled: true }));
   assert.equal(enabled.ok, true);
@@ -69,4 +72,21 @@ test('選択音IDはschema 1の既存設定とJSONで往復し、不明なIDを�
   if (parsed.ok) assert.equal(parsed.settings.answerCompletionSoundId, 'soft-chime');
   assert.equal(validateExtensionSettings({ schemaVersion: 1, answerCompletionSoundId: 'unknown' }).ok, false);
   assert.equal(validateExtensionSettings({ schemaVersion: 1, answerCompletionSoundId: 'user-00000000-0000-4000-8000-000000000001' }).ok, true);
+});
+
+test('回答完了音の音量は旧設定を保ちつつ整数0〜100だけを受け入れてJSON往復する', () => {
+  const oldSettings = parseSettingsJson('{"schemaVersion":1}');
+  assert.equal(oldSettings.ok, true);
+  if (oldSettings.ok) assert.equal(oldSettings.settings.answerCompletionSoundVolumePercent, undefined);
+
+  for (const volume of [0, 100]) {
+    assert.equal(validateExtensionSettings({ schemaVersion: 1, answerCompletionSoundVolumePercent: volume }).ok, true);
+  }
+  for (const volume of [-1, 101, 40.5, Number.NaN, Number.POSITIVE_INFINITY, '40', null]) {
+    assert.equal(validateExtensionSettings({ schemaVersion: 1, answerCompletionSoundVolumePercent: volume }).ok, false);
+  }
+
+  const parsed = parseSettingsJson(serializeSettings({ schemaVersion: 1, answerCompletionSoundVolumePercent: 37 }));
+  assert.equal(parsed.ok, true);
+  if (parsed.ok) assert.equal(parsed.settings.answerCompletionSoundVolumePercent, 37);
 });

@@ -62,6 +62,7 @@ function settingPaths(): string[][] {
   paths.push(['tabOrder']);
   paths.push(['answerCompletionSoundEnabled']);
   paths.push(['answerCompletionSoundId']);
+  paths.push(['answerCompletionSoundVolumePercent']);
   return paths;
 }
 

@@ -43,11 +43,34 @@ test('Optionsで内蔵音とユーザー音源を試聴・追加・選択・確�
   assert.doesNotMatch(component, /dangerouslySetInnerHTML/);
 });
 
+test('Optionsの音量rangeは値を表示し、previewにdraft値を渡し、0%で再生できないと示す', async () => {
+  const [component, options, panel] = await Promise.all([
+    read('../options/src/AnswerCompletionSoundSettings.tsx'),
+    read('../options/src/OptionsPage.tsx'),
+    read('../src/content/Panel.tsx'),
+  ]);
+  assert.match(component, /type="range"/);
+  assert.match(component, /min=\{0\}/);
+  assert.match(component, /max=\{100\}/);
+  assert.match(component, /step=\{1\}/);
+  assert.match(component, /htmlFor="answer-completion-sound-volume"/);
+  assert.match(component, /aria-valuetext=\{`\$\{volumePercent\}%`\}/);
+  assert.match(component, /\{volumePercent\}%/);
+  assert.match(component, /音量0%のため試聴・通知音は再生されません/);
+  assert.match(component, /previewCompletionSound\(document, soundId, asset, \(\) => audioContextFactory\(\), volumePercent\)/);
+  assert.ok(options.includes('volumePercent={draft.answerCompletionSoundVolumePercent ?? DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT}'));
+  assert.ok(options.includes('onVolumeChange={updateAnswerCompletionSoundVolume}'));
+  assert.ok(options.includes('answerCompletionSoundVolumePercent: volumePercent'));
+  assert.ok(panel.includes('answerCompletionSoundVolumePercent={settings.answerCompletionSoundVolumePercent ?? DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT}'));
+});
+
 test('音声プレイヤー・完了Trackerは統計UIの再マウント時に破棄され、二重登録しない', async () => {
   const component = await read('../src/content/ConversationStatistics.tsx');
   assert.match(component, /active.stop\(\);\s*player.dispose\(\);/);
   assert.match(component, /new ConversationStatisticsController/);
   assert.match(component, /player\.setSoundId\(soundId\.current\)/);
+  assert.ok(component.includes('player.setVolumePercent(soundVolumePercent.current)'));
   assert.ok(component.includes('soundPlayer.current?.setSoundId(answerCompletionSoundId)'));
+  assert.ok(component.includes('soundPlayer.current?.setVolumePercent(answerCompletionSoundVolumePercent)'));
   assert.ok(component.includes('soundPlayer.current?.setEnabled(answerCompletionSoundEnabled)'));
 });

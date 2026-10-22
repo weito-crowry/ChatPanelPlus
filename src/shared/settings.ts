@@ -7,6 +7,11 @@ import {
   type TabId,
 } from './default-ui.ts';
 import { isBuiltinCompletionSoundId, isUserCompletionSoundId } from './answer-completion-sound-definitions.ts';
+import {
+  DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT,
+  MAX_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT,
+  MIN_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT,
+} from './answer-completion-sound-volume.ts';
 
 export const SETTINGS_SCHEMA_VERSION = 1 as const;
 
@@ -26,6 +31,7 @@ export type ExtensionSettings = Readonly<{
   tabOrder?: readonly string[];
   answerCompletionSoundEnabled?: boolean;
   answerCompletionSoundId?: string;
+  answerCompletionSoundVolumePercent?: number;
   customButtons?: Readonly<Record<CustomButtonId, CustomButtonDefinition>>;
   [key: string]: unknown;
 }>;
@@ -37,6 +43,7 @@ export type SettingsValidationResult =
 
 export const DEFAULT_SETTINGS: ExtensionSettings = Object.freeze({
   schemaVersion: SETTINGS_SCHEMA_VERSION,
+  answerCompletionSoundVolumePercent: DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT,
 });
 
 const BUTTON_IDS = new Set<string>(DEFAULT_BUTTONS.map(({ id }) => id));
@@ -170,6 +177,13 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
   if (value.answerCompletionSoundId !== undefined
     && (typeof value.answerCompletionSoundId !== 'string'
       || (!isBuiltinCompletionSoundId(value.answerCompletionSoundId) && !isUserCompletionSoundId(value.answerCompletionSoundId)))) {
+    return settingsError('invalid-settings');
+  }
+  if (value.answerCompletionSoundVolumePercent !== undefined
+    && (typeof value.answerCompletionSoundVolumePercent !== 'number'
+      || !Number.isInteger(value.answerCompletionSoundVolumePercent)
+      || value.answerCompletionSoundVolumePercent < MIN_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT
+      || value.answerCompletionSoundVolumePercent > MAX_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT)) {
     return settingsError('invalid-settings');
   }
   return {

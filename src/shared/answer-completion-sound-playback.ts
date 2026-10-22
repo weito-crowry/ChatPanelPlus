@@ -1,5 +1,10 @@
 import { DEFAULT_COMPLETION_SOUND_ID, findBuiltinCompletionSound, isBuiltinCompletionSoundId } from './answer-completion-sound-definitions.ts';
 import type { SoundAsset, SoundFileLike } from './answer-completion-sound-assets.ts';
+import {
+  answerCompletionSoundGain,
+  DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT,
+  SILENT_RAMP_GAIN,
+} from './answer-completion-sound-volume.ts';
 
 export type AudioContextFactory = () => AudioContext | undefined;
 
@@ -52,9 +57,9 @@ function playBuiltin(context: AudioContext, soundId: string, volume: number): bo
       const start = now + tone.offsetSeconds;
       oscillator.type = 'sine';
       oscillator.frequency.setValueAtTime(tone.frequency, start);
-      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.setValueAtTime(SILENT_RAMP_GAIN, start);
       gain.gain.exponentialRampToValueAtTime(volume, start + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + tone.durationSeconds);
+      gain.gain.exponentialRampToValueAtTime(SILENT_RAMP_GAIN, start + tone.durationSeconds);
       oscillator.connect(gain);
       gain.connect(context.destination);
       oscillator.start(start);
@@ -89,7 +94,10 @@ export async function previewCompletionSound(
   soundId: string,
   asset: SoundAsset | undefined,
   contextFactory: AudioContextFactory = () => createDocumentAudioContext(document),
+  volumePercent = DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT,
 ): Promise<boolean> {
+  const gain = answerCompletionSoundGain(volumePercent);
+  if (gain === 0) return false;
   let context: AudioContext | undefined;
   try {
     context = contextFactory();
@@ -100,12 +108,12 @@ export async function previewCompletionSound(
     if (asset && asset.id === soundId) {
       try {
         const buffer = await context.decodeAudioData(base64ToArrayBuffer(asset.data));
-        if (playBuffer(context, buffer, 0.045)) return true;
+        if (playBuffer(context, buffer, gain)) return true;
       } catch {
         // Invalid custom data previews as the stable built-in default.
       }
     }
-    const played = playBuiltin(context, isBuiltinCompletionSoundId(soundId) ? soundId : DEFAULT_COMPLETION_SOUND_ID, 0.045);
+    const played = playBuiltin(context, isBuiltinCompletionSoundId(soundId) ? soundId : DEFAULT_COMPLETION_SOUND_ID, gain);
     if (!played) closeContext(context);
     return played;
   } catch {

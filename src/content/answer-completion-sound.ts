@@ -1,6 +1,11 @@
 import type { AssistantTurnState, TurnIdentity } from './conversation-statistics-dom.ts';
 import { DEFAULT_COMPLETION_SOUND_ID, findBuiltinCompletionSound, isBuiltinCompletionSoundId } from '../shared/answer-completion-sound-definitions.ts';
 import type { SoundAsset } from '../shared/answer-completion-sound-assets.ts';
+import {
+  answerCompletionSoundGain,
+  DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT,
+  SILENT_RAMP_GAIN,
+} from '../shared/answer-completion-sound-volume.ts';
 import { createDocumentAudioContext } from '../shared/answer-completion-sound-playback.ts';
 
 export interface AnswerCompletionEvent {
@@ -63,6 +68,7 @@ export class AnswerCompletionSoundPlayer {
   private enabled = false;
   private context: AudioContext | null = null;
   private soundId = DEFAULT_COMPLETION_SOUND_ID;
+  private volumePercent = DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT;
   private playbackRevision = 0;
 
   constructor(
@@ -78,6 +84,12 @@ export class AnswerCompletionSoundPlayer {
   setSoundId(soundId: string): void {
     if (this.soundId === soundId) return;
     this.soundId = soundId;
+    this.playbackRevision += 1;
+  }
+
+  setVolumePercent(volumePercent: number): void {
+    if (this.volumePercent === volumePercent) return;
+    this.volumePercent = volumePercent;
     this.playbackRevision += 1;
   }
 
@@ -106,7 +118,7 @@ export class AnswerCompletionSoundPlayer {
 
   play(): void {
     const context = this.context;
-    if (!this.enabled || !context || context.state !== 'running') return;
+    if (!this.enabled || answerCompletionSoundGain(this.volumePercent) === 0 || !context || context.state !== 'running') return;
     const soundId = this.soundId;
     if (isBuiltinCompletionSoundId(soundId)) {
       this.playBuiltin(context, soundId);
@@ -147,7 +159,7 @@ export class AnswerCompletionSoundPlayer {
       const source = context.createBufferSource();
       const gain = context.createGain();
       source.buffer = buffer;
-      gain.gain.setValueAtTime(0.045, context.currentTime);
+      gain.gain.setValueAtTime(answerCompletionSoundGain(this.volumePercent), context.currentTime);
       source.connect(gain);
       gain.connect(context.destination);
       source.start(context.currentTime);
@@ -163,6 +175,8 @@ export class AnswerCompletionSoundPlayer {
 
   private playBuiltin(context: AudioContext, soundId: string): void {
     const sound = findBuiltinCompletionSound(soundId);
+    const peak = answerCompletionSoundGain(this.volumePercent);
+    if (peak === 0) return;
     try {
       const now = context.currentTime;
       for (const tone of sound.tones) {
@@ -171,9 +185,9 @@ export class AnswerCompletionSoundPlayer {
         const start = now + tone.offsetSeconds;
         oscillator.type = 'sine';
         oscillator.frequency.setValueAtTime(tone.frequency, start);
-        gain.gain.setValueAtTime(0.0001, start);
-        gain.gain.exponentialRampToValueAtTime(0.045, start + 0.01);
-        gain.gain.exponentialRampToValueAtTime(0.0001, start + tone.durationSeconds);
+        gain.gain.setValueAtTime(SILENT_RAMP_GAIN, start);
+        gain.gain.exponentialRampToValueAtTime(peak, start + 0.01);
+        gain.gain.exponentialRampToValueAtTime(SILENT_RAMP_GAIN, start + tone.durationSeconds);
         oscillator.connect(gain);
         gain.connect(context.destination);
         oscillator.start(start);

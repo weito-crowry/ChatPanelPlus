@@ -141,7 +141,7 @@ test('選択した内蔵音の音程と通知向け音量を使い、ユーザ�
   player.setSoundId('two-tone');
   player.play();
   assert.deepEqual(frequencies, [587.33, 783.99]);
-  assert.ok(peaks.every((volume) => volume <= 0.045));
+  assert.deepEqual(peaks.filter((volume) => volume > 0.001), [0.18, 0.18]);
   player.dispose();
 
   frequencies.length = 0;
@@ -154,6 +154,59 @@ test('選択した内蔵音の音程と通知向け音量を使い、ユーザ�
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(frequencies, [660]);
   fallback.dispose();
+});
+
+test('通知音とユーザー音源は既定音量または指定音量を共有する', async () => {
+  const target = new EventTarget();
+  const peaks: number[] = [];
+  const context = {
+    state: 'running', currentTime: 0, destination: {},
+    close() { this.state = 'closed'; return Promise.resolve(); },
+    async decodeAudioData() { return { duration: 0.4 } as AudioBuffer; },
+    createOscillator() {
+      return { type: 'sine', frequency: { setValueAtTime() {} }, connect() {}, start() {}, stop() {} };
+    },
+    createBufferSource() { return { buffer: null, connect() {}, start() {} }; },
+    createGain() {
+      return { gain: { setValueAtTime(value: number) { if (value > 0.001) peaks.push(value); }, exponentialRampToValueAtTime(value: number) { if (value > 0.001) peaks.push(value); } }, connect() {} };
+    },
+  };
+  const selected = 'user-00000000-0000-4000-8000-000000000001';
+  const player = new AnswerCompletionSoundPlayer(
+    target as Document,
+    () => context as unknown as AudioContext,
+    async (id) => ({ id, name: 'notice.wav', mimeType: 'audio/wav', data: 'AA==', sizeBytes: 1, durationSeconds: 0.4 }),
+  );
+  player.setEnabled(true);
+  const gesture = new Event('pointerdown');
+  Object.defineProperty(gesture, 'isTrusted', { value: true });
+  target.dispatchEvent(gesture);
+  player.setSoundId(selected);
+  player.setVolumePercent(40);
+  player.play();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(peaks, [0.12]);
+  player.dispose();
+
+  context.state = 'running';
+  peaks.length = 0;
+  const builtin = new AnswerCompletionSoundPlayer(target as Document, () => context as unknown as AudioContext);
+  builtin.setEnabled(true);
+  target.dispatchEvent(gesture);
+  builtin.setVolumePercent(40);
+  builtin.play();
+  assert.deepEqual(peaks.filter((volume) => volume > 0.001), [0.12]);
+  builtin.dispose();
+
+  context.state = 'running';
+  peaks.length = 0;
+  const muted = new AnswerCompletionSoundPlayer(target as Document, () => context as unknown as AudioContext);
+  muted.setEnabled(true);
+  muted.setVolumePercent(0);
+  target.dispatchEvent(gesture);
+  muted.play();
+  assert.deepEqual(peaks, []);
+  muted.dispose();
 });
 
 test('ユーザー音源はAudioContextでデコードして再生し、設定変更後の遅延ロードは破棄する', async () => {
@@ -220,6 +273,38 @@ test('Optionsの明示試聴はミュート設定と独立し、クリック処�
   assert.equal(resumes, 1);
   assert.equal(await preview, true);
   assert.equal(starts, 1);
+});
+
+test('内蔵音とユーザー音源の試聴は同じdraft音量をgainへ適用する', async () => {
+  const target = new EventTarget();
+  const peaks: number[] = [];
+  const makeContext = () => ({
+    state: 'running', currentTime: 0, destination: {},
+    resume() { return Promise.resolve(); },
+    close() { this.state = 'closed'; return Promise.resolve(); },
+    async decodeAudioData() { return { duration: 0.4 } as AudioBuffer; },
+    createOscillator() {
+      return { type: 'sine', frequency: { setValueAtTime() {} }, connect() {}, start() {}, stop() {} };
+    },
+    createBufferSource() { return { buffer: null, connect() {}, start() {} }; },
+    createGain() {
+      return { gain: { setValueAtTime(value: number) { if (value > 0.001) peaks.push(value); }, exponentialRampToValueAtTime(value: number) { if (value > 0.001) peaks.push(value); } }, connect() {} };
+    },
+  });
+  assert.equal(await previewCompletionSound(target as Document, 'tone-660', undefined, () => makeContext() as unknown as AudioContext, 40), true);
+  assert.deepEqual(peaks, [0.12]);
+
+  peaks.length = 0;
+  const asset = { id: 'user-00000000-0000-4000-8000-000000000001', name: 'notice.wav', mimeType: 'audio/wav' as const, data: 'AA==', sizeBytes: 1, durationSeconds: 0.4 };
+  assert.equal(await previewCompletionSound(target as Document, asset.id, asset, () => makeContext() as unknown as AudioContext, 40), true);
+  assert.deepEqual(peaks, [0.12]);
+
+  let zeroVolumeContextCalls = 0;
+  assert.equal(await previewCompletionSound(target as Document, 'tone-660', undefined, () => {
+    zeroVolumeContextCalls += 1;
+    return makeContext() as unknown as AudioContext;
+  }, 0), false);
+  assert.equal(zeroVolumeContextCalls, 0);
 });
 
 test('Conversation Statisticsの既存Observerから識別済み完了サイクルを一度だけ通知する', async () => {

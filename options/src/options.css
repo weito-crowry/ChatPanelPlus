@@ -69,6 +69,11 @@ h1 {
 .sound-settings .tab-visibility { margin-top: 0; }
 .sound-select-label { max-width: 420px; }
 .sound-select-label select { width: 100%; padding: 8px 10px; border: 1px solid #c7c8cc; border-radius: 6px; background: #fff; color: inherit; font: inherit; }
+.sound-volume-control { display: grid; gap: 6px; max-width: 420px; font-size: 13px; font-weight: 600; }
+.sound-volume-control-row { display: grid; grid-template-columns: minmax(160px, 1fr) 48px; align-items: center; gap: 12px; }
+.sound-volume-control-row input[type="range"] { width: 100%; accent-color: #3157a4; cursor: pointer; }
+.sound-volume-control-row input[type="range"]:disabled { cursor: not-allowed; }
+.sound-volume-control-row output { text-align: right; font-variant-numeric: tabular-nums; }
 .sound-preview-button,
 .sound-asset-list button,
 .sound-file-picker { width: fit-content; padding: 7px 12px; border: 1px solid #d2d3d6; border-radius: 7px; background: #fff; color: inherit; font: inherit; cursor: pointer; }
