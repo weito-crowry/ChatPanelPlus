@@ -69,14 +69,41 @@ test('音源は拡張子、MIME、シグネチャ、デコード可否、再生�
   assert.deepEqual(await prepareSoundAsset(file('notice.wav', wavBytes(), 'audio/wav'), async () => { throw new Error('decode'); }), {
     ok: false, reason: 'unplayable-audio',
   });
-  assert.deepEqual(await prepareSoundAsset(file('long.wav', wavBytes(), 'audio/wav'), async () => ({ duration: 5.1 })), {
+  for (const duration of [5.1, 10]) {
+    const accepted = await prepareSoundAsset(file('long.wav', wavBytes(), 'audio/wav'), async () => ({ duration }));
+    assert.equal(accepted.ok, true, `${duration}秒の音源を受け入れる`);
+    if (accepted.ok) assert.equal(accepted.asset.durationSeconds, duration);
+  }
+  assert.deepEqual(await prepareSoundAsset(file('long.wav', wavBytes(), 'audio/wav'), async () => ({ duration: 10.1 })), {
     ok: false, reason: 'duration-limit',
   });
+  for (const duration of [0, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+    assert.deepEqual(await prepareSoundAsset(file('invalid.wav', wavBytes(), 'audio/wav'), async () => ({ duration })), {
+      ok: false, reason: 'unplayable-audio',
+    });
+  }
 
   const mp3 = new Uint8Array([0x49, 0x44, 0x33, 0x04, 0x00]);
   const ogg = new Uint8Array([0x4f, 0x67, 0x67, 0x53, 0x00]);
   assert.equal((await prepareSoundAsset(file('notice.mp3', mp3, 'audio/mpeg'), decode)).ok, true);
   assert.equal((await prepareSoundAsset(file('notice.ogg', ogg, 'audio/ogg'), decode)).ok, true);
+});
+
+test('保存音源は10秒を受け入れ、10秒超過や不正な再生時間を壊れたデータとして拒否する', async () => {
+  const prepared = await prepareSoundAsset(file('notice.wav', wavBytes(), 'audio/wav'), async () => ({ duration: 10 }));
+  assert.equal(prepared.ok, true);
+  if (!prepared.ok) return;
+
+  const asset = { id: 'user-00000000-0000-4000-8000-000000000001', ...prepared.asset };
+  const validStorage = fakeStorage({ [SOUND_ASSETS_STORAGE_KEY]: [asset] });
+  assert.deepEqual(await new SoundAssetRepository(validStorage.area).loadAssets(), { ok: true, assets: [asset] });
+
+  for (const durationSeconds of [0, 10.1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const corruptStorage = fakeStorage({ [SOUND_ASSETS_STORAGE_KEY]: [{ ...asset, durationSeconds }] });
+    assert.deepEqual(await new SoundAssetRepository(corruptStorage.area).loadAssets(), {
+      ok: false, reason: 'corrupt-assets',
+    });
+  }
 });
 
 test('サイズ上限超過ファイルはデコード前に拒否する', async () => {

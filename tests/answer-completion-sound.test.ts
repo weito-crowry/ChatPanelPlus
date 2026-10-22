@@ -307,6 +307,123 @@ test('内蔵音とユーザー音源の試聴は同じdraft音量をgainへ適�
   assert.equal(zeroVolumeContextCalls, 0);
 });
 
+test('10秒ユーザー音源を通知・試聴でき、試聴の非常用タイマーは再生長に合わせる', async () => {
+  const target = new EventTarget();
+  const asset = {
+    id: 'user-00000000-0000-4000-8000-000000000001',
+    name: 'notice.wav', mimeType: 'audio/wav' as const, data: 'AA==', sizeBytes: 1, durationSeconds: 10,
+  };
+  let notificationStarts = 0;
+  let notificationStops = 0;
+  let resolveNotificationStart: (() => void) | undefined;
+  const notificationStarted = new Promise<void>((resolve) => { resolveNotificationStart = resolve; });
+  const notificationSource = {
+    buffer: null as AudioBuffer | null,
+    onended: null as (() => void) | null,
+    connect() {},
+    start() { notificationStarts += 1; resolveNotificationStart?.(); },
+    stop() { notificationStops += 1; },
+  };
+  const notificationContext = {
+    state: 'running', currentTime: 0, destination: {},
+    async decodeAudioData() { return { duration: 10 } as AudioBuffer; },
+    createBufferSource() { return notificationSource; },
+    createGain() { return { gain: { setValueAtTime() {} }, connect() {} }; },
+    close() { this.state = 'closed'; return Promise.resolve(); },
+  };
+  const player = new AnswerCompletionSoundPlayer(
+    target as Document,
+    () => notificationContext as unknown as AudioContext,
+    async () => asset,
+  );
+  player.setEnabled(true);
+  const gesture = new Event('pointerdown');
+  Object.defineProperty(gesture, 'isTrusted', { value: true });
+  target.dispatchEvent(gesture);
+  player.setSoundId(asset.id);
+  player.play();
+  await notificationStarted;
+  assert.equal(notificationSource.buffer?.duration, 10);
+  assert.equal(notificationStarts, 1);
+  assert.equal(notificationStops, 0);
+  player.dispose();
+
+  let timeoutDelay: number | undefined;
+  const previewSource = {
+    buffer: null as AudioBuffer | null,
+    onended: null as (() => void) | null,
+    connect() {},
+    start() {},
+  };
+  const previewContext = {
+    state: 'running', currentTime: 0, destination: {},
+    async decodeAudioData() { return { duration: 10 } as AudioBuffer; },
+    createBufferSource() { return previewSource; },
+    createGain() { return { gain: { setValueAtTime() {} }, connect() {} }; },
+    close() { return Promise.resolve(); },
+  };
+  const originalSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = ((callback: TimerHandler, delay?: number) => {
+    void callback;
+    timeoutDelay = delay;
+    return 1 as unknown as ReturnType<typeof globalThis.setTimeout>;
+  }) as unknown as typeof globalThis.setTimeout;
+  let previewed: boolean;
+  try {
+    previewed = await previewCompletionSound(target as Document, asset.id, asset, () => previewContext as unknown as AudioContext);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+  }
+  assert.equal(previewed, true);
+  assert.equal(previewSource.buffer?.duration, 10);
+  assert.equal(timeoutDelay, 10_500);
+});
+
+test('試聴音源のonendedとcleanup timerが競合してもContextを一度だけ閉じる', async () => {
+  const target = new EventTarget();
+  const asset = {
+    id: 'user-00000000-0000-4000-8000-000000000001',
+    name: 'notice.wav', mimeType: 'audio/wav' as const, data: 'AA==', sizeBytes: 1, durationSeconds: 10,
+  };
+  let closeCalls = 0;
+  let timerCallback: (() => void) | undefined;
+  let timeoutCleared = false;
+  const source = {
+    buffer: null as AudioBuffer | null,
+    onended: null as (() => void) | null,
+    connect() {},
+    start() {},
+  };
+  const context = {
+    state: 'running', currentTime: 0, destination: {},
+    async decodeAudioData() { return { duration: 10 } as AudioBuffer; },
+    createBufferSource() { return source; },
+    createGain() { return { gain: { setValueAtTime() {} }, connect() {} }; },
+    close() { closeCalls += 1; return Promise.resolve(); },
+  };
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  globalThis.setTimeout = ((callback: TimerHandler) => {
+    if (typeof callback === 'function') timerCallback = callback as () => void;
+    return 1 as unknown as ReturnType<typeof globalThis.setTimeout>;
+  }) as unknown as typeof globalThis.setTimeout;
+  globalThis.clearTimeout = ((timeout: ReturnType<typeof globalThis.setTimeout>) => {
+    timeoutCleared = timeout === 1 as unknown as ReturnType<typeof globalThis.setTimeout>;
+  }) as typeof globalThis.clearTimeout;
+  let previewed: boolean;
+  try {
+    previewed = await previewCompletionSound(target as Document, asset.id, asset, () => context as unknown as AudioContext);
+    source.onended?.();
+    timerCallback?.();
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  }
+  assert.equal(previewed, true);
+  assert.equal(closeCalls, 1);
+  assert.equal(timeoutCleared, true);
+});
+
 test('Conversation Statisticsの既存Observerから識別済み完了サイクルを一度だけ通知する', async () => {
   const completions: Array<{ turnKey: string; assistantMessageId: string }> = [];
   const h = harness('/c/sound-conversation', false, createStatisticsStore(), {

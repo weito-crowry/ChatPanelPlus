@@ -1,4 +1,5 @@
 import { DEFAULT_COMPLETION_SOUND_ID, findBuiltinCompletionSound, isBuiltinCompletionSoundId } from './answer-completion-sound-definitions.ts';
+import { MAX_SOUND_ASSET_DURATION_SECONDS } from './answer-completion-sound-assets.ts';
 import type { SoundAsset, SoundFileLike } from './answer-completion-sound-assets.ts';
 import {
   answerCompletionSoundGain,
@@ -35,8 +36,15 @@ function closeContext(context: AudioContext): void {
 }
 
 function addAudioEndCleanup(context: AudioContext, source: AudioBufferSourceNode | OscillatorNode, duration: number): void {
-  source.onended = () => closeContext(context);
-  globalThis.setTimeout(() => closeContext(context), Math.ceil((duration + 0.5) * 1_000));
+  let cleanedUp = false;
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    globalThis.clearTimeout(timeout);
+    closeContext(context);
+  };
+  const timeout = globalThis.setTimeout(cleanup, Math.ceil((duration + 0.5) * 1_000));
+  source.onended = cleanup;
 }
 
 function base64ToArrayBuffer(value: string): ArrayBuffer {
@@ -82,7 +90,7 @@ function playBuffer(context: AudioContext, buffer: AudioBuffer, volume: number):
     source.connect(gain);
     gain.connect(context.destination);
     source.start(context.currentTime);
-    addAudioEndCleanup(context, source, Math.min(buffer.duration, 5));
+    addAudioEndCleanup(context, source, Math.min(buffer.duration, MAX_SOUND_ASSET_DURATION_SECONDS));
     return true;
   } catch {
     return false;

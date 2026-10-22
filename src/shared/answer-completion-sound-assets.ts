@@ -4,7 +4,7 @@ export const SOUND_ASSETS_STORAGE_KEY = 'chatPanelPlus.answerCompletionSoundAsse
 export const MAX_SOUND_ASSETS = 5;
 export const MAX_SOUND_ASSET_BYTES = 512 * 1024;
 export const MAX_SOUND_ASSET_TOTAL_BYTES = 2 * 1024 * 1024;
-export const MAX_SOUND_ASSET_DURATION_SECONDS = 5;
+export const MAX_SOUND_ASSET_DURATION_SECONDS = 10;
 export const MAX_SOUND_ASSET_NAME_LENGTH = 128;
 
 export interface SoundAsset {

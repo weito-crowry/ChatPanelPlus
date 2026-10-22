@@ -224,7 +224,7 @@ export function AnswerCompletionSoundSettings({
       >{previewingId === previewSoundId ? '試聴中…' : '選択中の音を試聴'}</button>
       {selectedMissing && assetsReady && <p className="sound-settings-warning" role="status">選択音源を読み込めません。再生時は短音（660 Hz）を使用します。</p>}
       {selectedMissing && !assetsReady && !loadError && <p className="sound-settings-status" role="status">ユーザー音源を読み込んでいます。</p>}
-      <p>WAV、MP3、OGGに対応。5秒以内、1ファイル512 KiB以下、最大5件、保存音源の合計2 MiBまでです。音声内容も再生可能か検査します。Chromeの保存容量によっては追加できない場合があります。</p>
+      <p>WAV、MP3、OGGに対応。{MAX_SOUND_ASSET_DURATION_SECONDS}秒以内、1ファイル512 KiB以下、最大5件、保存音源の合計2 MiBまでです。音声内容も再生可能か検査します。Chromeの保存容量によっては追加できない場合があります。</p>
       <label className="sound-file-picker">
         音源ファイルを追加
         <input
