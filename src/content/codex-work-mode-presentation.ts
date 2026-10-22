@@ -31,6 +31,19 @@ export function getCodexWorkModePresentation(
     };
   }
 
+  if (state.status === 'unavailable') {
+    return {
+      label: minimized ? '—' : 'Codex作業中: 利用不可',
+      ariaLabel: 'Codex作業中の手動表示は会話IDが確定するまで利用できません。',
+      ariaBusy: false,
+      disabled: true,
+      retryOnToggle: false,
+      className: 'is-unavailable',
+      message: { role: 'status', text: '会話IDが確定すると利用できます。' },
+      showInitialize: false,
+    };
+  }
+
   if (state.status === 'unknown') {
     const message = state.saving
       ? 'OFFに初期化中…'

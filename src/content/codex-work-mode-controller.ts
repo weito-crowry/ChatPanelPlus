@@ -1,10 +1,13 @@
+import type { CodexWorkModeRouteSource } from './codex-work-mode-route.ts';
 import type {
+  CodexWorkModeChange,
   CodexWorkModeReadResult,
-  CodexWorkModeRepository,
+  CodexWorkModeRepositoryLike,
 } from '../shared/codex-work-mode-repository.ts';
 
 export type CodexWorkModeControllerState =
   | { readonly status: 'loading' }
+  | { readonly status: 'unavailable' }
   | { readonly status: 'ready'; readonly enabled: boolean; readonly saving: boolean; readonly notice?: 'write-failed' }
   | {
     readonly status: 'unknown';
@@ -16,15 +19,20 @@ export type CodexWorkModeControllerState =
 export class CodexWorkModeController {
   private current: CodexWorkModeControllerState = { status: 'loading' };
   private readonly listeners = new Set<(state: CodexWorkModeControllerState) => void>();
-  private unsubscribeStorage: (() => void) | null = null;
+  private unsubscribeRepository: (() => void) | null = null;
+  private unsubscribeRoute: (() => void) | null = null;
   private active = false;
   private generation = 0;
   private readSequence = 0;
   private storageRevision = 0;
-  private readonly repository: CodexWorkModeRepository;
+  private currentConversationId: string | null = null;
+  private routeInitialized = false;
+  private readonly repository: CodexWorkModeRepositoryLike;
+  private readonly route: CodexWorkModeRouteSource;
 
-  constructor(repository: CodexWorkModeRepository) {
+  constructor(repository: CodexWorkModeRepositoryLike, route: CodexWorkModeRouteSource) {
     this.repository = repository;
+    this.route = route;
   }
 
   get state(): CodexWorkModeControllerState {
@@ -40,28 +48,33 @@ export class CodexWorkModeController {
   start(): void {
     if (this.active) return;
     this.active = true;
-    const generation = ++this.generation;
+    this.generation += 1;
     this.readSequence += 1;
     this.storageRevision = 0;
+    this.routeInitialized = false;
+    this.currentConversationId = null;
     this.setState({ status: 'loading' });
-    this.unsubscribeStorage = this.repository.subscribe((result) => this.handleStorageChange(result));
-    void this.read(generation);
+    this.unsubscribeRepository = this.repository.subscribe((change) => this.handleRepositoryChange(change));
+    this.unsubscribeRoute = this.route.subscribe((conversationId) => this.handleRouteChange(conversationId));
   }
 
   async toggle(): Promise<void> {
+    this.syncRoute();
     if (this.current.status !== 'ready' || this.current.saving) return;
     await this.write(!this.current.enabled, 'toggle');
   }
 
   async retry(): Promise<void> {
-    if (this.current.status !== 'unknown' || this.current.saving || !this.active) return;
+    this.syncRoute();
+    if (this.current.status !== 'unknown' || this.current.saving || !this.active || !this.currentConversationId) return;
     const generation = this.generation;
     this.readSequence += 1;
     this.setState({ status: 'loading' });
-    await this.read(generation);
+    await this.read(generation, this.currentConversationId);
   }
 
   async initializeOff(): Promise<void> {
+    this.syncRoute();
     if (this.current.status !== 'unknown' || this.current.saving || !this.active) return;
     await this.write(false, 'initialize');
   }
@@ -70,29 +83,69 @@ export class CodexWorkModeController {
     this.active = false;
     this.generation += 1;
     this.readSequence += 1;
-    this.unsubscribeStorage?.();
-    this.unsubscribeStorage = null;
+    this.unsubscribeRoute?.();
+    this.unsubscribeRoute = null;
+    this.unsubscribeRepository?.();
+    this.unsubscribeRepository = null;
   }
 
-  private async read(generation: number): Promise<void> {
+  private handleRouteChange(conversationId: string | null): void {
+    if (!this.active || (this.routeInitialized && conversationId === this.currentConversationId)) return;
+    this.routeInitialized = true;
+    this.currentConversationId = conversationId;
+    this.generation += 1;
+    this.readSequence += 1;
+    this.storageRevision = 0;
+    if (!conversationId) {
+      this.setState({ status: 'unavailable' });
+      return;
+    }
+    const generation = this.generation;
+    this.setState({ status: 'loading' });
+    void this.read(generation, conversationId);
+  }
+
+  private async read(generation: number, conversationId: string): Promise<void> {
     const sequence = ++this.readSequence;
     const revision = this.storageRevision;
-    const result = await this.repository.load();
-    if (!this.active || generation !== this.generation || sequence !== this.readSequence || revision !== this.storageRevision) return;
+    let result: CodexWorkModeReadResult;
+    try {
+      result = await this.repository.load(conversationId);
+    } catch {
+      result = { ok: false, reason: 'storage-error' };
+    }
+    if (!this.active) return;
+    if (this.route.currentConversationId() !== this.currentConversationId) {
+      this.handleRouteChange(this.route.currentConversationId());
+      return;
+    }
+    if (generation !== this.generation || sequence !== this.readSequence
+      || revision !== this.storageRevision || conversationId !== this.currentConversationId) return;
     this.setState(this.stateFromRead(result));
   }
 
   private async write(enabled: boolean, kind: 'toggle' | 'initialize'): Promise<void> {
     const previous = this.current;
-    if ((previous.status !== 'ready' && previous.status !== 'unknown') || previous.saving) return;
+    const conversationId = this.currentConversationId;
+    if ((previous.status !== 'ready' && previous.status !== 'unknown') || previous.saving || !conversationId) return;
     const generation = this.generation;
     const revision = this.storageRevision;
     this.setState(previous.status === 'ready'
       ? { status: 'ready', enabled: previous.enabled, saving: true }
       : { ...previous, saving: true, actionFailed: false });
 
-    const result = await this.repository.setEnabled(enabled);
-    if (!this.active || generation !== this.generation) return;
+    let result;
+    try {
+      result = await this.repository.setEnabled(conversationId, enabled);
+    } catch {
+      result = { ok: false as const, reason: 'storage-error' as const };
+    }
+    if (!this.active) return;
+    if (this.route.currentConversationId() !== this.currentConversationId) {
+      this.handleRouteChange(this.route.currentConversationId());
+      return;
+    }
+    if (generation !== this.generation || conversationId !== this.currentConversationId) return;
     if (revision === this.storageRevision) {
       if (result.ok) {
         this.setState({ status: 'ready', enabled: result.value.enabled, saving: false });
@@ -116,18 +169,30 @@ export class CodexWorkModeController {
     }
   }
 
-  private handleStorageChange(result: CodexWorkModeReadResult): void {
+  private handleRepositoryChange(change: CodexWorkModeChange): void {
+    if (!this.active) return;
+    if (this.route.currentConversationId() !== this.currentConversationId) {
+      this.handleRouteChange(this.route.currentConversationId());
+      return;
+    }
+    if (!this.routeInitialized || change.conversationId !== this.currentConversationId) return;
     this.storageRevision += 1;
-    const saving = this.current.status !== 'loading' && this.current.saving;
-    this.setState(result.ok
-      ? { status: 'ready', enabled: result.value.enabled, saving }
-      : { status: 'unknown', reason: result.reason, saving });
+    const saving = this.current.status !== 'loading' && this.current.status !== 'unavailable' && this.current.saving;
+    this.setState(change.result.ok
+      ? { status: 'ready', enabled: change.result.value.enabled, saving }
+      : { status: 'unknown', reason: change.result.reason, saving });
   }
 
   private stateFromRead(result: CodexWorkModeReadResult): CodexWorkModeControllerState {
     return result.ok
       ? { status: 'ready', enabled: result.value.enabled, saving: false }
       : { status: 'unknown', reason: result.reason, saving: false };
+  }
+
+  private syncRoute(): void {
+    if (!this.active) return;
+    const current = this.route.currentConversationId();
+    if (!this.routeInitialized || current !== this.currentConversationId) this.handleRouteChange(current);
   }
 
   private setState(state: CodexWorkModeControllerState): void {

@@ -1,150 +1,87 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  CODEX_WORK_MODE_STORAGE_KEY,
   CodexWorkModeRepository,
-  type CodexWorkModeChangesLike,
-  type CodexWorkModeStorageAreaLike,
+  type CodexWorkModeRuntimeLike,
 } from '../src/shared/codex-work-mode-repository.ts';
 
-function storage(initial: Record<string, unknown> = {}) {
-  const data = { ...initial };
-  const listeners = new Set<(changes: Record<string, { readonly oldValue?: unknown; readonly newValue?: unknown }>, areaName: string) => void>();
-  let writes = 0;
-  let failReads = false;
-  let failWrites = false;
-  let adds = 0;
-  let removes = 0;
-  const area: CodexWorkModeStorageAreaLike = {
-    async get(key) {
-      if (failReads) throw new Error('read failed');
-      return key in data ? { [key]: data[key] } : {};
+function runtime(response: unknown = { ok: true, value: { schemaVersion: 1, enabled: false }, saved: false }) {
+  const messages: unknown[] = [];
+  const listeners = new Set<(message: unknown, sender: { readonly id?: string }) => void>();
+  const api: CodexWorkModeRuntimeLike = {
+    id: 'extension-id',
+    async sendMessage(message) {
+      messages.push(message);
+      return typeof response === 'function' ? response(message) : response;
     },
-    async set(items) {
-      writes += 1;
-      if (failWrites) throw new Error('write failed');
-      const changes: Record<string, { readonly oldValue?: unknown; readonly newValue?: unknown }> = {};
-      for (const [key, value] of Object.entries(items)) {
-        data[key] = value;
-        changes[key] = { newValue: value };
-      }
-      listeners.forEach((listener) => listener(changes, 'local'));
+    onMessage: {
+      addListener(listener) { listeners.add(listener); },
+      removeListener(listener) { listeners.delete(listener); },
     },
-  };
-  const changeEvent: CodexWorkModeChangesLike = {
-    addListener(listener) { adds += 1; listeners.add(listener); },
-    removeListener(listener) { removes += 1; listeners.delete(listener); },
   };
   return {
-    area,
-    changeEvent,
-    data,
-    emit(changes: Record<string, { readonly oldValue?: unknown; readonly newValue?: unknown }>, areaName = 'local') {
-      listeners.forEach((listener) => listener(changes, areaName));
-    },
-    get writes() { return writes; },
-    get adds() { return adds; },
-    get removes() { return removes; },
-    set failReads(value: boolean) { failReads = value; },
-    set failWrites(value: boolean) { failWrites = value; },
+    api,
+    messages,
+    emit(message: unknown, sender = { id: 'extension-id' }) { listeners.forEach((listener) => listener(message, sender)); },
+    get listenerCount() { return listeners.size; },
   };
 }
 
-test('missing Codex work mode storage resolves OFF without writing', async () => {
-  const fake = storage({ 'chatPanelPlus.config': { schemaVersion: 1 }, 'chatPanelPlus.statistics': { schemaVersion: 1 } });
-  const repository = new CodexWorkModeRepository(fake.area, fake.changeEvent);
+test('repository uses conversation-scoped background messages and leaves the legacy local key untouched', async () => {
+  const fake = runtime((message: { readonly type?: string }) => message.type === 'SET_CODEX_WORK_MODE'
+    ? { ok: true, value: { schemaVersion: 1, enabled: true } }
+    : { ok: true, value: { schemaVersion: 1, enabled: false }, saved: false });
+  const legacyLocal = { 'chatPanelPlus.codexWorkMode': { schemaVersion: 1, enabled: true } };
+  const repository = new CodexWorkModeRepository(fake.api);
 
-  assert.deepEqual(await repository.load(), {
-    ok: true,
-    value: { schemaVersion: 1, enabled: false },
-    saved: false,
+  assert.deepEqual(await repository.load('conversation-one'), {
+    ok: true, value: { schemaVersion: 1, enabled: false }, saved: false,
   });
-  assert.equal(fake.writes, 0);
-  assert.deepEqual(fake.data['chatPanelPlus.config'], { schemaVersion: 1 });
-  assert.deepEqual(fake.data['chatPanelPlus.statistics'], { schemaVersion: 1 });
-});
-
-test('valid mode saves to its dedicated key and is restored by a new repository', async () => {
-  const config = { schemaVersion: 1, answerCompletionSoundEnabled: true };
-  const viewState = { minimized: true, selectedTabId: 'wall' };
-  const statistics = { schemaVersion: 1, conversations: { conversation: { turns: 5 } } };
-  const fake = storage({
-    'chatPanelPlus.config': config,
-    'chatPanelPlus.viewState': viewState,
-    'chatPanelPlus.statistics': statistics,
+  assert.deepEqual(await repository.setEnabled('conversation-two', true), {
+    ok: true, value: { schemaVersion: 1, enabled: true },
   });
-  const repository = new CodexWorkModeRepository(fake.area, fake.changeEvent);
-
-  assert.deepEqual(await repository.setEnabled(true), {
-    ok: true,
-    value: { schemaVersion: 1, enabled: true },
-  });
-  assert.deepEqual(fake.data[CODEX_WORK_MODE_STORAGE_KEY], { schemaVersion: 1, enabled: true });
-  assert.deepEqual(fake.data['chatPanelPlus.config'], config);
-  assert.deepEqual(fake.data['chatPanelPlus.viewState'], viewState);
-  assert.deepEqual(fake.data['chatPanelPlus.statistics'], statistics);
-  assert.deepEqual(await new CodexWorkModeRepository(fake.area, fake.changeEvent).load(), {
-    ok: true,
-    value: { schemaVersion: 1, enabled: true },
-    saved: true,
-  });
-});
-
-test('invalid and future schemas are reported without overwriting stored values', async () => {
-  for (const invalid of [null, { schemaVersion: 2, enabled: true }, { schemaVersion: 1, enabled: 'true' }]) {
-    const fake = storage({ [CODEX_WORK_MODE_STORAGE_KEY]: invalid });
-    const result = await new CodexWorkModeRepository(fake.area, fake.changeEvent).load();
-    assert.deepEqual(result, { ok: false, reason: 'invalid-data' });
-    assert.equal(fake.writes, 0);
-    assert.equal(fake.data[CODEX_WORK_MODE_STORAGE_KEY], invalid);
-  }
-});
-
-test('storage read and write errors are returned without changing the displayed value contract', async () => {
-  const fake = storage();
-  const repository = new CodexWorkModeRepository(fake.area, fake.changeEvent);
-  fake.failReads = true;
-  assert.deepEqual(await repository.load(), { ok: false, reason: 'storage-error' });
-  fake.failReads = false;
-  fake.failWrites = true;
-  assert.deepEqual(await repository.setEnabled(true), { ok: false, reason: 'storage-error' });
-  assert.equal(CODEX_WORK_MODE_STORAGE_KEY in fake.data, false);
-});
-
-test('subscribes only while needed and emits only local changes to the dedicated key', () => {
-  const fake = storage();
-  const repository = new CodexWorkModeRepository(fake.area, fake.changeEvent);
-  const received: unknown[] = [];
-  const first = repository.subscribe((result) => received.push(result));
-  const second = repository.subscribe((result) => received.push(result));
-
-  assert.equal(fake.adds, 1);
-  fake.emit({ 'chatPanelPlus.config': { newValue: { schemaVersion: 1 } } });
-  fake.emit({ [CODEX_WORK_MODE_STORAGE_KEY]: { newValue: { schemaVersion: 1, enabled: true } } }, 'sync');
-  assert.equal(received.length, 0);
-  fake.emit({ [CODEX_WORK_MODE_STORAGE_KEY]: { newValue: { schemaVersion: 1, enabled: true } } });
-  assert.deepEqual(received, [
-    { ok: true, value: { schemaVersion: 1, enabled: true }, saved: true },
-    { ok: true, value: { schemaVersion: 1, enabled: true }, saved: true },
+  assert.deepEqual(fake.messages, [
+    { type: 'GET_CODEX_WORK_MODE', conversationId: 'conversation-one' },
+    { type: 'SET_CODEX_WORK_MODE', conversationId: 'conversation-two', enabled: true },
   ]);
-
-  first();
-  assert.equal(fake.removes, 0);
-  second();
-  assert.equal(fake.removes, 1);
+  assert.deepEqual(legacyLocal['chatPanelPlus.codexWorkMode'], { schemaVersion: 1, enabled: true });
 });
 
-test('storage removal becomes OFF and invalid external data becomes an error', () => {
-  const fake = storage();
-  const repository = new CodexWorkModeRepository(fake.area, fake.changeEvent);
-  const received: unknown[] = [];
-  const unsubscribe = repository.subscribe((result) => received.push(result));
-
-  fake.emit({ [CODEX_WORK_MODE_STORAGE_KEY]: { oldValue: { schemaVersion: 1, enabled: true } } });
-  fake.emit({ [CODEX_WORK_MODE_STORAGE_KEY]: { newValue: { schemaVersion: 3, enabled: false } } });
-  assert.deepEqual(received, [
-    { ok: true, value: { schemaVersion: 1, enabled: false }, saved: false },
-    { ok: false, reason: 'invalid-data' },
+test('invalid conversation ids and malformed background replies become storage errors', async () => {
+  const fake = runtime({ unexpected: true });
+  const repository = new CodexWorkModeRepository(fake.api);
+  assert.deepEqual(await repository.load('bad/id'), { ok: false, reason: 'storage-error' });
+  assert.deepEqual(await repository.load('conversation-one'), { ok: false, reason: 'storage-error' });
+  assert.deepEqual(await repository.setEnabled('conversation-one', true), { ok: false, reason: 'storage-error' });
+  assert.deepEqual(fake.messages, [
+    { type: 'GET_CODEX_WORK_MODE', conversationId: 'conversation-one' },
+    { type: 'SET_CODEX_WORK_MODE', conversationId: 'conversation-one', enabled: true },
   ]);
+});
+
+test('tab-local change notifications are validated and subscriptions are removed', () => {
+  const fake = runtime();
+  const repository = new CodexWorkModeRepository(fake.api);
+  const received: unknown[] = [];
+  const unsubscribe = repository.subscribe((change) => received.push(change));
+  fake.emit({ type: 'CODEX_WORK_MODE_UPDATED', conversationId: 'conversation-one', result: {
+    ok: true, value: { schemaVersion: 1, enabled: true }, saved: true,
+  } });
+  fake.emit({ type: 'CODEX_WORK_MODE_UPDATED', conversationId: 'conversation-two', result: {
+    ok: false, reason: 'invalid-data',
+  } });
+  fake.emit({ type: 'CODEX_WORK_MODE_UPDATED', conversationId: 'conversation-one', result: {
+    ok: true, value: { schemaVersion: 2, enabled: true }, saved: true,
+  } });
+
+  assert.deepEqual(received, [{
+    conversationId: 'conversation-one',
+    result: { ok: true, value: { schemaVersion: 1, enabled: true }, saved: true },
+  }, {
+    conversationId: 'conversation-two',
+    result: { ok: false, reason: 'invalid-data' },
+  }]);
+  assert.equal(fake.listenerCount, 1);
   unsubscribe();
+  assert.equal(fake.listenerCount, 0);
 });

@@ -1,177 +1,225 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { CodexWorkModeController, type CodexWorkModeControllerState } from '../src/content/codex-work-mode-controller.ts';
 import {
-  CODEX_WORK_MODE_STORAGE_KEY,
-  CodexWorkModeRepository,
-  type CodexWorkModeChangesLike,
-  type CodexWorkModeStorageAreaLike,
+  CodexWorkModeController,
+  type CodexWorkModeControllerState,
+} from '../src/content/codex-work-mode-controller.ts';
+import type { CodexWorkModeRouteSource } from '../src/content/codex-work-mode-route.ts';
+import type {
+  CodexWorkModeChange,
+  CodexWorkModeReadResult,
+  CodexWorkModeRepositoryLike,
 } from '../src/shared/codex-work-mode-repository.ts';
 
-function createStorage(initial: Record<string, unknown> = {}) {
-  const data = { ...initial };
-  const listeners = new Set<(changes: Record<string, { readonly oldValue?: unknown; readonly newValue?: unknown }>, areaName: string) => void>();
-  let writes = 0;
-  let failReads = false;
-  let failWrites = false;
-  const area: CodexWorkModeStorageAreaLike = {
-    async get(key) {
-      if (failReads) throw new Error('read failed');
-      return key in data ? { [key]: data[key] } : {};
+function routeSource(initial: string | null): {
+  readonly source: CodexWorkModeRouteSource;
+  navigate(conversationId: string | null): void;
+  changePathWithoutEvent(conversationId: string | null): void;
+} {
+  let current = initial;
+  const listeners = new Set<(conversationId: string | null) => void>();
+  return {
+    source: {
+      currentConversationId() { return current; },
+      subscribe(listener) {
+        listeners.add(listener);
+        listener(current);
+        return () => listeners.delete(listener);
+      },
     },
-    async set(items) {
-      writes += 1;
-      if (failWrites) throw new Error('write failed');
-      const changes: Record<string, { readonly oldValue?: unknown; readonly newValue?: unknown }> = {};
-      for (const [key, value] of Object.entries(items)) {
-        changes[key] = { oldValue: data[key], newValue: value };
-        data[key] = value;
-      }
-      listeners.forEach((listener) => listener(changes, 'local'));
+    navigate(conversationId) {
+      current = conversationId;
+      listeners.forEach((listener) => listener(conversationId));
     },
+    changePathWithoutEvent(conversationId) { current = conversationId; },
   };
-  const changeEvent: CodexWorkModeChangesLike = {
-    addListener(listener) { listeners.add(listener); },
-    removeListener(listener) { listeners.delete(listener); },
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => { resolve = complete; });
+  return { promise, resolve };
+}
+
+function repository(initial: Record<string, boolean> = {}) {
+  const values = new Map(Object.entries(initial));
+  const changes = new Set<(change: CodexWorkModeChange) => void>();
+  const reads: string[] = [];
+  const writes: { conversationId: string; enabled: boolean }[] = [];
+  const delayedReads = new Map<string, ReturnType<typeof deferred<CodexWorkModeReadResult>>>();
+  let pendingWrite: ReturnType<typeof deferred<void>> | null = null;
+  const api: CodexWorkModeRepositoryLike = {
+    load(conversationId) {
+      reads.push(conversationId);
+      const delayed = delayedReads.get(conversationId);
+      if (delayed) return delayed.promise;
+      return Promise.resolve({ ok: true, value: { schemaVersion: 1, enabled: values.get(conversationId) ?? false }, saved: values.has(conversationId) });
+    },
+    async setEnabled(conversationId, enabled) {
+      writes.push({ conversationId, enabled });
+      if (pendingWrite) await pendingWrite.promise;
+      values.set(conversationId, enabled);
+      const result = { ok: true as const, value: { schemaVersion: 1 as const, enabled } };
+      const change: CodexWorkModeChange = {
+        conversationId,
+        result: { ok: true, value: result.value, saved: true },
+      };
+      changes.forEach((listener) => listener(change));
+      return result;
+    },
+    subscribe(listener) {
+      changes.add(listener);
+      return () => changes.delete(listener);
+    },
   };
   return {
-    area,
-    changeEvent,
-    data,
-    emit(changes: Record<string, { readonly oldValue?: unknown; readonly newValue?: unknown }>, areaName = 'local') {
-      listeners.forEach((listener) => listener(changes, areaName));
+    api,
+    reads,
+    writes,
+    values,
+    delayRead(conversationId: string) {
+      const request = deferred<CodexWorkModeReadResult>();
+      delayedReads.set(conversationId, request);
+      return request;
     },
-    get listenerCount() { return listeners.size; },
-    get writes() { return writes; },
-    set failReads(value: boolean) { failReads = value; },
-    set failWrites(value: boolean) { failWrites = value; },
-  };
-}
-
-function createController(fake: ReturnType<typeof createStorage>) {
-  return new CodexWorkModeController(new CodexWorkModeRepository(fake.area, fake.changeEvent));
-}
-
-async function flush(): Promise<void> {
-  await new Promise<void>((resolve) => setImmediate(resolve));
-}
-
-function latest(states: CodexWorkModeControllerState[]) {
-  return states[states.length - 1];
-}
-
-test('subscribes before initial load and keeps a newer storage event over the stale read', async () => {
-  let releaseRead!: (value: Record<string, unknown>) => void;
-  const delayedGet = new Promise<Record<string, unknown>>((resolve) => { releaseRead = resolve; });
-  const fake = createStorage();
-  const area: CodexWorkModeStorageAreaLike = {
-    get: async () => delayedGet,
-    set: fake.area.set,
-  };
-  const controller = new CodexWorkModeController(new CodexWorkModeRepository(area, fake.changeEvent));
-  const states: CodexWorkModeControllerState[] = [];
-  controller.subscribe((state) => states.push(state));
-  controller.start();
-  fake.emit({ [CODEX_WORK_MODE_STORAGE_KEY]: { newValue: { schemaVersion: 1, enabled: true } } });
-  releaseRead({ [CODEX_WORK_MODE_STORAGE_KEY]: { schemaVersion: 1, enabled: false } });
-  await flush();
-
-  assert.deepEqual(latest(states), { status: 'ready', enabled: true, saving: false });
-  controller.dispose();
-});
-
-test('toggle retains the current value and reports storage write failure', async () => {
-  const fake = createStorage();
-  const controller = createController(fake);
-  const states: CodexWorkModeControllerState[] = [];
-  controller.subscribe((state) => states.push(state));
-  controller.start();
-  await flush();
-  fake.failWrites = true;
-  await controller.toggle();
-
-  assert.deepEqual(latest(states), { status: 'ready', enabled: false, saving: false, notice: 'write-failed' });
-  assert.equal(fake.writes, 1);
-  controller.dispose();
-});
-
-test('rapid repeat clicks do not start a second write while the first is pending', async () => {
-  const fake = createStorage();
-  let releaseWrite!: () => void;
-  const writeGate = new Promise<void>((resolve) => { releaseWrite = resolve; });
-  let writeRequests = 0;
-  const delayedArea: CodexWorkModeStorageAreaLike = {
-    get: fake.area.get,
-    async set(items) {
-      writeRequests += 1;
-      await writeGate;
-      await fake.area.set(items);
+    delayWrites() {
+      pendingWrite = deferred<void>();
+      return () => pendingWrite?.resolve();
     },
   };
-  const controller = new CodexWorkModeController(new CodexWorkModeRepository(delayedArea, fake.changeEvent));
-  controller.start();
-  await flush();
+}
 
-  const first = controller.toggle();
-  await controller.toggle();
-  assert.equal(writeRequests, 1);
-  assert.deepEqual(controller.state, { status: 'ready', enabled: false, saving: true });
-  releaseWrite();
-  await first;
-  assert.deepEqual(controller.state, { status: 'ready', enabled: true, saving: false });
-  controller.dispose();
-});
+async function flush(): Promise<void> { await new Promise<void>((resolve) => setImmediate(resolve)); }
 
-test('multiple controllers reflect local storage changes and clean up listeners on dispose', async () => {
-  const fake = createStorage();
-  const left = createController(fake);
-  const right = createController(fake);
-  const leftStates: CodexWorkModeControllerState[] = [];
-  const rightStates: CodexWorkModeControllerState[] = [];
-  left.subscribe((state) => leftStates.push(state));
-  right.subscribe((state) => rightStates.push(state));
-  left.start();
-  right.start();
-  await flush();
+function latest(states: CodexWorkModeControllerState[]) { return states.at(-1); }
 
-  await left.toggle();
-  assert.deepEqual(latest(leftStates), { status: 'ready', enabled: true, saving: false });
-  assert.deepEqual(latest(rightStates), { status: 'ready', enabled: true, saving: false });
-  left.dispose();
-  right.dispose();
-  assert.equal(fake.listenerCount, 0);
-});
-
-test('unknown data can be retried or explicitly initialized OFF without an automatic write', async () => {
-  const original = { schemaVersion: 9, enabled: true };
-  const fake = createStorage({ [CODEX_WORK_MODE_STORAGE_KEY]: original });
-  const controller = createController(fake);
+test('unconfirmed new chat is unavailable, and late reads cannot overwrite a navigated conversation', async () => {
+  const route = routeSource(null);
+  const fake = repository();
+  const oldRead = fake.delayRead('conversation-one');
+  const controller = new CodexWorkModeController(fake.api, route.source);
   const states: CodexWorkModeControllerState[] = [];
   controller.subscribe((state) => states.push(state));
   controller.start();
-  await flush();
-
-  assert.deepEqual(latest(states), { status: 'unknown', reason: 'invalid-data', saving: false });
-  assert.equal(fake.writes, 0);
-  await controller.retry();
-  assert.deepEqual(latest(states), { status: 'unknown', reason: 'invalid-data', saving: false });
-  assert.equal(fake.writes, 0);
+  assert.deepEqual(controller.state, { status: 'unavailable' });
+  await controller.toggle();
   await controller.initializeOff();
-  assert.deepEqual(fake.data[CODEX_WORK_MODE_STORAGE_KEY], { schemaVersion: 1, enabled: false });
+  assert.deepEqual(fake.writes, []);
+
+  route.navigate('conversation-one');
+  route.navigate('conversation-two');
+  await flush();
+  assert.deepEqual(controller.state, { status: 'ready', enabled: false, saving: false });
+  oldRead.resolve({ ok: true, value: { schemaVersion: 1, enabled: true }, saved: true });
+  await flush();
+
   assert.deepEqual(latest(states), { status: 'ready', enabled: false, saving: false });
+  assert.deepEqual(fake.reads, ['conversation-one', 'conversation-two']);
   controller.dispose();
 });
 
-test('storage read error can be retried without writing an OFF value', async () => {
-  const fake = createStorage();
-  fake.failReads = true;
-  const controller = createController(fake);
+test('a route change detected only by pathname is checked before an old read can publish', async () => {
+  const route = routeSource('conversation-one');
+  const fake = repository();
+  const oldRead = fake.delayRead('conversation-one');
+  const controller = new CodexWorkModeController(fake.api, route.source);
+  controller.start();
+
+  route.changePathWithoutEvent('conversation-two');
+  oldRead.resolve({ ok: true, value: { schemaVersion: 1, enabled: true }, saved: true });
+  await flush();
+
+  assert.deepEqual(controller.state, { status: 'ready', enabled: false, saving: false });
+  assert.deepEqual(fake.reads, ['conversation-one', 'conversation-two']);
+  controller.dispose();
+});
+
+test('a conversation restores its own value after same-tab route changes and controller remount', async () => {
+  const fake = repository({ 'conversation-one': true });
+  const firstRoute = routeSource('conversation-one');
+  const first = new CodexWorkModeController(fake.api, firstRoute.source);
+  first.start();
+  await flush();
+  assert.deepEqual(first.state, { status: 'ready', enabled: true, saving: false });
+  firstRoute.navigate('conversation-two');
+  await flush();
+  assert.deepEqual(first.state, { status: 'ready', enabled: false, saving: false });
+  firstRoute.navigate('conversation-one');
+  await flush();
+  assert.deepEqual(first.state, { status: 'ready', enabled: true, saving: false });
+  first.dispose();
+
+  const reloaded = new CodexWorkModeController(fake.api, routeSource('conversation-one').source);
+  reloaded.start();
+  await flush();
+  assert.deepEqual(reloaded.state, { status: 'ready', enabled: true, saving: false });
+  reloaded.dispose();
+  assert.deepEqual(fake.reads, ['conversation-one', 'conversation-two', 'conversation-one', 'conversation-one']);
+});
+
+test('a save finishing after navigation stays scoped to its old conversation and rapid clicks write once', async () => {
+  const route = routeSource('conversation-one');
+  const fake = repository();
+  const releaseWrite = fake.delayWrites();
+  const controller = new CodexWorkModeController(fake.api, route.source);
   controller.start();
   await flush();
-  assert.deepEqual(controller.state, { status: 'unknown', reason: 'storage-error', saving: false });
-  fake.failReads = false;
-  await controller.retry();
+
+  const saving = controller.toggle();
+  await controller.toggle();
+  assert.deepEqual(fake.writes, [{ conversationId: 'conversation-one', enabled: true }]);
+  route.navigate('conversation-two');
+  await flush();
+  releaseWrite();
+  await saving;
+
   assert.deepEqual(controller.state, { status: 'ready', enabled: false, saving: false });
-  assert.equal(fake.writes, 0);
+  assert.equal(fake.values.get('conversation-one'), true);
+  assert.equal(fake.values.get('conversation-two'), undefined);
+  controller.dispose();
+});
+
+test('invalid data is preserved until explicit OFF initialization, and failed writes stay visible', async () => {
+  const route = routeSource('conversation-one');
+  const fake = repository();
+  let failNext = false;
+  const base = fake.api;
+  const wrapped: CodexWorkModeRepositoryLike = {
+    ...base,
+    load: async () => ({ ok: false, reason: 'invalid-data' }),
+    async setEnabled(conversationId, enabled) {
+      if (failNext) return { ok: false, reason: 'storage-error' };
+      return base.setEnabled(conversationId, enabled);
+    },
+  };
+  const controller = new CodexWorkModeController(wrapped, route.source);
+  controller.start();
+  await flush();
+  assert.deepEqual(controller.state, { status: 'unknown', reason: 'invalid-data', saving: false });
+  assert.deepEqual(fake.writes, []);
+  failNext = true;
+  await controller.initializeOff();
+  assert.deepEqual(controller.state, { status: 'unknown', reason: 'invalid-data', saving: false, actionFailed: true });
+  assert.equal(fake.writes.length, 0);
+  controller.dispose();
+});
+
+test('unknown data is overwritten with OFF only after an explicit initialization action', async () => {
+  const route = routeSource('conversation-one');
+  const fake = repository();
+  const controller = new CodexWorkModeController({
+    ...fake.api,
+    async load() { return { ok: false, reason: 'invalid-data' }; },
+  }, route.source);
+  controller.start();
+  await flush();
+  assert.deepEqual(controller.state, { status: 'unknown', reason: 'invalid-data', saving: false });
+  assert.deepEqual(fake.writes, []);
+
+  await controller.toggle();
+  assert.deepEqual(fake.writes, []);
+  await controller.initializeOff();
+  assert.deepEqual(fake.writes, [{ conversationId: 'conversation-one', enabled: false }]);
+  assert.deepEqual(controller.state, { status: 'ready', enabled: false, saving: false });
   controller.dispose();
 });

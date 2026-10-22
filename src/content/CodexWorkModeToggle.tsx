@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { CodexWorkModeController, type CodexWorkModeControllerState } from './codex-work-mode-controller.ts';
 import { getCodexWorkModePresentation } from './codex-work-mode-presentation.ts';
+import { createCodexWorkModeRouteObserver } from './codex-work-mode-route.ts';
 import { createChromeCodexWorkModeRepository } from '../shared/codex-work-mode-repository.ts';
 
 export function CodexWorkModeToggle({ minimized }: { readonly minimized: boolean }) {
   const controllerRef = useRef<CodexWorkModeController | null>(null);
   if (!controllerRef.current) {
-    controllerRef.current = new CodexWorkModeController(createChromeCodexWorkModeRepository());
+    controllerRef.current = new CodexWorkModeController(
+      createChromeCodexWorkModeRepository(),
+      createCodexWorkModeRouteObserver(window),
+    );
   }
   const controller = controllerRef.current;
   const [state, setState] = useState<CodexWorkModeControllerState>(controller.state);

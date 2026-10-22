@@ -235,7 +235,4 @@ export function collectConversationSnapshot(root: ParentNode): ConversationDomSn
   return { turnKeys, observations, partial };
 }
 
-export function conversationIdFromPath(pathname: string): string | null {
-  const match = /(?:^|\/)c\/([A-Za-z0-9_-]+)(?:\/|$)/u.exec(pathname);
-  return match?.[1] ?? null;
-}
+export { conversationIdFromPath } from '../shared/conversation-route.ts';

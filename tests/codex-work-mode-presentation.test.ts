@@ -18,6 +18,15 @@ test('loading and unknown states do not publish an ON/OFF value', () => {
   assert.equal(expandedUnknown.showInitialize, true);
 });
 
+test('an unconfirmed new conversation keeps the control disabled without publishing a state', () => {
+  const presentationState = presentation({ status: 'unavailable' }, false);
+  assert.equal(presentationState.ariaPressed, undefined);
+  assert.equal(presentationState.disabled, true);
+  assert.equal(presentationState.ariaBusy, false);
+  assert.equal(presentationState.message?.role, 'status');
+  assert.match(presentationState.message?.text ?? '', /会話ID/);
+});
+
 test('ready state uses ON/OFF text, aria-pressed, and compact minimized labels', () => {
   const expanded = presentation({ status: 'ready', enabled: true, saving: false }, false);
   const minimized = presentation({ status: 'ready', enabled: true, saving: false }, true);

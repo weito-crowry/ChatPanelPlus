@@ -1,4 +1,9 @@
-export const CODEX_WORK_MODE_STORAGE_KEY = 'chatPanelPlus.codexWorkMode';
+import { isConversationId } from './conversation-route.ts';
+import {
+  CODEX_WORK_MODE_GET,
+  CODEX_WORK_MODE_SET,
+  CODEX_WORK_MODE_UPDATED,
+} from './codex-work-mode-protocol.ts';
 
 export type CodexWorkModeValue = Readonly<{
   schemaVersion: 1;
@@ -13,17 +18,25 @@ export type CodexWorkModeWriteResult =
   | { readonly ok: true; readonly value: CodexWorkModeValue }
   | { readonly ok: false; readonly reason: 'storage-error' };
 
-export interface CodexWorkModeStorageAreaLike {
-  get(keys: string): Promise<Record<string, unknown>>;
-  set(items: Record<string, unknown>): Promise<void>;
+export type CodexWorkModeChange = Readonly<{
+  conversationId: string;
+  result: CodexWorkModeReadResult;
+}>;
+
+export interface CodexWorkModeRepositoryLike {
+  load(conversationId: string): Promise<CodexWorkModeReadResult>;
+  setEnabled(conversationId: string, enabled: boolean): Promise<CodexWorkModeWriteResult>;
+  subscribe(listener: (change: CodexWorkModeChange) => void): () => void;
 }
 
-export interface CodexWorkModeChangesLike {
-  addListener(listener: (changes: Record<string, { readonly oldValue?: unknown; readonly newValue?: unknown }>, areaName: string) => void): void;
-  removeListener(listener: (changes: Record<string, { readonly oldValue?: unknown; readonly newValue?: unknown }>, areaName: string) => void): void;
+export interface CodexWorkModeRuntimeLike {
+  readonly id?: string;
+  sendMessage(message: unknown): Promise<unknown>;
+  readonly onMessage: {
+    addListener(listener: (message: unknown, sender: { readonly id?: string }) => void): void;
+    removeListener(listener: (message: unknown, sender: { readonly id?: string }) => void): void;
+  };
 }
-
-const OFF_VALUE: CodexWorkModeValue = Object.freeze({ schemaVersion: 1, enabled: false });
 
 export function validateCodexWorkMode(value: unknown):
   | { readonly ok: true; readonly value: CodexWorkModeValue }
@@ -38,67 +51,87 @@ export function validateCodexWorkMode(value: unknown):
   return { ok: true, value: { schemaVersion: 1, enabled: candidate.enabled } };
 }
 
-export class CodexWorkModeRepository {
-  private readonly subscribers = new Set<(result: CodexWorkModeReadResult) => void>();
-  private readonly area: CodexWorkModeStorageAreaLike;
-  private readonly changes: CodexWorkModeChangesLike;
+function parseReadResult(value: unknown): CodexWorkModeReadResult {
+  if (typeof value !== 'object' || value === null || !('ok' in value)) {
+    return { ok: false, reason: 'storage-error' };
+  }
+  const result = value as Record<string, unknown>;
+  if (result.ok === false && (result.reason === 'invalid-data' || result.reason === 'storage-error')) {
+    return { ok: false, reason: result.reason };
+  }
+  if (result.ok !== true || typeof result.saved !== 'boolean') return { ok: false, reason: 'storage-error' };
+  const validated = validateCodexWorkMode(result.value);
+  return validated.ok
+    ? { ...validated, saved: result.saved }
+    : { ok: false, reason: 'storage-error' };
+}
 
-  constructor(
-    area: CodexWorkModeStorageAreaLike,
-    changes: CodexWorkModeChangesLike,
-  ) {
-    this.area = area;
-    this.changes = changes;
+function parseWriteResult(value: unknown): CodexWorkModeWriteResult {
+  if (typeof value !== 'object' || value === null || !('ok' in value)) {
+    return { ok: false, reason: 'storage-error' };
+  }
+  const result = value as Record<string, unknown>;
+  if (result.ok !== true) return { ok: false, reason: 'storage-error' };
+  const validated = validateCodexWorkMode(result.value);
+  return validated.ok ? validated : { ok: false, reason: 'storage-error' };
+}
+
+function parseChange(message: unknown, senderId: string | undefined, extensionId: string | undefined): CodexWorkModeChange | null {
+  if (senderId !== extensionId || typeof message !== 'object' || message === null || !('type' in message)) return null;
+  const candidate = message as Record<string, unknown>;
+  if (candidate.type !== CODEX_WORK_MODE_UPDATED || !isConversationId(candidate.conversationId)) return null;
+  const result = parseReadResult(candidate.result);
+  if (!result.ok && result.reason === 'storage-error') return null;
+  return { conversationId: candidate.conversationId, result };
+}
+
+export class CodexWorkModeRepository implements CodexWorkModeRepositoryLike {
+  private readonly runtime: CodexWorkModeRuntimeLike;
+  private readonly subscribers = new Set<(change: CodexWorkModeChange) => void>();
+
+  constructor(runtime: CodexWorkModeRuntimeLike) {
+    this.runtime = runtime;
   }
 
-  async load(): Promise<CodexWorkModeReadResult> {
+  async load(conversationId: string): Promise<CodexWorkModeReadResult> {
+    if (!isConversationId(conversationId)) return { ok: false, reason: 'storage-error' };
     try {
-      const stored = await this.area.get(CODEX_WORK_MODE_STORAGE_KEY);
-      if (!(CODEX_WORK_MODE_STORAGE_KEY in stored)) return { ok: true, value: OFF_VALUE, saved: false };
-      const result = validateCodexWorkMode(stored[CODEX_WORK_MODE_STORAGE_KEY]);
-      return result.ok ? { ...result, saved: true } : result;
+      const response = await this.runtime.sendMessage({ type: CODEX_WORK_MODE_GET, conversationId });
+      return parseReadResult(response);
     } catch {
       return { ok: false, reason: 'storage-error' };
     }
   }
 
-  async setEnabled(enabled: boolean): Promise<CodexWorkModeWriteResult> {
-    if (typeof enabled !== 'boolean') return { ok: false, reason: 'storage-error' };
-    const value: CodexWorkModeValue = { schemaVersion: 1, enabled };
+  async setEnabled(conversationId: string, enabled: boolean): Promise<CodexWorkModeWriteResult> {
+    if (!isConversationId(conversationId) || typeof enabled !== 'boolean') {
+      return { ok: false, reason: 'storage-error' };
+    }
     try {
-      await this.area.set({ [CODEX_WORK_MODE_STORAGE_KEY]: value });
-      return { ok: true, value };
+      const response = await this.runtime.sendMessage({ type: CODEX_WORK_MODE_SET, conversationId, enabled });
+      return parseWriteResult(response);
     } catch {
       return { ok: false, reason: 'storage-error' };
     }
   }
 
-  subscribe(listener: (result: CodexWorkModeReadResult) => void): () => void {
-    const firstSubscriber = this.subscribers.size === 0;
+  subscribe(listener: (change: CodexWorkModeChange) => void): () => void {
+    const first = this.subscribers.size === 0;
     this.subscribers.add(listener);
-    if (firstSubscriber) this.changes.addListener(this.handleStorageChange);
+    if (first) this.runtime.onMessage.addListener(this.handleMessage);
     return () => {
       this.subscribers.delete(listener);
-      if (this.subscribers.size === 0) this.changes.removeListener(this.handleStorageChange);
+      if (this.subscribers.size === 0) this.runtime.onMessage.removeListener(this.handleMessage);
     };
   }
 
-  private readonly handleStorageChange = (
-    changed: Record<string, { readonly oldValue?: unknown; readonly newValue?: unknown }>,
-    areaName: string,
-  ) => {
-    if (areaName !== 'local' || !(CODEX_WORK_MODE_STORAGE_KEY in changed)) return;
-    const value = changed[CODEX_WORK_MODE_STORAGE_KEY]?.newValue;
-    const result = value === undefined
-      ? { ok: true as const, value: OFF_VALUE, saved: false }
-      : (() => {
-        const validated = validateCodexWorkMode(value);
-        return validated.ok ? { ...validated, saved: true } : validated;
-      })();
-    this.subscribers.forEach((subscriber) => subscriber(result));
+  private readonly handleMessage = (message: unknown, sender: { readonly id?: string }): void => {
+    const change = parseChange(message, sender.id, this.runtime.id);
+    if (!change) return;
+    this.subscribers.forEach((subscriber) => subscriber(change));
   };
 }
 
 export function createChromeCodexWorkModeRepository(): CodexWorkModeRepository {
-  return new CodexWorkModeRepository(chrome.storage.local, chrome.storage.onChanged);
+  return new CodexWorkModeRepository(chrome.runtime);
 }
