@@ -1,0 +1,421 @@
+:host {
+  all: initial;
+  position: relative;
+  display: block;
+  width: min(900px, 100%);
+  max-width: 100%;
+  margin: 0 auto 12px;
+  align-self: center;
+  color: #202123;
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+.panel {
+  position: relative;
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 24px;
+  border: 1.5px solid #d9dadd;
+  border-radius: 16px;
+  background: var(--main-surface-primary, #fff);
+  color: var(--text-primary, #202123);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 14%);
+}
+
+.panel-content[hidden] {
+  display: none;
+}
+
+.panel.is-minimized {
+  height: 1px;
+  min-height: 1px;
+  padding: 0;
+  border: 0;
+  border-top: 1px solid var(--border-light, #d9dadd);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.panel.is-minimized .panel-minimize-toggle {
+  clip-path: inset(0 0 48%);
+}
+
+.panel-minimize-toggle {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 168px;
+  height: 72px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--border-medium, #c8ccd1);
+  cursor: pointer;
+  transform: translate(-50%, -50%);
+}
+
+.panel-minimize-toggle:hover {
+  color: var(--text-tertiary, #aeb6bf);
+}
+
+.panel-minimize-icon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: block;
+  width: 140px;
+  height: 52px;
+  pointer-events: none;
+  transition: transform 140ms ease;
+  transform-origin: center;
+  transform: translate(-50%, -50%);
+}
+
+.panel-minimize-toggle.is-minimized .panel-minimize-icon {
+  transform: translate(-50%, -50%) rotate(180deg);
+}
+
+.panel-title {
+  margin: 0;
+  font: inherit;
+  font-weight: 650;
+}
+
+.conversation-statistics {
+  position: relative;
+  display: flex;
+  justify-content: flex-end;
+  min-height: 22px;
+  margin-top: -6px;
+}
+
+.statistics-trigger {
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary, #565869);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.statistics-trigger:hover {
+  color: var(--text-primary, #202123);
+  text-decoration: underline;
+}
+
+.statistics-trigger:focus-visible,
+.statistics-close:focus-visible,
+.statistics-action:focus-visible {
+  outline: 2px solid #3157a4;
+  outline-offset: 2px;
+}
+
+.statistics-popover {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  width: min(320px, calc(100vw - 32px));
+  max-height: min(480px, calc(100dvh - 24px));
+  overflow: hidden;
+  padding: 14px;
+  border: 1px solid var(--border-light, #d9dadd);
+  border-radius: 12px;
+  background: var(--main-surface-primary, #fff);
+  color: var(--text-primary, #202123);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 22%);
+}
+
+.statistics-popover-heading {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.statistics-popover-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.statistics-close {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.statistics-close:hover {
+  background: var(--main-surface-secondary, #f1f1f3);
+}
+
+.statistics-values {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.statistics-values div {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.statistics-values dt {
+  color: var(--text-secondary, #565869);
+}
+
+.statistics-values dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.statistics-status,
+.statistics-error {
+  margin: 8px 0;
+  font-size: 12px;
+}
+
+.statistics-status {
+  color: var(--text-secondary, #565869);
+}
+
+.statistics-error {
+  color: #b42318;
+}
+
+.statistics-actions {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-light, #d9dadd);
+}
+
+.statistics-action {
+  min-width: 0;
+  min-height: 40px;
+  padding: 7px 9px;
+  border: 1px solid var(--border-light, #d9dadd);
+  border-radius: 8px;
+  background: var(--main-surface-secondary, #f7f7f8);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.statistics-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.utility-row,
+.tab-content {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.utility-row {
+  margin-bottom: 10px;
+}
+
+.action-button {
+  padding: 8px 18px;
+  border: 0;
+  border-radius: 20px;
+  color: #fff;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  box-shadow: 0 2px 5px rgb(0 0 0 / 14%);
+  cursor: pointer;
+  transition: filter 120ms ease, transform 120ms ease;
+}
+
+.action-button:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.action-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.action-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.action-button:focus-visible,
+.tab-button:focus-visible,
+.settings-entry button:focus-visible {
+  outline: 2px solid #3157a4;
+  outline-offset: 3px;
+}
+
+.tab-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  border-bottom: 1px solid var(--border-light, #d9dadd);
+}
+
+.tab-button {
+  padding: 7px 14px;
+  border: 1px solid var(--border-light, #d9dadd);
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  background: var(--main-surface-secondary, #f7f7f8);
+  color: var(--text-secondary, #565869);
+  font: inherit;
+  cursor: pointer;
+}
+
+.tab-button.is-active {
+  position: relative;
+  margin-bottom: -1px;
+  border-color: var(--border-light, #d9dadd);
+  background: var(--main-surface-primary, #fff);
+  color: var(--text-primary, #202123);
+}
+
+.tab-content {
+  min-height: 42px;
+  padding-top: 10px;
+}
+
+.panel-error {
+  color: #b42318;
+  font-size: 13px;
+}
+
+.settings-entry {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.settings-entry button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary, #565869);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.manual-paste-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  border-radius: inherit;
+  background: rgb(0 0 0 / 35%);
+}
+
+.manual-paste-dialog {
+  display: grid;
+  gap: 12px;
+  width: min(520px, 100%);
+  padding: 20px;
+  border: 1px solid var(--border-light, #d9dadd);
+  border-radius: 12px;
+  background: var(--main-surface-primary, #fff);
+  color: var(--text-primary, #202123);
+  box-shadow: 0 8px 32px rgb(0 0 0 / 24%);
+}
+
+.manual-paste-dialog h2,
+.manual-paste-dialog p {
+  margin: 0;
+}
+
+.manual-paste-dialog h2 {
+  font-size: 16px;
+}
+
+.manual-paste-dialog textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--border-light, #d9dadd);
+  border-radius: 8px;
+  background: var(--main-surface-secondary, #f7f7f8);
+  color: inherit;
+  font: inherit;
+}
+
+.manual-paste-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.manual-paste-actions button {
+  padding: 7px 14px;
+  border: 1px solid var(--border-light, #d9dadd);
+  border-radius: 8px;
+  background: var(--main-surface-secondary, #f7f7f8);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+@media (prefers-color-scheme: dark) {
+  .panel {
+    border-color: var(--border-light, #424242);
+    background: var(--main-surface-primary, #212121);
+    color: var(--text-primary, #f7f7f8);
+  }
+
+  .panel.is-minimized {
+    border-top-color: var(--border-light, #424242);
+  }
+
+  .tab-button {
+    border-color: var(--border-light, #424242);
+    background: var(--main-surface-secondary, #303030);
+    color: var(--text-secondary, #c5c5d2);
+  }
+
+  .tab-button.is-active {
+    background: var(--main-surface-primary, #212121);
+    color: var(--text-primary, #f7f7f8);
+  }
+
+  .statistics-close:hover,
+  .statistics-action {
+    background: var(--main-surface-secondary, #303030);
+  }
+}

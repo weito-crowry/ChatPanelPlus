@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ChatPanelPlus isolated no-submit fixture</title>
+    <style>
+      body { font: 16px system-ui, sans-serif; margin: 24px; }
+      form { border: 1px solid #888; margin-top: 16px; padding: 12px; }
+      #prompt-textarea { border: 1px solid #888; min-height: 64px; padding: 8px; white-space: pre-wrap; }
+      #fixture-result { white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h1>隔離Composer送信イベント試験</h1>
+    <p>ChatGPTには接続しません。フォーム送信は記録した後、このfixture内で抑止します。</p>
+    <button id="reset-events" type="button">イベント記録をリセット</button>
+    <button id="outside-action" type="button">フォーム外の操作</button>
+    <output id="fixture-result" aria-live="polite"></output>
+    <form id="composer-form">
+      <div id="prompt-textarea" data-testid="prompt-textarea" contenteditable="true" role="textbox" aria-label="試験用Composer">既存の下書き</div>
+      <button id="inside-action" type="button">フォーム内の操作</button>
+      <button id="normal-submit" type="submit">捕捉する通常送信</button>
+    </form>
+    <script>
+      const form = document.querySelector('#composer-form');
+      const state = { events: [], timeline: [], submitCount: 0, defaultPreventedAtForm: [] };
+      let clipboardText = '';
+      const watchedEvents = ['pointerdown', 'click', 'paste', 'beforeinput', 'input', 'change', 'keydown', 'keyup'];
+      function renderSnapshot() {
+        document.querySelector('#fixture-result').textContent = JSON.stringify({
+          events: state.events,
+          submitCount: state.submitCount,
+          defaultPreventedAtForm: state.defaultPreventedAtForm,
+        });
+      }
+      function targetKind(target) {
+        if (!(target instanceof Element)) return 'other';
+        if (target.id === 'prompt-textarea') return 'composer';
+        if (target.id === 'chatpanelplus-extension-root') return 'panel-host';
+        if (target.closest('#composer-form')) return target.tagName.toLowerCase();
+        return target.closest('button') ? 'test-control' : 'other';
+      }
+      function sourceKind(event) {
+        const origin = event.composedPath()[0];
+        if (origin instanceof HTMLButtonElement) {
+          return origin.getRootNode() instanceof ShadowRoot ? 'panel-button' : 'form-button';
+        }
+        return targetKind(event.target);
+      }
+      function recordEvent(event) {
+        const entry = {
+          type: event.type,
+          source: sourceKind(event),
+          target: targetKind(event.target),
+          trusted: event.isTrusted,
+          composed: event.composed,
+          defaultPrevented: event.defaultPrevented,
+          keyIsEnter: event instanceof KeyboardEvent && event.key === 'Enter',
+          time: Math.round(performance.now()),
+        };
+        state.events.push(entry);
+        state.timeline.push(entry);
+        renderSnapshot();
+      }
+      for (const type of watchedEvents) {
+        document.addEventListener(type, recordEvent, true);
+      }
+      document.addEventListener('submit', (event) => {
+        if (event.target !== form) return;
+        recordEvent(event);
+        state.submitCount += 1;
+        renderSnapshot();
+      }, true);
+      form.addEventListener('submit', (event) => {
+        state.defaultPreventedAtForm.push(event.defaultPrevented);
+        event.preventDefault();
+        renderSnapshot();
+      });
+      document.querySelector('#reset-events').addEventListener('click', () => {
+        state.events.length = 0;
+        state.submitCount = 0;
+        state.defaultPreventedAtForm.length = 0;
+        renderSnapshot();
+      });
+      window.cppNoSubmitFixture = {
+        snapshot() {
+          return {
+            events: [...state.events],
+            timeline: [...state.timeline],
+            submitCount: state.submitCount,
+            defaultPreventedAtForm: [...state.defaultPreventedAtForm],
+          };
+        },
+        setClipboardText(text) { clipboardText = text; },
+      };
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { readText: async () => clipboardText },
+      });
+      globalThis.chrome = {
+        storage: {
+          local: { get: async () => ({}), set: async () => {} },
+          onChanged: { addListener() {}, removeListener() {} },
+        },
+        runtime: { sendMessage: async () => undefined },
+      };
+    </script>
+    <script type="module" src="/src/content/main.tsx"></script>
+    <script type="module" src="/tests/fixtures/no-submit-runner.js"></script>
+  </body>
+</html>

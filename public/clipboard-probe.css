@@ -1,0 +1,27 @@
+body {
+  color: #172018;
+  font: 16px/1.5 system-ui, sans-serif;
+  margin: 2rem auto;
+  max-width: 52rem;
+  padding: 0 1rem;
+}
+
+#editor {
+  border: 1px solid #718071;
+  min-height: 16rem;
+  padding: 0.75rem;
+  white-space: pre-wrap;
+}
+
+button {
+  margin: 0 0.5rem 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+}
+
+#log {
+  background: #eef2ee;
+  min-height: 6rem;
+  overflow-wrap: anywhere;
+  padding: 0.75rem;
+  white-space: pre-wrap;
+}

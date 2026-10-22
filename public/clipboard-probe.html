@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ChatPanelPlus Clipboard Probe</title>
+    <link rel="stylesheet" href="clipboard-probe.css">
+  </head>
+  <body>
+    <main>
+      <h1>ChatPanelPlus Clipboard Probe</h1>
+      <p>長文をクリップボードへコピーし、入力欄を空にしてから方式を一つずつ試してください。選択置換は入力欄に短いテキストを用意して選択してから試します。</p>
+      <div id="editor" contenteditable="true" role="textbox" aria-label="貼り付け試験用入力欄"></div>
+      <p>
+        <button id="native-paste" type="button">execCommand('paste') を試す</button>
+        <button id="insert-html" type="button">insertHTML を試す</button>
+        <button id="reset" type="button">入力欄を空にする</button>
+      </p>
+      <p>挿入後は入力欄をクリックし、Ctrl+Zで元に戻り、Ctrl+Yで再適用されるか確認してください。性能比較は「入力欄を空にする」後に同じ状態で行います。</p>
+      <p id="status" role="status">入力欄をクリックしてカーソル位置を決めてください。</p>
+      <pre id="log" aria-label="計測ログ"></pre>
+    </main>
+    <script src="clipboard-probe.js" defer></script>
+  </body>
+</html>
