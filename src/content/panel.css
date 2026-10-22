@@ -6,6 +6,7 @@
   max-width: 100%;
   margin: 0 auto 12px;
   align-self: center;
+  container-type: inline-size;
   color: #202123;
   color-scheme: light dark;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -90,6 +91,32 @@
   margin: 0;
   font: inherit;
   font-weight: 650;
+}
+
+.panel-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
+.codex-work-mode-control { position: relative; z-index: 2; display: grid; flex: 0 0 auto; justify-items: end; gap: 4px; }
+.codex-work-mode-toggle,
+.codex-work-mode-actions button { border: 1px solid var(--border-light, #d9dadd); border-radius: 8px; background: var(--main-surface-secondary, #f7f7f8); color: inherit; font: inherit; cursor: pointer; }
+.codex-work-mode-toggle { min-height: 30px; padding: 4px 10px; font-size: 12px; white-space: nowrap; }
+.codex-work-mode-toggle.is-enabled { border-color: #10a37f; background: rgb(16 163 127 / 12%); }
+.codex-work-mode-toggle.is-unknown,
+.codex-work-mode-toggle.has-error { border-color: #b42318; }
+.codex-work-mode-toggle:disabled { cursor: wait; opacity: .72; }
+.codex-work-mode-toggle:focus-visible,
+.codex-work-mode-actions button:focus-visible { outline: 2px solid #3157a4; outline-offset: 2px; }
+.codex-work-mode-message { position: static; display: grid; gap: 6px; width: min(260px, calc(100vw - 24px)); padding: 9px; border: 1px solid var(--border-light, #d9dadd); border-radius: 8px; background: var(--main-surface-primary, #fff); box-shadow: 0 4px 14px rgb(0 0 0 / 18%); font-size: 12px; }
+.codex-work-mode-message p { margin: 0; }
+.codex-work-mode-actions { display: flex; gap: 6px; }
+.codex-work-mode-actions button { min-height: 28px; padding: 3px 7px; font-size: 12px; }
+.panel.is-minimized .panel-header { position: absolute; inset: 0 auto auto 0; display: block; width: 100%; height: 1px; min-height: 1px; z-index: 3; pointer-events: none; }
+.panel.is-minimized .codex-work-mode-control { position: absolute; top: -28px; left: 4px; width: clamp(34px, calc(50cqi - 110px), 62px); pointer-events: auto; }
+.panel.is-minimized .codex-work-mode-toggle { width: 100%; min-height: 24px; padding: 0 3px; font-size: 11px; }
+.panel.is-minimized .codex-work-mode-message { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); clip-path: inset(50%); white-space: nowrap; }
+
+@container (max-width: 248px) {
+  .panel.is-minimized .panel-minimize-toggle { width: max(40px, calc(50cqi - 20px)); }
+  .panel.is-minimized .panel-minimize-icon { width: max(32px, calc(50cqi - 32px)); height: auto; }
+  .panel.is-minimized .codex-work-mode-control { width: 34px; }
 }
 
 .conversation-statistics {

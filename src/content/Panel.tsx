@@ -6,6 +6,7 @@ import { captureSelectionForPaste, clearComposer, insertAtBeginning, replaceCurr
 import { ClipboardPasteController, requiresManualPasteDialog, type ClipboardPasteResult } from './clipboard';
 import { debugPasteStrategy } from './clipboard-debug';
 import { ConversationStatistics } from './ConversationStatistics';
+import { CodexWorkModeToggle } from './CodexWorkModeToggle';
 import { pasteFromClipboard, replaceCurrentSelectionWithHTML } from './editor/experimental-insertion';
 import type { ClipboardMetric, ClipboardMetricReporter } from './clipboard-metrics.ts';
 import {
@@ -236,8 +237,11 @@ export function ChatPanel() {
 
   return (
     <aside className={`panel${currentViewState.minimized ? ' is-minimized' : ''}`} aria-label="ChatPanelPlus パネル">
+      <div className="panel-header">
+        <h1 className="panel-title" hidden={currentViewState.minimized}>ChatPanelPlus</h1>
+        <CodexWorkModeToggle minimized={currentViewState.minimized} />
+      </div>
       <div className="panel-content" hidden={currentViewState.minimized}>
-        <h1 className="panel-title">ChatPanelPlus</h1>
         <ConversationStatistics answerCompletionSoundEnabled={settings.answerCompletionSoundEnabled === true} />
         <div className="utility-row" aria-label="常時表示操作">
           {model.utilityButtons.map((button) => (
