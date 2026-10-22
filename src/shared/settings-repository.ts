@@ -64,8 +64,16 @@ function settingPaths(): string[][] {
   return paths;
 }
 
+function customButtonPaths(base: ExtensionSettings, draft: ExtensionSettings): string[][] {
+  const ids = new Set([
+    ...Object.keys(base.customButtons ?? {}),
+    ...Object.keys(draft.customButtons ?? {}),
+  ]);
+  return [...ids].map((id) => ['customButtons', id]);
+}
+
 function patchesBetween(base: ExtensionSettings, draft: ExtensionSettings): Patch[] {
-  return settingPaths().flatMap((path) => {
+  return [...settingPaths(), ...customButtonPaths(base, draft)].flatMap((path) => {
     const before = pathValue(base, path);
     const after = pathValue(draft, path);
     return same(before, after) ? [] : [{ path, before, after }];
@@ -73,11 +81,15 @@ function patchesBetween(base: ExtensionSettings, draft: ExtensionSettings): Patc
 }
 
 function replacementPatches(base: ExtensionSettings, draft: ExtensionSettings): Patch[] {
-  return settingPaths().map((path) => ({
+  return [...settingPaths(), ...customButtonPaths(base, draft)].map((path) => ({
     path,
     before: pathValue(base, path),
     after: pathValue(draft, path),
   }));
+}
+
+function hasCustomButtonInGroup(settings: ExtensionSettings, groupId: string): boolean {
+  return Object.values(settings.customButtons ?? {}).some((button) => button.groupId === groupId);
 }
 
 function cloneSettings(settings: ExtensionSettings): Record<string, unknown> {
@@ -189,6 +201,13 @@ export class SettingsRepository {
         : patchesBetween(base, draft);
       const conflicts = patches.filter((patch) => {
         const current = pathValue(latest.settings, patch.path);
+        if (patch.path[0] === 'customButtons') return !same(current, patch.before);
+        if (patch.path[0] === 'buttonOrder') {
+          const groupId = patch.path[1] ?? '';
+          const customOrder = [base, draft, latest.settings]
+            .some((settings) => hasCustomButtonInGroup(settings, groupId));
+          if (customOrder) return !same(current, patch.before);
+        }
         return !same(current, patch.before) && !same(current, patch.after);
       });
       if (conflicts.length) {

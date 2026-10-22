@@ -296,6 +296,80 @@ test('保存失敗はdraftを保持できる失敗結果を返す', async () => 
   assert.deepEqual(result, { ok: false, reason: 'storage-failed' });
 });
 
+test('custom buttonの別ID変更を統合し同一IDの変更競合では保存値を保持する', async () => {
+  const firstId = 'custom-123e4567-e89b-42d3-a456-426614174010';
+  const secondId = 'custom-123e4567-e89b-42d3-a456-426614174011';
+  const first = { groupId: 'directive', label: '最初', color: '#123', visible: true, kind: 'insert', text: '本文' } as const;
+  const second = { groupId: 'always', label: '二つ目', color: '#456', visible: true, kind: 'action', action: 'clear' } as const;
+  const base = { ...DEFAULT_SETTINGS, customButtons: { [firstId]: first, [secondId]: second } };
+  const draft = { ...base, customButtons: { ...base.customButtons, [firstId]: { ...first, label: '自分' } } };
+  const latest = { ...base, customButtons: { ...base.customButtons, [secondId]: { ...second, label: '他タブ' } } };
+  const fake = storage({ [CONFIG_STORAGE_KEY]: latest });
+  const repository = new SettingsRepository(fake.area);
+
+  const merged = await repository.saveSettings(base, draft);
+  assert.equal(merged.ok, true);
+  assert.deepEqual(fake.data[CONFIG_STORAGE_KEY], {
+    ...base,
+    customButtons: { [firstId]: { ...first, label: '自分' }, [secondId]: { ...second, label: '他タブ' } },
+  });
+
+  const persisted = fake.data[CONFIG_STORAGE_KEY] as ExtensionSettings;
+  const changedDraft = { ...persisted, customButtons: { ...persisted.customButtons, [firstId]: { ...first, label: '別の自分' } } };
+  const external = { ...persisted, customButtons: { ...persisted.customButtons, [firstId]: { ...first, label: '外部変更' } } };
+  const conflictFake = storage({ [CONFIG_STORAGE_KEY]: external });
+  const conflict = await new SettingsRepository(conflictFake.area).saveSettings(persisted, changedDraft);
+  assert.equal(conflict.ok, false);
+  if (!conflict.ok) assert.equal(conflict.reason, 'conflict');
+  assert.equal(conflictFake.writes, 0);
+  assert.deepEqual(conflictFake.data[CONFIG_STORAGE_KEY], external);
+});
+
+test('custom button追加衝突、更新中の削除、削除中の更新を検出する', async () => {
+  const id = 'custom-123e4567-e89b-42d3-a456-426614174012';
+  const definition = { groupId: 'directive', label: '項目', color: '#123', visible: true, kind: 'insert', text: '' } as const;
+
+  const duplicateFake = storage({ [CONFIG_STORAGE_KEY]: { ...DEFAULT_SETTINGS, customButtons: { [id]: definition } } });
+  const duplicate = await new SettingsRepository(duplicateFake.area).saveSettings(DEFAULT_SETTINGS, {
+    ...DEFAULT_SETTINGS, customButtons: { [id]: definition }, buttonOrder: { directive: [id] },
+  });
+  assert.equal(duplicate.ok, false);
+  if (!duplicate.ok) assert.equal(duplicate.reason, 'conflict');
+  assert.equal(duplicateFake.writes, 0);
+
+  const base = { ...DEFAULT_SETTINGS, customButtons: { [id]: definition }, buttonOrder: { directive: [id] } };
+  const updateFake = storage({ [CONFIG_STORAGE_KEY]: { ...base, customButtons: {}, buttonOrder: {} } });
+  const update = await new SettingsRepository(updateFake.area).saveSettings(base, {
+    ...base, customButtons: { [id]: { ...definition, label: '更新' } },
+  });
+  assert.equal(update.ok, false);
+  if (!update.ok) assert.equal(update.reason, 'conflict');
+  assert.equal(updateFake.writes, 0);
+
+  const deleteFake = storage({ [CONFIG_STORAGE_KEY]: { ...base, customButtons: { [id]: { ...definition, label: '外部' } } } });
+  const deletion = await new SettingsRepository(deleteFake.area).saveSettings(base, { ...DEFAULT_SETTINGS });
+  assert.equal(deletion.ok, false);
+  if (!deletion.ok) assert.equal(deletion.reason, 'conflict');
+  assert.equal(deleteFake.writes, 0);
+});
+
+test('custom buttonの同一グループ順序競合は最新順序を保護する', async () => {
+  const firstId = 'custom-123e4567-e89b-42d3-a456-426614174013';
+  const secondId = 'custom-123e4567-e89b-42d3-a456-426614174014';
+  const first = { groupId: 'directive', label: '一', color: '#123', visible: true, kind: 'insert', text: '' } as const;
+  const second = { groupId: 'directive', label: '二', color: '#456', visible: true, kind: 'insert', text: '' } as const;
+  const base = { ...DEFAULT_SETTINGS, customButtons: { [firstId]: first, [secondId]: second }, buttonOrder: { directive: [firstId, secondId] } };
+  const draft = { ...base, buttonOrder: { directive: [secondId, firstId] } };
+  const latest = { ...base, buttonOrder: { directive: [secondId, firstId] } };
+  const fake = storage({ [CONFIG_STORAGE_KEY]: latest });
+
+  const result = await new SettingsRepository(fake.area).saveSettings(base, draft);
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.reason, 'conflict');
+  assert.deepEqual(fake.data[CONFIG_STORAGE_KEY], latest);
+  assert.equal(fake.writes, 0);
+});
+
 test('ローカルconfig変更だけを通知し、不正値はパネル更新に流さない', () => {
   const handlers: Array<(changes: Record<string, { newValue?: unknown }>, areaName: string) => void> = [];
   const repository = new SettingsRepository(storage().area, {
