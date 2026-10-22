@@ -7,6 +7,7 @@ import {
 } from '../src/shared/conversation-statistics.ts';
 import {
   ConversationStatisticsRepository,
+  type StatisticsLockManagerLike,
   type StatisticsStorageAreaLike,
 } from '../src/shared/conversation-statistics-repository.ts';
 import { ConversationStatisticsSession } from '../src/content/conversation-statistics-session.ts';
@@ -36,6 +37,17 @@ function createStorage(initial: Record<string, unknown> = {}) {
 function statisticsFor(conversationId: string, turnKey: string, inputChars: number) {
   return mergeConversationStatistics(createStatisticsStore(), conversationId, [turnKey], [{ turnKey, inputChars }], 'manual')
     .conversations[conversationId]!;
+}
+
+function createSerialLockManager(): StatisticsLockManagerLike {
+  let tail = Promise.resolve();
+  return {
+    request<T>(_name: string, callback: () => Promise<T>): Promise<T> {
+      const result = tail.then(callback, callback);
+      tail = result.then(() => undefined, () => undefined);
+      return result;
+    },
+  };
 }
 
 test('新しい専用keyで保存・復元し、既存設定キーを変更しない', async () => {
@@ -92,6 +104,35 @@ test('古い会話スナップショットの保存中に追加されたTurn Key
   if (saved.ok) {
     assert.equal(saved.store.conversations['conversation-a']?.turns['turn-new']?.inputChars, 4);
     assert.equal(saved.store.conversations['conversation-a']?.turns['turn-old']?.inputChars, 5);
+  }
+});
+
+test('共有Web Lockを使う複数Repositoryの同時保存で両方のTurn Keyを保持する', async () => {
+  const fake = createStorage();
+  const delayedArea: StatisticsStorageAreaLike = {
+    async get(keys) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return fake.area.get(keys);
+    },
+    set: (items) => fake.area.set(items),
+  };
+  const locks = createSerialLockManager();
+  const firstRepository = new ConversationStatisticsRepository(delayedArea, locks);
+  const secondRepository = new ConversationStatisticsRepository(delayedArea, locks);
+  assert.equal((await firstRepository.loadStore()).ok, true);
+  assert.equal((await secondRepository.loadStore()).ok, true);
+
+  const results = await Promise.all([
+    firstRepository.saveConversation('conversation-a', statisticsFor('conversation-a', 'turn-a', 5)),
+    secondRepository.saveConversation('conversation-a', statisticsFor('conversation-a', 'turn-b', 7)),
+  ]);
+
+  assert.equal(results.every((result) => result.ok), true);
+  const saved = await firstRepository.loadStore();
+  assert.equal(saved.ok, true);
+  if (saved.ok) {
+    assert.equal(saved.store.conversations['conversation-a']?.turns['turn-a']?.inputChars, 5);
+    assert.equal(saved.store.conversations['conversation-a']?.turns['turn-b']?.inputChars, 7);
   }
 });
 
