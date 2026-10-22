@@ -11,6 +11,8 @@ import { createChromeSoundAssetRepository } from '../shared/answer-completion-so
 import { DEFAULT_COMPLETION_SOUND_ID } from '../shared/answer-completion-sound-definitions.ts';
 import { DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT } from '../shared/answer-completion-sound-volume.ts';
 import { routeAnswerCompletionSound } from './answer-completion-output-device-route.ts';
+import { dispatchAnswerCompletionNotifications } from './answer-completion-notifications.ts';
+import { TabCompletionIndicator } from './tab-completion-indicator.ts';
 import { calculateStatisticsPopoverPlacement, type StatisticsPopoverPlacement } from './conversation-statistics-popover-position.ts';
 
 const EMPTY_STATE: ConversationStatisticsViewState = {
@@ -99,26 +101,34 @@ export function ConversationStatistics({
     player.setSoundId(soundId.current);
     player.setVolumePercent(soundVolumePercent.current);
     player.setEnabled(soundEnabled.current);
+    const tabCompletionIndicator = new TabCompletionIndicator({ document, window });
     const active = new ConversationStatisticsController({
       document,
       window,
       repository: createChromeConversationStatisticsRepository(),
       onState: setState,
       onAnswerCompleted: () => {
-        if (!soundEnabled.current || soundVolumePercent.current === 0) return;
-        void routeAnswerCompletionSound(chrome.runtime, {
-          soundId: soundId.current,
-          volumePercent: soundVolumePercent.current,
-        }, () => {
-          setPlaybackError('');
-          player.play();
-        }, (reason) => setPlaybackError(soundOutputErrorMessage(reason)));
+        dispatchAnswerCompletionNotifications({
+          notifyTab: () => tabCompletionIndicator.onAnswerCompleted(),
+          soundEnabled: soundEnabled.current,
+          soundVolumePercent: soundVolumePercent.current,
+          playSound: () => {
+            void routeAnswerCompletionSound(chrome.runtime, {
+              soundId: soundId.current,
+              volumePercent: soundVolumePercent.current,
+            }, () => {
+              setPlaybackError('');
+              player.play();
+            }, (reason) => setPlaybackError(soundOutputErrorMessage(reason)));
+          },
+        });
       },
     });
     controller.current = active;
     active.start();
     return () => {
       active.stop();
+      tabCompletionIndicator.dispose();
       player.dispose();
       soundPlayer.current = null;
       controller.current = null;
