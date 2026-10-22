@@ -88,7 +88,7 @@ export class CodexWorkModeController {
     const generation = this.generation;
     const revision = this.storageRevision;
     this.setState(previous.status === 'ready'
-      ? { ...previous, saving: true, notice: undefined }
+      ? { status: 'ready', enabled: previous.enabled, saving: true }
       : { ...previous, saving: true, actionFailed: false });
 
     const result = await this.repository.setEnabled(enabled);

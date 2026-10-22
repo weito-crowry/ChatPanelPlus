@@ -60,10 +60,6 @@ function latest(states: CodexWorkModeControllerState[]) {
   return states[states.length - 1];
 }
 
-test('Codex work mode controller exists for UI state and storage synchronization', () => {
-  assert.equal(typeof CodexWorkModeController, 'function');
-});
-
 test('subscribes before initial load and keeps a newer storage event over the stale read', async () => {
   let releaseRead!: (value: Record<string, unknown>) => void;
   const delayedGet = new Promise<Record<string, unknown>>((resolve) => { releaseRead = resolve; });
@@ -84,7 +80,7 @@ test('subscribes before initial load and keeps a newer storage event over the st
   controller.dispose();
 });
 
-test('toggle saves one value, rejects rapid repeat clicks while saving, and reports write failure', async () => {
+test('toggle retains the current value and reports storage write failure', async () => {
   const fake = createStorage();
   const controller = createController(fake);
   const states: CodexWorkModeControllerState[] = [];
@@ -96,6 +92,33 @@ test('toggle saves one value, rejects rapid repeat clicks while saving, and repo
 
   assert.deepEqual(latest(states), { status: 'ready', enabled: false, saving: false, notice: 'write-failed' });
   assert.equal(fake.writes, 1);
+  controller.dispose();
+});
+
+test('rapid repeat clicks do not start a second write while the first is pending', async () => {
+  const fake = createStorage();
+  let releaseWrite!: () => void;
+  const writeGate = new Promise<void>((resolve) => { releaseWrite = resolve; });
+  let writeRequests = 0;
+  const delayedArea: CodexWorkModeStorageAreaLike = {
+    get: fake.area.get,
+    async set(items) {
+      writeRequests += 1;
+      await writeGate;
+      await fake.area.set(items);
+    },
+  };
+  const controller = new CodexWorkModeController(new CodexWorkModeRepository(delayedArea, fake.changeEvent));
+  controller.start();
+  await flush();
+
+  const first = controller.toggle();
+  await controller.toggle();
+  assert.equal(writeRequests, 1);
+  assert.deepEqual(controller.state, { status: 'ready', enabled: false, saving: true });
+  releaseWrite();
+  await first;
+  assert.deepEqual(controller.state, { status: 'ready', enabled: true, saving: false });
   controller.dispose();
 });
 
@@ -136,5 +159,19 @@ test('unknown data can be retried or explicitly initialized OFF without an autom
   await controller.initializeOff();
   assert.deepEqual(fake.data[CODEX_WORK_MODE_STORAGE_KEY], { schemaVersion: 1, enabled: false });
   assert.deepEqual(latest(states), { status: 'ready', enabled: false, saving: false });
+  controller.dispose();
+});
+
+test('storage read error can be retried without writing an OFF value', async () => {
+  const fake = createStorage();
+  fake.failReads = true;
+  const controller = createController(fake);
+  controller.start();
+  await flush();
+  assert.deepEqual(controller.state, { status: 'unknown', reason: 'storage-error', saving: false });
+  fake.failReads = false;
+  await controller.retry();
+  assert.deepEqual(controller.state, { status: 'ready', enabled: false, saving: false });
+  assert.equal(fake.writes, 0);
   controller.dispose();
 });
