@@ -1,4 +1,11 @@
-import { DEFAULT_BUTTONS, DEFAULT_TABS, type ButtonGroupId, type TabId } from './default-ui.ts';
+import {
+  DEFAULT_BUTTONS,
+  DEFAULT_TABS,
+  type ButtonGroupId,
+  type CustomButtonDefinition,
+  type CustomButtonId,
+  type TabId,
+} from './default-ui.ts';
 
 export const SETTINGS_SCHEMA_VERSION = 1 as const;
 
@@ -17,6 +24,7 @@ export type ExtensionSettings = Readonly<{
   buttonOrder?: Readonly<Record<string, readonly string[]>>;
   tabOrder?: readonly string[];
   answerCompletionSoundEnabled?: boolean;
+  customButtons?: Readonly<Record<CustomButtonId, CustomButtonDefinition>>;
   [key: string]: unknown;
 }>;
 
@@ -40,18 +48,21 @@ function plainObject(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
-function orderedIds(defaults: readonly string[], value: unknown): string[] | null {
-  if (value === undefined) return [...defaults];
+function orderedIds(defaults: readonly string[], value: unknown, customIds: readonly string[] = []): string[] | null {
+  if (value === undefined) return [...defaults, ...[...customIds].sort()];
   if (!Array.isArray(value) || !value.every((id) => typeof id === 'string')) return null;
   const result: string[] = [];
   const seen = new Set<string>();
+  const known = new Set([...defaults, ...customIds]);
   for (const id of value) {
-    if (defaults.includes(id) && !seen.has(id)) {
+    if (id.startsWith('custom-') && !customIds.includes(id)) return null;
+    if (known.has(id) && !seen.has(id)) {
       seen.add(id);
       result.push(id);
     }
   }
   for (const id of defaults) if (!seen.has(id)) result.push(id);
+  for (const id of [...customIds].sort()) if (!seen.has(id)) result.push(id);
   return result;
 }
 
@@ -95,13 +106,50 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
     }
   }
 
+  const customButtons: Record<string, CustomButtonDefinition> = {};
+  if (value.customButtons !== undefined) {
+    if (!plainObject(value.customButtons)) return settingsError('invalid-settings');
+    const uuidPattern = /^custom-[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i;
+    const actions = new Set(['insert-jst', 'paste', 'clear']);
+    for (const [id, rawDefinition] of Object.entries(value.customButtons)) {
+      if (!uuidPattern.test(id) || BUTTON_IDS.has(id) || !plainObject(rawDefinition)) return settingsError('invalid-settings');
+      const definition = rawDefinition as Record<string, unknown>;
+      const allowedFields = new Set(['groupId', 'label', 'color', 'visible', 'kind', 'action', 'text']);
+      if (Object.keys(definition).some((field) => !allowedFields.has(field))) return settingsError('invalid-settings');
+      if (!GROUP_IDS.has(definition.groupId as ButtonGroupId)
+        || typeof definition.label !== 'string'
+        || typeof definition.color !== 'string'
+        || !/^#[\da-f]{3}(?:[\da-f]{3})?$/i.test(definition.color)
+        || typeof definition.visible !== 'boolean') return settingsError('invalid-settings');
+      if (definition.kind === 'insert') {
+        if (typeof definition.text !== 'string' || 'action' in definition) return settingsError('invalid-settings');
+      } else if (definition.kind === 'action') {
+        if (typeof definition.action !== 'string' || !actions.has(definition.action) || 'text' in definition) {
+          return settingsError('invalid-settings');
+        }
+      } else return settingsError('invalid-settings');
+      customButtons[id] = {
+        groupId: definition.groupId as ButtonGroupId,
+        label: definition.label,
+        color: definition.color,
+        visible: definition.visible,
+        ...(definition.kind === 'insert'
+          ? { kind: 'insert' as const, text: definition.text as string }
+          : { kind: 'action' as const, action: definition.action as 'insert-jst' | 'paste' | 'clear' }),
+      };
+    }
+  }
+
   const buttonOrder: Record<string, readonly string[]> = {};
   if (value.buttonOrder !== undefined) {
     if (!plainObject(value.buttonOrder)) return settingsError('invalid-settings');
     for (const [rawGroup, rawOrder] of Object.entries(value.buttonOrder)) {
       if (!GROUP_IDS.has(rawGroup as ButtonGroupId)) continue;
       const defaults = DEFAULT_BUTTONS.filter(({ groupId }) => groupId === rawGroup).map(({ id }) => id);
-      const order = orderedIds(defaults, rawOrder);
+      const customIds = Object.entries(customButtons)
+        .filter(([, definition]) => definition.groupId === rawGroup)
+        .map(([id]) => id);
+      const order = orderedIds(defaults, rawOrder, customIds);
       if (!order) return settingsError('invalid-settings');
       buttonOrder[rawGroup] = order;
     }
@@ -119,6 +167,7 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
       schemaVersion: SETTINGS_SCHEMA_VERSION,
       ...(value.buttonOverrides === undefined ? {} : { buttonOverrides }),
       ...(value.tabOverrides === undefined ? {} : { tabOverrides }),
+      ...(value.customButtons === undefined ? {} : { customButtons }),
       ...(value.buttonOrder === undefined ? {} : { buttonOrder }),
       ...(value.tabOrder === undefined ? {} : { tabOrder: tabOrder as TabId[] }),
     } as ExtensionSettings,

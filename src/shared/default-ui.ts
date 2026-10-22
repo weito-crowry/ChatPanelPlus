@@ -1,16 +1,28 @@
 import type { ExtensionSettings } from './settings.ts';
 
-export type ButtonId =
+export type DefaultButtonId =
   | 'now-btn' | 'paste-btn' | 'clear-btn' | 'chat-btn'
   | 'full-btn' | 'summary-btn' | 'translate-btn' | 'search-btn'
   | 'zokudake-btn' | 'handover-btn' | 'wall-start-btn' | 'wall-task-btn'
   | 'wall-sum-btn' | 'wall-resume-btn' | 'yes-btn' | 'no-btn'
   | 'a-btn' | 'b-btn' | 'c-btn' | 'd-btn';
 
+export type CustomButtonId = `custom-${string}`;
+export type ButtonId = DefaultButtonId | CustomButtonId;
+
 export type TabId = 'directive' | 'control' | 'wall' | 'binary' | 'quad';
 export type ButtonGroupId = 'always' | TabId;
 export type ButtonAction = 'insert-jst' | 'paste' | 'clear';
 export type ButtonKind = 'insert' | 'action';
+export type CustomButtonDefinition = Readonly<{
+  groupId: ButtonGroupId;
+  label: string;
+  color: string;
+  visible: boolean;
+} & (
+  | { kind: 'insert'; text: string; action?: never }
+  | { kind: 'action'; action: ButtonAction; text?: never }
+)>;
 
 export type ButtonDefinition = Readonly<{
   id: ButtonId;
@@ -115,9 +127,29 @@ function colorValue(value: unknown): value is string {
   return typeof value === 'string' && /^#[\da-f]{3}(?:[\da-f]{3})?$/i.test(value);
 }
 
+function orderedButtonIds(
+  defaults: readonly ButtonId[],
+  customIds: readonly CustomButtonId[],
+  requested: readonly string[] | undefined,
+): ButtonId[] {
+  const known = new Set<ButtonId>([...defaults, ...customIds]);
+  const seen = new Set<ButtonId>();
+  const result: ButtonId[] = [];
+  for (const id of requested ?? []) {
+    if (known.has(id as ButtonId) && !seen.has(id as ButtonId)) {
+      seen.add(id as ButtonId);
+      result.push(id as ButtonId);
+    }
+  }
+  for (const id of defaults) if (!seen.has(id)) result.push(id);
+  for (const id of [...customIds].sort()) if (!seen.has(id)) result.push(id);
+  return result;
+}
+
 export function resolveDefaultUI(settings: ExtensionSettings = { schemaVersion: 1 }): ResolvedUI {
   const source = record(settings);
   const buttonOverrides = record(source.buttonOverrides);
+  const customButtons = record(source.customButtons) as Record<string, CustomButtonDefinition>;
   const tabOverrides = record(source.tabOverrides);
   const buttonOrder = record(source.buttonOrder);
   const tabIds = orderedIds(DEFAULT_TABS.map(({ id }) => id), stringArray(source.tabOrder));
@@ -127,23 +159,37 @@ export function resolveDefaultUI(settings: ExtensionSettings = { schemaVersion: 
     const override = record(tabOverrides[id]);
     return Object.freeze({ ...base, order, visible: typeof override.visible === 'boolean' ? override.visible : true });
   });
-  const buttonById = new Map(DEFAULT_BUTTONS.map((button) => [button.id, button]));
+  const buttonById = new Map<ButtonId, ButtonDefinition>(DEFAULT_BUTTONS.map((button) => [button.id, button]));
+  const customIdsByGroup = new Map<ButtonGroupId, CustomButtonId[]>();
+  for (const [id, definition] of Object.entries(customButtons)) {
+    const customId = id as CustomButtonId;
+    const customButton: ButtonDefinition = { id: customId, order: 0, ...definition };
+    buttonById.set(customId, customButton);
+    const group = customIdsByGroup.get(definition.groupId) ?? [];
+    group.push(customId);
+    customIdsByGroup.set(definition.groupId, group);
+  }
   const groups: ButtonGroupId[] = ['always', ...tabIds];
   const resolvedButtons: ResolvedButton[] = [];
   for (const groupId of groups) {
     const defaults = DEFAULT_BUTTONS.filter((button) => button.groupId === groupId);
-    const ids = orderedIds(defaults.map(({ id }) => id), stringArray(buttonOrder[groupId]));
+    const ids = orderedButtonIds(
+      defaults.map(({ id }) => id),
+      customIdsByGroup.get(groupId) ?? [],
+      stringArray(buttonOrder[groupId]),
+    );
     for (const [order, id] of ids.entries()) {
       const base = buttonById.get(id)!;
       const override = record(buttonOverrides[id]);
+      const custom = customButtons[id];
       const resolved: ResolvedButton = {
         ...base,
         order,
-        visible: typeof override.visible === 'boolean' ? override.visible : true,
-        label: typeof override.label === 'string' ? override.label : base.label,
-        color: colorValue(override.color) ? override.color : base.color,
+        visible: custom?.visible ?? (typeof override.visible === 'boolean' ? override.visible : true),
+        label: custom?.label ?? (typeof override.label === 'string' ? override.label : base.label),
+        color: custom?.color ?? (colorValue(override.color) ? override.color : base.color),
         ...(base.kind === 'insert'
-          ? { text: typeof override.text === 'string' ? override.text : base.text }
+          ? { text: custom?.kind === 'insert' ? custom.text : typeof override.text === 'string' ? override.text : base.text }
           : {}),
       };
       resolvedButtons.push(Object.freeze(resolved));
