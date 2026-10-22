@@ -83,6 +83,11 @@ test('custom order references to unknown IDs or another group are rejected while
     customButtons: { [pasteId]: { groupId: 'always', label: '貼付', color: '#123', visible: true, kind: 'action', action: 'paste' } },
     buttonOrder: { directive: [pasteId] },
   }).ok, false);
+  assert.equal(validateExtensionSettings({
+    schemaVersion: 1,
+    customButtons: { [textId]: textButton },
+    buttonOrder: { futureGroup: [textId] },
+  }).ok, false);
 
   const compatible = validateExtensionSettings({ schemaVersion: 1, buttonOrder: { directive: ['legacy-ghost'] } });
   assert.equal(compatible.ok, true);

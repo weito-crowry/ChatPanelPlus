@@ -144,7 +144,12 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
   if (value.buttonOrder !== undefined) {
     if (!plainObject(value.buttonOrder)) return settingsError('invalid-settings');
     for (const [rawGroup, rawOrder] of Object.entries(value.buttonOrder)) {
-      if (!GROUP_IDS.has(rawGroup as ButtonGroupId)) continue;
+      if (!GROUP_IDS.has(rawGroup as ButtonGroupId)) {
+        if (Array.isArray(rawOrder) && rawOrder.some((id) => typeof id === 'string' && id.startsWith('custom-'))) {
+          return settingsError('invalid-settings');
+        }
+        continue;
+      }
       const defaults = DEFAULT_BUTTONS.filter(({ groupId }) => groupId === rawGroup).map(({ id }) => id);
       const customIds = Object.entries(customButtons)
         .filter(([, definition]) => definition.groupId === rawGroup)
