@@ -50,6 +50,21 @@ test('Panelモデルは20 stable IDと既定の表示内容をそのまま維持
     DEFAULT_BUTTONS.map(({ id, label, color, text, action }) => [id, label, color, text, action]));
 });
 
+test('Panelモデルは常時表示とタブ内のカスタムボタンを同じ解決済み一覧へ含める', () => {
+  const utilityId = 'custom-123e4567-e89b-42d3-a456-426614174040';
+  const tabId = 'custom-123e4567-e89b-42d3-a456-426614174041';
+  const model = createPanelViewModel({
+    schemaVersion: 1,
+    customButtons: {
+      [utilityId]: { groupId: 'always', label: '貼付', color: '#123', visible: true, kind: 'action', action: 'paste' },
+      [tabId]: { groupId: 'directive', label: '追加指示', color: '#456', visible: true, kind: 'insert', text: '' },
+    },
+  });
+
+  assert.ok(model.utilityButtons.some(({ id, action }) => id === utilityId && action === 'paste'));
+  assert.ok(model.buttonsByTab.get('directive')?.some(({ id, text }) => id === tabId && text === ''));
+});
+
 test('日時は固定の表示例でなくAsia/Tokyoの実日時形式に整形する', () => {
   assert.equal(formatJstTimestamp(new Date(0)), '[1970/01/01 09:00:00 JST]');
 });

@@ -9,6 +9,7 @@ import { ConversationStatistics } from './ConversationStatistics';
 import { CodexWorkModeToggle } from './CodexWorkModeToggle';
 import { pasteFromClipboard, replaceCurrentSelectionWithHTML } from './editor/experimental-insertion';
 import type { ClipboardMetric, ClipboardMetricReporter } from './clipboard-metrics.ts';
+import { dispatchPanelButton } from './panel-button-actions';
 import {
   createInitialPanelViewState,
   createPanelViewModel,
@@ -182,14 +183,18 @@ export function ChatPanel() {
     });
   }, [currentViewState.selectedTabId, currentViewState.minimized, persistViewState, viewStateLoaded]);
 
-  function activate(button: ResolvedButton) {
-    if (button.kind === 'insert') {
-      showResult(insertAtBeginning(button.text ?? ''));
-    } else if (button.action === 'insert-jst') {
-      showResult(insertAtBeginning(formatJstTimestamp()));
-    } else if (button.action === 'clear') {
-      showResult(clearComposer());
-    }
+  function dispatchButton(button: ResolvedButton) {
+    dispatchPanelButton(button, {
+      insert: (text) => showResult(insertAtBeginning(text)),
+      insertJst: () => showResult(insertAtBeginning(formatJstTimestamp())),
+      paste: () => { void beginPaste(); },
+      clear: () => showResult(clearComposer()),
+    });
+  }
+
+  function capturePastePointer() {
+    pointerSnapshot.current = captureSelectionForPaste();
+    returnFocus.current = pointerSnapshot.current.editor;
   }
 
   function showResult(result: ReturnType<typeof insertAtBeginning>) {
@@ -251,14 +256,8 @@ export function ChatPanel() {
               key={button.id}
               data-button-id={button.id}
               style={{ backgroundColor: button.color }}
-              onPointerDown={button.action === 'paste' ? () => {
-                pointerSnapshot.current = captureSelectionForPaste();
-                returnFocus.current = pointerSnapshot.current.editor;
-              } : undefined}
-              onClick={() => {
-                if (button.action === 'paste') void beginPaste();
-                else activate(button);
-              }}
+              onPointerDown={button.action === 'paste' ? capturePastePointer : undefined}
+              onClick={() => dispatchButton(button)}
             >
               {button.label}
             </button>
@@ -300,7 +299,8 @@ export function ChatPanel() {
                 key={button.id}
                 data-button-id={button.id}
                 style={{ backgroundColor: button.color }}
-                onClick={() => activate(button)}
+                onPointerDown={button.action === 'paste' ? capturePastePointer : undefined}
+                onClick={() => dispatchButton(button)}
               >
                 {button.label}
               </button>
