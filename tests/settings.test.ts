@@ -50,3 +50,14 @@ test('JSON import/exportは設定だけ往復し、不正JSONと未知schemaを�
   assert.equal(parseSettingsJson('{').ok, false);
   assert.equal(parseSettingsJson('{"schemaVersion":2}').ok, false);
 });
+
+test('回答完了音はschema 1の旧設定でOFFとなり、boolean値だけをJSON往復する', () => {
+  const oldSettings = validateExtensionSettings({ schemaVersion: 1 });
+  assert.equal(oldSettings.ok, true);
+  if (oldSettings.ok) assert.equal(oldSettings.settings.answerCompletionSoundEnabled ?? false, false);
+
+  const enabled = parseSettingsJson(serializeSettings({ schemaVersion: 1, answerCompletionSoundEnabled: true }));
+  assert.equal(enabled.ok, true);
+  if (enabled.ok) assert.equal(enabled.settings.answerCompletionSoundEnabled, true);
+  assert.equal(validateExtensionSettings({ schemaVersion: 1, answerCompletionSoundEnabled: 'yes' }).ok, false);
+});

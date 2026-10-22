@@ -56,7 +56,7 @@ test('詳細小窓はIME中のEscapeを奪わず、画面に合わせて配置�
   ]);
   assert.match(component, /event\.nativeEvent\.isComposing/);
   assert.match(component, /setDetailsOpen\(false\)/);
-  assert.match(panel, /<div className="panel-content" hidden=\{currentViewState\.minimized\}>[\s\S]*?<ConversationStatistics \/>/);
+  assert.match(panel, /<div className="panel-content" hidden=\{currentViewState\.minimized\}>[\s\S]*?<ConversationStatistics answerCompletionSoundEnabled=\{settings\.answerCompletionSoundEnabled === true\} \/>/);
   assert.match(component, /getBoundingClientRect\(\)/);
   assert.match(component, /findComposerForm/);
   assert.match(styles, /\.statistics-popover\s*\{[\s\S]*?position:\s*fixed/);

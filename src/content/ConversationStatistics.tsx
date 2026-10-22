@@ -6,6 +6,7 @@ import {
   type StatisticsStorageError,
 } from './conversation-statistics-controller.ts';
 import { findComposerForm } from './conversation-statistics-send-intent.ts';
+import { AnswerCompletionSoundPlayer } from './answer-completion-sound.ts';
 import { calculateStatisticsPopoverPlacement, type StatisticsPopoverPlacement } from './conversation-statistics-popover-position.ts';
 
 const EMPTY_STATE: ConversationStatisticsViewState = {
@@ -39,28 +40,41 @@ function scanMessage(state: ConversationStatisticsViewState): string | null {
   return null;
 }
 
-export function ConversationStatistics() {
+export function ConversationStatistics({ answerCompletionSoundEnabled = false }: { readonly answerCompletionSoundEnabled?: boolean }) {
   const [state, setState] = useState(EMPTY_STATE);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [placement, setPlacement] = useState<StatisticsPopoverPlacement | null>(null);
   const controller = useRef<ConversationStatisticsController | null>(null);
+  const soundPlayer = useRef<AnswerCompletionSoundPlayer | null>(null);
+  const soundEnabled = useRef(answerCompletionSoundEnabled);
+  soundEnabled.current = answerCompletionSoundEnabled;
   const trigger = useRef<HTMLButtonElement>(null);
   const popover = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    const player = new AnswerCompletionSoundPlayer(document);
+    soundPlayer.current = player;
+    player.setEnabled(soundEnabled.current);
     const active = new ConversationStatisticsController({
       document,
       window,
       repository: createChromeConversationStatisticsRepository(),
       onState: setState,
+      onAnswerCompleted: () => player.play(),
     });
     controller.current = active;
     active.start();
     return () => {
       active.stop();
+      player.dispose();
+      soundPlayer.current = null;
       controller.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    soundPlayer.current?.setEnabled(answerCompletionSoundEnabled);
+  }, [answerCompletionSoundEnabled]);
 
   useLayoutEffect(() => {
     if (!detailsOpen) {

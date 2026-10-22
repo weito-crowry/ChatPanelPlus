@@ -238,7 +238,7 @@ export function ChatPanel() {
     <aside className={`panel${currentViewState.minimized ? ' is-minimized' : ''}`} aria-label="ChatPanelPlus パネル">
       <div className="panel-content" hidden={currentViewState.minimized}>
         <h1 className="panel-title">ChatPanelPlus</h1>
-        <ConversationStatistics />
+        <ConversationStatistics answerCompletionSoundEnabled={settings.answerCompletionSoundEnabled === true} />
         <div className="utility-row" aria-label="常時表示操作">
           {model.utilityButtons.map((button) => (
             <button

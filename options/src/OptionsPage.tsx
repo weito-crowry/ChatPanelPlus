@@ -71,6 +71,11 @@ export function OptionsPage() {
     setStatus('未保存の変更があります。');
   }
 
+  function updateAnswerCompletionSound(enabled: boolean) {
+    setDraft((current) => ({ ...current, answerCompletionSoundEnabled: enabled }));
+    setStatus('未保存の変更があります。');
+  }
+
   function moveButton(group: ButtonGroupId, id: ButtonId, delta: -1 | 1) {
     setDraft((current) => moveButtonOrder(current, group, id, delta));
     setStatus('未保存の変更があります。');
@@ -293,6 +298,18 @@ export function OptionsPage() {
             </div>
           </section>
         ))}
+        <section className="settings-card" aria-labelledby="answer-completion-sound-title">
+          <h2 id="answer-completion-sound-title">回答完了音</h2>
+          <label className="tab-visibility">
+            <input
+              type="checkbox"
+              checked={draft.answerCompletionSoundEnabled === true}
+              onChange={(event) => updateAnswerCompletionSound(event.currentTarget.checked)}
+            />
+            ChatGPTの回答完了時に音を鳴らす
+          </label>
+          <p>初期状態は無効です。有効にした後、ChatGPTページで操作すると再生できるようになります。</p>
+        </section>
       </fieldset>
 
       <section className="settings-card layout-actions" aria-labelledby="layout-actions-title">

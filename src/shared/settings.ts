@@ -16,6 +16,7 @@ export type ExtensionSettings = Readonly<{
   tabOverrides?: Readonly<Record<string, Readonly<{ visible?: boolean; [key: string]: unknown }>>>;
   buttonOrder?: Readonly<Record<string, readonly string[]>>;
   tabOrder?: readonly string[];
+  answerCompletionSoundEnabled?: boolean;
   [key: string]: unknown;
 }>;
 
@@ -108,7 +109,9 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
 
   const tabOrder = orderedIds(DEFAULT_TABS.map(({ id }) => id), value.tabOrder);
   if (!tabOrder) return settingsError('invalid-settings');
-
+  if (value.answerCompletionSoundEnabled !== undefined && typeof value.answerCompletionSoundEnabled !== 'boolean') {
+    return settingsError('invalid-settings');
+  }
   return {
     ok: true,
     settings: {

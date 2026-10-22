@@ -22,6 +22,8 @@ import {
 import { ConversationStatisticsSession } from './conversation-statistics-session.ts';
 import { ConversationStatisticsHistoryManager } from './conversation-statistics-history-manager.ts';
 import type { ConversationStatisticsHistoryViewState, HistoryScanResult } from './conversation-statistics-history.ts';
+import { AnswerCompletionTracker, type AnswerCompletionEvent } from './answer-completion-sound.ts';
+import { observeConversationMutations } from './conversation-statistics-observer.ts';
 import {
   findComposerForm,
   isComposerEnterIntent,
@@ -46,6 +48,7 @@ export interface ConversationStatisticsControllerOptions {
   readonly window: Window;
   readonly repository: ConversationStatisticsRepository;
   readonly onState: (state: ConversationStatisticsViewState) => void;
+  readonly onAnswerCompleted?: (event: AnswerCompletionEvent) => void;
 }
 
 const SAVE_DEBOUNCE_MS = 400;
@@ -80,6 +83,7 @@ export class ConversationStatisticsController {
   private submissionBaselineTurnKeys: string[] = [];
   private submissionFromNewConversation = false;
   private automaticInputKeys = new Set<string>();
+  private readonly answerCompletionTracker = new AnswerCompletionTracker();
 
   constructor(options: ConversationStatisticsControllerOptions) {
     this.options = options;
@@ -246,6 +250,7 @@ export class ConversationStatisticsController {
     const initialStore = loaded.ok ? loaded.store : createStatisticsStore();
     try {
       const identities = collectConversationIdentities(nextRoot);
+      this.answerCompletionTracker.reset(identities.identities);
       const cachedSession = this.volatileSessions.get(nextId);
       const session = cachedSession ?? new ConversationStatisticsSession(nextId, initialStore, identities.turnKeys, identities.identities);
       if (cachedSession && loaded.ok) session.rebaseStore(loaded.store);
@@ -282,20 +287,7 @@ export class ConversationStatisticsController {
       if (loaded.ok && !cachedSession && !sameConversation(currentStored, nextStored)) this.markDirty(nextId);
       if (!loaded.ok) this.failedConversations.set(nextId, loaded.reason);
       else this.failedConversations.delete(nextId);
-      this.observer = new MutationObserver((records) => this.onMutations(records));
-      this.observer.observe(nextRoot, {
-        childList: true,
-        subtree: true,
-        characterData: true,
-        attributes: true,
-        attributeFilter: [
-          'data-turn-key',
-          'data-chatgpt-selection-message-id',
-          'data-dil-message-id',
-          'data-talvt-turn-state',
-          'data-user-message-bubble',
-        ],
-      });
+      this.observer = observeConversationMutations(nextRoot, (records) => this.onMutations(records));
       this.historyScan = new ConversationStatisticsHistoryManager({
         document: this.options.document,
         window: this.options.window,
@@ -348,6 +340,10 @@ export class ConversationStatisticsController {
       for (const turn of candidates) {
         const identity = collectTurnIdentity(turn);
         if (!identity) continue;
+        const completion = this.answerCompletionTracker.observe(identity);
+        if (completion) {
+          try { this.options.onAnswerCompleted?.(completion); } catch { /* Sound callbacks must not affect statistics. */ }
+        }
         const key = identity.turnKey;
         const existing = session.hasIdentity(key);
         if (!existing) {

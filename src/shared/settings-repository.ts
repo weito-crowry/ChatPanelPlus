@@ -60,6 +60,7 @@ function settingPaths(): string[][] {
   const groups: ButtonGroupId[] = ['always', ...DEFAULT_TABS.map(({ id }) => id)];
   for (const group of groups) paths.push(['buttonOrder', group]);
   paths.push(['tabOrder']);
+  paths.push(['answerCompletionSoundEnabled']);
   return paths;
 }
 

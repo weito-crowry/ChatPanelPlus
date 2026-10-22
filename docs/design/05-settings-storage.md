@@ -30,6 +30,7 @@
   - tabOverrides: 安定 tabId をキーにしたオブジェクト
   - buttonOrder: 既定グループ／各タブ単位の安定 ID 配列
   - tabOrder: 安定 tabId 配列
+  - answerCompletionSoundEnabled?: 回答完了音の有効状態。省略時は無効
 - ButtonOverride:
   - visible?: boolean
   - label?: string

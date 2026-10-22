@@ -143,6 +143,23 @@ test('同時の別Options設定はWeb Lockで直列化され、異なるfield変
   assert.deepEqual(locks.names, ['chatPanelPlus.config.write', 'chatPanelPlus.config.write']);
 });
 
+test('回答完了音の設定を保存・再読込し、既定値への全置換で無効化できる', async () => {
+  const fake = storage();
+  const repository = new SettingsRepository(fake.area, undefined, sharedLocks());
+  const enabled = { ...DEFAULT_SETTINGS, answerCompletionSoundEnabled: true };
+
+  assert.equal((await repository.saveSettings(DEFAULT_SETTINGS, enabled)).ok, true);
+  const loaded = await repository.loadSettings();
+  assert.equal(loaded.ok, true);
+  if (!loaded.ok) return;
+  assert.equal(loaded.settings.answerCompletionSoundEnabled, true);
+
+  assert.equal((await repository.saveSettings(loaded.settings, DEFAULT_SETTINGS, { replaceKnownFields: true })).ok, true);
+  const reset = await repository.loadSettings();
+  assert.equal(reset.ok, true);
+  if (reset.ok) assert.equal(reset.settings.answerCompletionSoundEnabled ?? false, false);
+});
+
 test('同時に同一fieldを異なる値へ変更した場合は一件を競合拒否する', async () => {
   const fake = storage();
   const locks = sharedLocks();

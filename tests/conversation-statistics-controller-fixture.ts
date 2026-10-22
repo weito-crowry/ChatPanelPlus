@@ -1,6 +1,7 @@
 import { createStatisticsStore, type StatisticsStore } from '../src/shared/conversation-statistics.ts';
 import type { StatisticsSaveResult } from '../src/shared/conversation-statistics-repository.ts';
 import type { StoredConversationStatistics } from '../src/shared/conversation-statistics.ts';
+import type { AnswerCompletionEvent } from '../src/content/answer-completion-sound.ts';
 import { ConversationStatisticsController, type ConversationStatisticsViewState } from '../src/content/conversation-statistics-controller.ts';
 import { FakeEventTarget } from './fake-event-target.ts';
 
@@ -179,6 +180,7 @@ export async function settle(): Promise<void> {
 export interface HarnessRepositoryOverrides {
   loadStore?: () => Promise<{ ok: true; store: StatisticsStore }>;
   saveConversation?: (conversationId: string, conversation: StoredConversationStatistics) => Promise<StatisticsSaveResult>;
+  onAnswerCompleted?: (event: AnswerCompletionEvent) => void;
 }
 
 export function harness(
@@ -212,6 +214,7 @@ export function harness(
     window: window as unknown as Window,
     repository: repository as never,
     onState: (state) => states.push({ conversationId: state.conversationId, aggregate: state.aggregate, loading: state.loading, historyScan: state.historyScan }),
+    onAnswerCompleted: repositoryOverrides.onAnswerCompleted,
   });
   return {
     document,

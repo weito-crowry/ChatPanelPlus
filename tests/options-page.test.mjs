@@ -11,6 +11,6 @@ test('Optionsに表示切替・上下並べ替え・ドラフト保存・確認�
   for (const behavior of [
     'type="checkbox"', '上へ', '下へ', '保存', 'window.confirm',
     'この設定をドラフトに適用', 'application/json', 'serializeSettings',
-    'type="color"', '<textarea',
+    'type="color"', '<textarea', '回答完了音', 'answerCompletionSoundEnabled',
   ]) assert.ok(source.includes(behavior), `OptionsPage missing ${behavior}`);
 });
