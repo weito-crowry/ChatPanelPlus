@@ -65,7 +65,14 @@ test('missing Codex work mode storage resolves OFF without writing', async () =>
 });
 
 test('valid mode saves to its dedicated key and is restored by a new repository', async () => {
-  const fake = storage({ 'chatPanelPlus.viewState': { minimized: true, selectedTabId: 'wall' } });
+  const config = { schemaVersion: 1, answerCompletionSoundEnabled: true };
+  const viewState = { minimized: true, selectedTabId: 'wall' };
+  const statistics = { schemaVersion: 1, conversations: { conversation: { turns: 5 } } };
+  const fake = storage({
+    'chatPanelPlus.config': config,
+    'chatPanelPlus.viewState': viewState,
+    'chatPanelPlus.statistics': statistics,
+  });
   const repository = new CodexWorkModeRepository(fake.area, fake.changeEvent);
 
   assert.deepEqual(await repository.setEnabled(true), {
@@ -73,7 +80,9 @@ test('valid mode saves to its dedicated key and is restored by a new repository'
     value: { schemaVersion: 1, enabled: true },
   });
   assert.deepEqual(fake.data[CODEX_WORK_MODE_STORAGE_KEY], { schemaVersion: 1, enabled: true });
-  assert.deepEqual(fake.data['chatPanelPlus.viewState'], { minimized: true, selectedTabId: 'wall' });
+  assert.deepEqual(fake.data['chatPanelPlus.config'], config);
+  assert.deepEqual(fake.data['chatPanelPlus.viewState'], viewState);
+  assert.deepEqual(fake.data['chatPanelPlus.statistics'], statistics);
   assert.deepEqual(await new CodexWorkModeRepository(fake.area, fake.changeEvent).load(), {
     ok: true,
     value: { schemaVersion: 1, enabled: true },
