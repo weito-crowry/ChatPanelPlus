@@ -1,13 +1,28 @@
 import { useEffect, useMemo, useState, type DragEvent } from 'react';
-import { resolveDefaultUI, type ButtonGroupId, type ButtonId, type TabId } from '../../src/shared/default-ui';
-import { createChromeSettingsRepository } from '../../src/shared/settings-repository';
 import {
+  resolveDefaultUI,
+  type ButtonGroupId,
+  type ButtonId,
+  type CustomButtonDefinition,
+  type CustomButtonId,
+  type TabId,
+} from '../../src/shared/default-ui';
+import { createChromeSettingsRepository } from '../../src/shared/settings-repository';
+import { CustomButtonCreator } from './CustomButtonCreator';
+import {
+  changeCustomButtonOperation,
+  createCustomButton,
+  deleteCustomButton,
+  getCustomButtonImportDeletions,
   getLayoutPreview,
   getOptionsGroups,
+  mergeImportedSettings,
   moveButtonOrder,
   moveTabOrder,
   reorderButtonBefore,
   reorderTabBefore,
+  resetSettingsPreservingCustomButtons,
+  updateCustomButton,
 } from './options-state';
 import {
   DEFAULT_SETTINGS,
@@ -16,6 +31,14 @@ import {
   validateExtensionSettings,
   type ExtensionSettings,
 } from '../../src/shared/settings';
+
+type ImportPreview = Readonly<{
+  settings: ExtensionSettings;
+  savedCustomCount: number;
+  importedCustomCount: number;
+  deletionIds: readonly CustomButtonId[];
+  legacy: boolean;
+}>;
 
 function expandHex(color: string): string {
   const short = /^#([\da-f])([\da-f])([\da-f])$/i.exec(color);
@@ -30,7 +53,7 @@ export function OptionsPage() {
   const [saving, setSaving] = useState(false);
   const [resetViewOnSave, setResetViewOnSave] = useState(false);
   const [replaceKnownFieldsOnSave, setReplaceKnownFieldsOnSave] = useState(false);
-  const [importPreview, setImportPreview] = useState<ExtensionSettings | null>(null);
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [status, setStatus] = useState('設定を読み込んでいます。');
 
   async function reload() {
@@ -61,6 +84,28 @@ export function OptionsPage() {
       return { ...current, buttonOverrides: overrides };
     });
     setStatus('未保存の変更があります。');
+  }
+
+  function addCustomButton(definition: CustomButtonDefinition) {
+    const id = `custom-${crypto.randomUUID()}` as CustomButtonId;
+    setDraft((current) => createCustomButton(current, id, definition));
+    setStatus('カスタムボタンをドラフトに追加しました。保存後にパネルへ反映されます。');
+  }
+
+  function editCustomButton(id: CustomButtonId, field: 'visible' | 'label' | 'color' | 'text', value: boolean | string) {
+    setDraft((current) => updateCustomButton(current, id, field, value));
+    setStatus('未保存の変更があります。');
+  }
+
+  function editCustomButtonOperation(id: CustomButtonId, operation: 'insert' | 'insert-jst' | 'paste' | 'clear') {
+    setDraft((current) => changeCustomButtonOperation(current, id, operation));
+    setStatus('未保存の変更があります。');
+  }
+
+  function removeCustomButton(id: CustomButtonId, label: string) {
+    if (!window.confirm(`「${label}」を削除しますか？削除はドラフトに適用され、保存後の復元にはJSONバックアップが必要です。`)) return;
+    setDraft((current) => deleteCustomButton(current, id));
+    setStatus('削除をドラフトに適用しました。保存するまでパネルには反映されません。');
   }
 
   function updateTab(id: TabId, visible: boolean) {
@@ -181,7 +226,15 @@ export function OptionsPage() {
         : 'JSONまたは設定値が不正です。保存済み設定は変更されていません。');
       return;
     }
-    setImportPreview(parsed.settings);
+    const legacy = !Object.prototype.hasOwnProperty.call(parsed.settings, 'customButtons');
+    const imported = mergeImportedSettings(parsed.settings, base);
+    setImportPreview({
+      settings: imported,
+      savedCustomCount: Object.keys(base.customButtons ?? {}).length,
+      importedCustomCount: Object.keys(imported.customButtons ?? {}).length,
+      deletionIds: getCustomButtonImportDeletions(base, parsed.settings),
+      legacy,
+    });
     setStatus('読込内容を確認し、ドラフトへ適用してください。');
   }
 
@@ -251,10 +304,18 @@ export function OptionsPage() {
             <div className="button-settings-list">
               {resolved.buttons.filter((button) => button.groupId === group.id).map((button) => (
                 (() => {
-                  const override = draft.buttonOverrides?.[button.id];
-                  const label = typeof override?.label === 'string' ? override.label : button.label;
-                  const color = typeof override?.color === 'string' ? override.color : button.color;
-                  const text = typeof override?.text === 'string' ? override.text : button.text ?? '';
+                  const customId = button.id.startsWith('custom-') ? button.id as CustomButtonId : null;
+                  const custom = customId ? draft.customButtons?.[customId] : undefined;
+                  const override = customId ? undefined : draft.buttonOverrides?.[button.id];
+                  const label = custom?.label ?? (typeof override?.label === 'string' ? override.label : button.label);
+                  const color = custom?.color ?? (typeof override?.color === 'string' ? override.color : button.color);
+                  const text = custom?.kind === 'insert'
+                    ? custom.text
+                    : typeof override?.text === 'string' ? override.text : button.text ?? '';
+                  const edit = (field: 'visible' | 'label' | 'color' | 'text', value: boolean | string) => {
+                    if (customId) editCustomButton(customId, field, value);
+                    else updateButton(button.id, field, value);
+                  };
                   return <article
                     className="button-settings"
                     key={button.id}
@@ -264,7 +325,7 @@ export function OptionsPage() {
                   <div className="button-settings-heading">
                     <strong>{button.id}</strong>
                     <label>
-                      <input type="checkbox" checked={button.visible} onChange={(event) => updateButton(button.id, 'visible', event.currentTarget.checked)} />
+                      <input type="checkbox" checked={button.visible} onChange={(event) => edit('visible', event.currentTarget.checked)} />
                       表示
                     </label>
                     <span className="row-order">
@@ -275,20 +336,34 @@ export function OptionsPage() {
                   </div>
                   <label className="field-label">
                     ボタン名
-                    <input type="text" value={label} onChange={(event) => updateButton(button.id, 'label', event.currentTarget.value)} />
+                    <input type="text" value={label} onChange={(event) => edit('label', event.currentTarget.value)} />
                   </label>
                   <label className="field-label color-field">
                     ボタン色
-                    <input type="color" value={expandHex(/^#[\da-f]{3}(?:[\da-f]{3})?$/i.test(color) ? color : button.color)} onChange={(event) => updateButton(button.id, 'color', event.currentTarget.value)} />
-                    <input type="text" aria-label={`${label}の色HEX値`} value={color} onChange={(event) => updateButton(button.id, 'color', event.currentTarget.value)} />
+                    <input type="color" value={expandHex(/^#[\da-f]{3}(?:[\da-f]{3})?$/i.test(color) ? color : button.color)} onChange={(event) => edit('color', event.currentTarget.value)} />
+                    <input type="text" aria-label={`${label}の色HEX値`} value={color} onChange={(event) => edit('color', event.currentTarget.value)} />
                   </label>
+                  {customId && custom && (
+                    <>
+                      <label className="field-label">
+                        操作種別
+                        <select value={custom.kind === 'insert' ? 'insert' : custom.action} onChange={(event) => editCustomButtonOperation(customId, event.currentTarget.value as 'insert' | 'insert-jst' | 'paste' | 'clear')}>
+                          <option value="insert">定型文を挿入</option>
+                          <option value="insert-jst">現在時刻を挿入</option>
+                          <option value="paste">クリップボードを貼り付け</option>
+                          <option value="clear">入力欄をクリア</option>
+                        </select>
+                      </label>
+                      <button type="button" className="delete-custom-button" onClick={() => removeCustomButton(customId, label)}>このカスタムボタンを削除</button>
+                    </>
+                  )}
                   {button.kind === 'insert' && (
                     <label className="field-label">
                       定型文
                       <textarea
                         rows={Math.min(8, Math.max(3, text.split('\n').length))}
                         value={text}
-                        onChange={(event) => updateButton(button.id, 'text', event.currentTarget.value)}
+                        onChange={(event) => edit('text', event.currentTarget.value)}
                       />
                     </label>
                   )}
@@ -296,6 +371,7 @@ export function OptionsPage() {
                 })()
               ))}
             </div>
+            <CustomButtonCreator groupId={group.id} onAdd={addCustomButton} />
           </section>
         ))}
         <section className="settings-card" aria-labelledby="answer-completion-sound-title">
@@ -318,7 +394,7 @@ export function OptionsPage() {
         <div className="layout-buttons">
           <button type="button" disabled={!ready || saving} onClick={() => {
             if (!window.confirm('ボタンとタブの設定を既定値へ戻す変更をドラフトに適用しますか？保存するまで反映されません。')) return;
-            setDraft(DEFAULT_SETTINGS);
+            setDraft((current) => resetSettingsPreservingCustomButtons(current));
             setResetViewOnSave(true);
             setReplaceKnownFieldsOnSave(true);
             setStatus('既定値への変更をドラフトに適用しました。保存すると確定します。');
@@ -335,9 +411,20 @@ export function OptionsPage() {
         </div>
         {importPreview && (
           <div className="import-preview" aria-label="インポートプレビュー">
-            <p>schemaVersion {importPreview.schemaVersion}、ボタン{resolveDefaultUI(importPreview).buttons.length}個、タブ{resolveDefaultUI(importPreview).tabs.length}個の設定です。</p>
+            <p>schemaVersion {importPreview.settings.schemaVersion}、ボタン{resolveDefaultUI(importPreview.settings).buttons.length}個、タブ{resolveDefaultUI(importPreview.settings).tabs.length}個の設定です。</p>
+            <p>保存済みカスタムボタン: {importPreview.savedCustomCount}個 / 適用後: {importPreview.importedCustomCount}個{importPreview.legacy ? '（旧JSONのため保存済み定義を保持）' : ''}</p>
+            {importPreview.deletionIds.length > 0 && (
+              <div>
+                <p>削除予定ID（適用前に確認します）:</p>
+                <ul>{importPreview.deletionIds.map((id) => <li key={id}><code>{id}</code></li>)}</ul>
+              </div>
+            )}
             <button type="button" disabled={!ready || saving} onClick={() => {
-              setDraft(importPreview);
+              if (importPreview.deletionIds.length > 0 && !window.confirm(`JSONの適用でカスタムボタンを削除します。保存後の復元にはJSONバックアップが必要です。\n\n${importPreview.deletionIds.join('\n')}\n\nドラフトに適用しますか？`)) {
+                setStatus('インポートの適用を取り消しました。編集中のドラフトは変更されていません。');
+                return;
+              }
+              setDraft(importPreview.settings);
               setResetViewOnSave(false);
               setReplaceKnownFieldsOnSave(true);
               setImportPreview(null);
