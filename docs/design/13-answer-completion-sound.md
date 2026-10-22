@@ -1,7 +1,7 @@
 # 回答完了音
 
 - 文書ID: CPP-DESIGN-13
-- 状態: 実装反映版（2026-10-22）
+- 状態: 実装反映版（2026-10-23）
 - 依存: 00-architecture.md、05-settings-storage.md、06-options-page.md、08-lifecycle.md、09-testing.md、12-conversation-statistics.md
 - 目的: ChatGPTの回答生成完了を、ユーザーが有効にした場合だけ短い音で知らせる。
 
@@ -13,10 +13,14 @@
 - 音量は `chatPanelPlus.config` の任意整数 `answerCompletionSoundVolumePercent` とし、0〜100を検証する。未設定は60%として扱い、0.30を上限とする共有gain変換で60%=0.18、100%=0.30へ線形対応させる。schemaVersionは1のままとする。
 - Optionsの音量rangeはドラフトを更新し、「保存」後に通知音へ反映する。明示した試聴クリックは現在のドラフト音量を使う。0%では試聴・完了通知を再生しないことを表示するが、有効/無効スピーカーボタンの意味は変えない。
 - Optionsでは内蔵短音3種類を選択・試聴できる。ユーザー音源は選択・試聴・確認付き削除に対応する。
+- Optionsに再生デバイス欄を設ける。初期値は「システムの既定」。出力一覧更新、接続状態表示、現在の通知音の試聴を提供する。選択値はChromeプロファイル内のChatGPTタブで共有する。
+- デバイス一覧が既定出力だけの場合に限り、Optionsの明示ボタンからマイク権限を要求できる。許可後は全トラックを直ちに停止し、録音・保存・送信しない。権限は拡張機能オリジンに対してChromeが保持する。
+- 出力先は `chatPanelPlus.answerCompletionOutputDevice` 専用の `chrome.storage.local` キーへ `{ deviceId, label }` として保存する。デバイスIDは拡張機能オリジンに束縛されるため、設定JSONのimport/exportに含めず、任意サイトへ送信しない。設定破損・保存失敗では既存値を上書きしない。
 - ユーザー音源は `chatPanelPlus.answerCompletionSoundAssets` 専用の `chrome.storage.local` キーへ保存する。形式はWAV、MP3、OGG、1ファイル512 KiB以下・10秒以内・最大5件・Base64化後の合計2 MiBまでとする。拡張子とMIMEタイプに加えてシグネチャ、AudioContextデコード、長さを検証する。
 - 選択IDが参照する音源が見つからない、または再生用デコードに失敗した場合は既定の660 Hz音へフォールバックする。Optionsは欠落状態を表示する。選択音源の削除は既定音IDの設定保存後にファイルデータを削除する。
-- Manifestの権限は追加しない。設定保存には既存の `storage` 権限を使う。
-- 内蔵音とユーザー音源はChatGPTページ内のWeb Audio APIで再生する。通知と試聴は同じgain変換を使い、最大gainは0.30とする。AudioContextは音が有効な間だけ保持し、ChatGPTページ上の信頼済みユーザー操作を受けて作成またはresumeする。Optionsの試聴は明示クリック時だけ再生し、完了Trackerを呼ばない。
+- Manifestには特定デバイス再生用に `offscreen` 権限だけを追加する。Offscreen Documentは `AUDIO_PLAYBACK` 理由で必要時に作り、音のない状態が30秒続いた後の自動終了と次回再作成を前提にする。
+- システムの既定出力は従来どおりContent ScriptのWeb Audio経路で再生する。特定デバイスはBackgroundが保存済み出力先を読み、同じ拡張機能オリジンのOffscreen Documentで `AudioContext.setSinkId()` を確定してから再生する。通知と試聴は同じ出力選択・再生処理を使い、最大gainは0.30とする。
+- BackgroundはContent Scriptから音声バイト列やURLを受け取らない。通知要求は音源IDと0〜100%の音量だけとし、ユーザー音源データはローカル保存値から検証済みのものを読み込む。指定先が見つからない、権限が拒否された、またはsink切替・再生に失敗した場合は既定出力へフォールバックせず、エラーを表示する。
 
 ## 2. 完了イベントの判定
 
@@ -34,6 +38,7 @@
 - 完了サイクル判定は専用の純粋な追跡器に分離し、音声出力は別のPlayerに分ける。統計保存値、Turn集計、Conversation切替処理は変更しない。
 - 統計UIの表示状態やパネル最小化状態は、音声の有効状態に影響させない。設定変更は現在開いているContent Scriptへ反映し、無効化後のイベントは再生しない。
 - 音ON/OFF・音源選択は既存の `chatPanelPlus.config` 保存と設定購読で複数ChatGPTタブへ反映する。音源データは別キーを読み、設定JSON・統計・view stateへ混ぜない。
+- 出力先は専用リポジトリで保存・購読し、複数OptionsタブとChatGPTタブで共有する。回答完了時はBackgroundが最新の出力先を読み、既定なら従来Playerだけを1回呼び、指定デバイスならOffscreenの結果だけを採用する。
 - 音量ボタンは独立したbuttonとしてTurnsの左に置く。`title`、`aria-label`、`aria-pressed`、標準キーボード操作、`:focus-visible`を提供し、最小化で統計UIが隠れてもプレイヤーと完了判定は停止しない。
 - Observer、設定購読、ユーザー操作リスナー、AudioContextはContent Scriptの停止・再マウント時に解放する。
 
@@ -49,9 +54,11 @@
 - 基準化後に観測した `in_progress` → `complete` は1回鳴る。同一Turn Keyで次の `in_progress` → `complete` を観測できた再生成はもう1回鳴る。
 - 有効な完了イベントを設定OFF時に受けても再生せず、UI、Composer、送信処理へイベントを伝播・抑止しない。
 - `pnpm typecheck`、`pnpm lint`、`pnpm test`、`pnpm build`、`pnpm check:size`を実行する。Chrome実機の自動再生制約と実音は手動確認事項として別に報告する。
+- 出力一覧の未対応・空・重複、ID検証、保存・再読込・別タブ反映、明示権限要求と即時停止、既定経路、試聴・通知の指定経路、無効ID・切断・権限・sink失敗、Offscreen同時生成・終了後の再作成を自動テストする。
+- Chrome実機では、既定と別デバイスの短音・追加音源を聞き分け、指定していない出力先から音が出ないことを手動確認する。Chrome再起動・拡張再読込後の復元と、切断・再接続時の状態も確認する。
 
 ## 5. 実装上の制約
 
 - Web Audioの利用可能性や自動再生許可を既成事実としない。Contextのresumeに失敗した場合は通知音を鳴らさず、ページ操作を妨げない。
-- ユーザー音源はローカルファイル選択からだけ読み込む。任意URL、ネット通信、Offscreen Document、背景通信、通知API、追加権限は導入しない。
+- ユーザー音源はローカルファイル選択からだけ読み込む。任意URL、ネット通信、通知API、`chrome.audio`、OS全体の出力設定変更は行わない。
 - 生成完了を既存DOM状態から確定できない場合は推測で通知しない。

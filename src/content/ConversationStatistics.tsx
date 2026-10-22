@@ -10,6 +10,7 @@ import { AnswerCompletionSoundPlayer } from './answer-completion-sound.ts';
 import { createChromeSoundAssetRepository } from '../shared/answer-completion-sound-assets.ts';
 import { DEFAULT_COMPLETION_SOUND_ID } from '../shared/answer-completion-sound-definitions.ts';
 import { DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT } from '../shared/answer-completion-sound-volume.ts';
+import { routeAnswerCompletionSound } from './answer-completion-output-device-route.ts';
 import { calculateStatisticsPopoverPlacement, type StatisticsPopoverPlacement } from './conversation-statistics-popover-position.ts';
 
 const EMPTY_STATE: ConversationStatisticsViewState = {
@@ -31,6 +32,15 @@ const STORAGE_ERROR_TEXT: Record<StatisticsStorageError, string> = {
 };
 
 function formatCount(value: number): string { return new Intl.NumberFormat('ja-JP').format(value); }
+
+function soundOutputErrorMessage(reason: string): string {
+  if (reason === 'device-unavailable') return '選択した出力デバイスが見つかりません。Optionsで接続状態を確認してください。既定の出力へは切り替えていません。';
+  if (reason === 'permission-denied') return '選択した出力デバイスの利用が拒否されました。Optionsでデバイスを再選択してください。';
+  if (reason === 'corrupt-selection') return '出力デバイス設定を読み取れません。Optionsで出力先を選び直してください。';
+  if (reason === 'storage-failed') return '出力デバイス設定を読み取れませんでした。既定の出力へは切り替えていません。';
+  if (reason === 'sink-failed') return '選択した出力デバイスへ切り替えられませんでした。既定の出力へは切り替えていません。';
+  return '指定した出力デバイスで回答完了音を再生できませんでした。Optionsで状態を確認してください。';
+}
 
 function scanMessage(state: ConversationStatisticsViewState): string | null {
   const scan = state.historyScan;
@@ -73,6 +83,7 @@ export function ConversationStatistics({
   soundVolumePercent.current = answerCompletionSoundVolumePercent;
   const togglePending = useRef(false);
   const [localToggleError, setLocalToggleError] = useState('');
+  const [playbackError, setPlaybackError] = useState('');
   const [optimisticEnabled, setOptimisticEnabled] = useState<boolean | null>(null);
   const displayedSoundEnabled = optimisticEnabled ?? answerCompletionSoundEnabled;
   const trigger = useRef<HTMLButtonElement>(null);
@@ -93,7 +104,16 @@ export function ConversationStatistics({
       window,
       repository: createChromeConversationStatisticsRepository(),
       onState: setState,
-      onAnswerCompleted: () => player.play(),
+      onAnswerCompleted: () => {
+        if (!soundEnabled.current || soundVolumePercent.current === 0) return;
+        void routeAnswerCompletionSound(chrome.runtime, {
+          soundId: soundId.current,
+          volumePercent: soundVolumePercent.current,
+        }, () => {
+          setPlaybackError('');
+          player.play();
+        }, (reason) => setPlaybackError(soundOutputErrorMessage(reason)));
+      },
     });
     controller.current = active;
     active.start();
@@ -200,7 +220,7 @@ export function ConversationStatistics({
       >
         {formatCount(state.aggregate.turns)} Turns
       </button>
-      {(soundToggleError || localToggleError) && <p className="statistics-sound-error" role="alert">{soundToggleError || localToggleError}</p>}
+      {(soundToggleError || localToggleError || playbackError) && <p className="statistics-sound-error" role="alert">{soundToggleError || localToggleError || playbackError}</p>}
       {detailsOpen && (
         <div
           ref={popover}

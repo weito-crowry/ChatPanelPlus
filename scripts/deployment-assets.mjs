@@ -13,3 +13,13 @@ export function assertLocalAssetReferences(html, files) {
   if (assets.length === 0) throw new Error('index.html does not reference any local Options assets.');
   return assets;
 }
+
+export function assertLocalOffscreenReferences(html, files) {
+  const scripts = [...html.matchAll(/<script\b[^>]*>/gi)];
+  const references = [...html.matchAll(/(?:src|href)="([^"]+)"/gi)].map(([, reference]) => reference);
+  if (scripts.length !== 1 || references.length !== 1 || references[0] !== 'offscreen.js') {
+    throw new Error('Offscreen document must reference only the built local offscreen.js script.');
+  }
+  if (!files.has('offscreen.js')) throw new Error('Offscreen document references a missing asset: offscreen.js');
+  return references;
+}

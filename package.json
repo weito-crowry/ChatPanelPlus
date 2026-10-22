@@ -10,10 +10,11 @@
   },
   "scripts": {
     "build": "pnpm run build:ui",
-    "build:ui": "pnpm run build:options && pnpm run build:content && pnpm run build:background",
+    "build:ui": "pnpm run build:options && pnpm run build:content && pnpm run build:background && pnpm run build:offscreen",
     "build:options": "vite build --config vite.config.ts",
     "build:content": "vite build --config vite.config.content.ts",
     "build:background": "vite build --config vite.config.background.ts",
+    "build:offscreen": "vite build --config vite.config.offscreen.ts",
     "build:noop": "node scripts/build-noop.mjs",
     "deploy:chrome": "pnpm run build && node scripts/deploy-chrome.mjs",
     "typecheck": "tsc --noEmit",

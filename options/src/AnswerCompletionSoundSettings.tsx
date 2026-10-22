@@ -17,6 +17,8 @@ import {
   DEFAULT_COMPLETION_SOUND_ID,
 } from '../../src/shared/answer-completion-sound-definitions.ts';
 import { decodeSoundData, previewCompletionSound } from '../../src/shared/answer-completion-sound-playback.ts';
+import { AnswerCompletionOutputDeviceSettings } from './AnswerCompletionOutputDeviceSettings.tsx';
+import { ANSWER_COMPLETION_SOUND_PREVIEW } from '../../src/shared/answer-completion-output-device-protocol.ts';
 
 interface AnswerCompletionSoundSettingsProps {
   readonly selectedSoundId: string;
@@ -54,6 +56,15 @@ function storageErrorMessage(reason: SoundAssetError): string {
 function audioContextFactory(): AudioContext | undefined {
   if (typeof AudioContext === 'undefined') return undefined;
   return new AudioContext();
+}
+
+function outputPlaybackError(reason: string): string {
+  if (reason === 'device-unavailable') return '選択したデバイスが見つかりません。接続状態を確認するか、別の出力先を選んでください。';
+  if (reason === 'permission-denied') return '選択したデバイスの利用が拒否されました。出力先を再選択してください。';
+  if (reason === 'sink-failed') return '選択したデバイスへ出力を切り替えられませんでした。';
+  if (reason === 'corrupt-selection') return '保存済みの出力先を読み取れません。出力先を選び直してください。';
+  if (reason === 'storage-failed') return '出力先設定を読み込めませんでした。既存設定は保持されています。';
+  return '選択したデバイスで試聴を開始できませんでした。';
 }
 
 export function AnswerCompletionSoundSettings({
@@ -136,10 +147,31 @@ export function AnswerCompletionSoundSettings({
     setPreviewingId(soundId);
     setError('');
     setMessage('');
-    const played = await previewCompletionSound(document, soundId, asset, () => audioContextFactory(), volumePercent);
+    let played = false;
+    let failureMessage = '';
+    try {
+      const response: unknown = await chrome.runtime.sendMessage({
+        type: ANSWER_COMPLETION_SOUND_PREVIEW,
+        soundId,
+        volumePercent,
+      });
+      if (typeof response !== 'object' || response === null || !('ok' in response)) {
+        failureMessage = outputPlaybackError('offscreen-failed');
+      } else if (response.ok === false && 'reason' in response && typeof response.reason === 'string') {
+        failureMessage = outputPlaybackError(response.reason);
+      } else if (response.ok === true && 'route' in response && response.route === 'device') {
+        played = true;
+      } else if (response.ok === true && 'route' in response && response.route === 'default') {
+        played = await previewCompletionSound(document, soundId, asset, () => audioContextFactory(), volumePercent);
+      } else {
+        failureMessage = outputPlaybackError('offscreen-failed');
+      }
+    } catch {
+      failureMessage = outputPlaybackError('offscreen-failed');
+    }
     setPreviewingId('');
     if (played) setMessage('試聴を開始しました。');
-    else setError('試聴を開始できませんでした。ページ上の再生制限を確認してください。');
+    else setError(failureMessage || '試聴を開始できませんでした。ページ上の再生制限を確認してください。');
   }
 
   async function remove(asset: SoundAsset) {
@@ -221,7 +253,8 @@ export function AnswerCompletionSoundSettings({
         className="sound-preview-button"
         disabled={disabled || busy || !!previewingId || volumePercent === 0}
         onClick={() => { void preview(previewSoundId, selectedAsset); }}
-      >{previewingId === previewSoundId ? '試聴中…' : '選択中の音を試聴'}</button>
+      >{previewingId === previewSoundId ? '試聴中…' : '選択中の音を選択中の出力先で試聴'}</button>
+      <AnswerCompletionOutputDeviceSettings disabled={disabled || busy || !!previewingId} />
       {selectedMissing && assetsReady && <p className="sound-settings-warning" role="status">選択音源を読み込めません。再生時は短音（660 Hz）を使用します。</p>}
       {selectedMissing && !assetsReady && !loadError && <p className="sound-settings-status" role="status">ユーザー音源を読み込んでいます。</p>}
       <p>WAV、MP3、OGGに対応。{MAX_SOUND_ASSET_DURATION_SECONDS}秒以内、1ファイル512 KiB以下、最大5件、保存音源の合計2 MiBまでです。音声内容も再生可能か検査します。Chromeの保存容量によっては追加できない場合があります。</p>

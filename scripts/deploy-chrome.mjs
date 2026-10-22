@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertLocalAssetReferences } from './deployment-assets.mjs';
+import { assertLocalAssetReferences, assertLocalOffscreenReferences } from './deployment-assets.mjs';
 
 const projectDirectory = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), '..'));
 const parentDirectory = realpathSync(resolve(projectDirectory, '..'));
@@ -62,7 +62,8 @@ function listRegularFiles(directory, root = directory) {
 }
 
 function validateBuild(files) {
-  if (!files.has('manifest.json') || !files.has('content.js') || !files.has('background.js') || !files.has('index.html')) {
+  if (!files.has('manifest.json') || !files.has('content.js') || !files.has('background.js')
+    || !files.has('index.html') || !files.has('offscreen.html') || !files.has('offscreen.js')) {
     throw new Error('dist is incomplete; run pnpm build before deployment.');
   }
 
@@ -79,12 +80,12 @@ function validateBuild(files) {
     || manifest.options_ui?.page !== 'index.html') {
     throw new Error('dist manifest does not reference the expected extension components.');
   }
-  const allowedPermissions = new Set(['clipboardRead', 'storage']);
+  const allowedPermissions = new Set(['clipboardRead', 'storage', 'offscreen']);
   if (!Array.isArray(manifest.permissions)
     || manifest.permissions.length !== allowedPermissions.size
     || [...allowedPermissions].some((permission) => !manifest.permissions.includes(permission))
     || manifest.permissions.some((permission) => !allowedPermissions.has(permission))) {
-    throw new Error('dist manifest must request only clipboardRead and storage permissions.');
+    throw new Error('dist manifest must request only clipboardRead, storage, and offscreen permissions.');
   }
   for (const field of ['host_permissions', 'optional_host_permissions']) {
     if (field in manifest) throw new Error(`dist manifest must not request ${field}.`);
@@ -92,6 +93,8 @@ function validateBuild(files) {
 
   const html = readFileSync(resolve(distDirectory, 'index.html'), 'utf8');
   assertLocalAssetReferences(html, files);
+  const offscreenHtml = readFileSync(resolve(distDirectory, 'offscreen.html'), 'utf8');
+  assertLocalOffscreenReferences(offscreenHtml, files);
 }
 
 function clearDirectory(directory) {

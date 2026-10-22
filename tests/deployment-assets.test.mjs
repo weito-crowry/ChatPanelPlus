@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { assertLocalAssetReferences } from '../scripts/deployment-assets.mjs';
+import { assertLocalAssetReferences, assertLocalOffscreenReferences } from '../scripts/deployment-assets.mjs';
 
 const projectRoot = resolve(fileURLToPath(new URL('../', import.meta.url)));
 
@@ -30,6 +30,8 @@ async function runIsolatedDeploymentValidation(manifest) {
     await writeFile(join(dist, 'content.js'), 'void 0;');
     await writeFile(join(dist, 'background.js'), 'void 0;');
     await writeFile(join(dist, 'index.html'), '<script src="https://invalid.test/options.js"></script>');
+    await writeFile(join(dist, 'offscreen.html'), '<script src="offscreen.js"></script>');
+    await writeFile(join(dist, 'offscreen.js'), 'void 0;');
     await writeFile(join(destination, 'existing.txt'), 'must remain untouched');
 
     const result = spawnSync(process.execPath, [join(scripts, 'deploy-chrome.mjs')], {
@@ -50,7 +52,7 @@ function validDeploymentManifest(overrides = {}) {
     content_scripts: [{ matches: ['https://chatgpt.com/*'], js: ['content.js'] }],
     background: { service_worker: 'background.js' },
     options_ui: { page: 'index.html' },
-    permissions: ['clipboardRead', 'storage'],
+    permissions: ['clipboardRead', 'storage', 'offscreen'],
     ...overrides,
   };
 }
@@ -70,7 +72,14 @@ test('deployment rejects missing, external, and escaping Options assets', () => 
   assert.throws(() => assertLocalAssetReferences('<script src="./assets/..\\outside.js"></script>', assets), /local assets/);
 });
 
-test('deployment validation accepts clipboardRead and storage before rejecting a later invalid asset', async () => {
+test('deployment accepts only the built local Offscreen script', () => {
+  const files = new Set(['offscreen.js']);
+  assert.deepEqual(assertLocalOffscreenReferences('<script src="offscreen.js"></script>', files), ['offscreen.js']);
+  assert.throws(() => assertLocalOffscreenReferences('<script src="https://example.test/audio.js"></script>', files), /Offscreen/);
+  assert.throws(() => assertLocalOffscreenReferences('<script src="offscreen.js"></script>', new Set()), /missing/);
+});
+
+test('deployment validation accepts clipboardRead, storage, and offscreen before rejecting a later invalid asset', async () => {
   const result = await runIsolatedDeploymentValidation(validDeploymentManifest());
 
   assert.notEqual(result.status, 0);
@@ -88,12 +97,12 @@ test('deployment validation rejects unapproved additional permissions before any
   assert.equal(result.after, 'must remain untouched');
 });
 
-test('deployment validation requires both approved permissions exactly once', async () => {
-  for (const permissions of [['storage'], ['clipboardRead', 'clipboardRead']]) {
+test('deployment validation requires approved permissions exactly once', async () => {
+  for (const permissions of [['storage'], ['clipboardRead', 'clipboardRead', 'storage', 'offscreen'], ['clipboardRead', 'storage']]) {
     const result = await runIsolatedDeploymentValidation(validDeploymentManifest({ permissions }));
 
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /only clipboardRead and storage permissions/);
+    assert.match(result.stderr, /only clipboardRead, storage, and offscreen permissions/);
     assert.equal(result.after, 'must remain untouched');
   }
 });

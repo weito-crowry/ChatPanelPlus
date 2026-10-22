@@ -38,6 +38,8 @@ test('default build contains the complete extension output and no extra files', 
     'content.js',
     'index.html',
     'manifest.json',
+    'offscreen.html',
+    'offscreen.js',
   ]);
   assert.equal(assetEntries.length, 2);
   assert.ok(assetEntries.some((entry) => /^index-.+\.js$/.test(entry)));
@@ -60,12 +62,12 @@ test('manifest declares only the expected ChatGPT content script, worker, and op
   }]);
   assert.deepEqual(manifest.background, { service_worker: 'background.js' });
   assert.deepEqual(manifest.options_ui, { page: 'index.html', open_in_tab: true });
-  assert.deepEqual(manifest.permissions, ['clipboardRead', 'storage']);
+  assert.deepEqual(manifest.permissions, ['clipboardRead', 'storage', 'offscreen']);
   for (const field of ['host_permissions', 'optional_host_permissions']) {
     assert.equal(field in manifest, false, `${field} must not be present.`);
   }
 
-  for (const referencedFile of ['content.js', 'background.js', 'index.html']) {
+  for (const referencedFile of ['content.js', 'background.js', 'index.html', 'offscreen.html', 'offscreen.js']) {
     await assert.doesNotReject(readFile(resolve(distDirectory, referencedFile)));
   }
 });
@@ -74,11 +76,16 @@ test('built output includes the panel bootstrap, options UI, and options message
   const content = await readFile(resolve(distDirectory, 'content.js'), 'utf8');
   const background = await readFile(resolve(distDirectory, 'background.js'), 'utf8');
   const html = await readFile(resolve(distDirectory, 'index.html'), 'utf8');
+  const offscreen = await readFile(resolve(distDirectory, 'offscreen.js'), 'utf8');
+  const offscreenHtml = await readFile(resolve(distDirectory, 'offscreen.html'), 'utf8');
 
   assert.match(content, /chatpanelplus-extension-root/);
   assert.match(content, /attachShadow/);
   assert.match(content, /ChatPanelPlus/);
   assert.match(background, /openOptionsPage/);
+  assert.match(background, /createDocument/);
+  assert.match(offscreen, /setSinkId/);
+  assert.match(offscreenHtml, /<script src="offscreen\.js"><\/script>/);
   assert.match(html, /assets\/index-.+\.js/);
   assert.match(html, /assets\/index-.+\.css/);
   assert.match(await readFile(resolve(distDirectory, 'clipboard-probe.html'), 'utf8'), /clipboard-probe\.js/);

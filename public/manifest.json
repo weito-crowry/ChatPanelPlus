@@ -3,7 +3,7 @@
   "name": "ChatPanelPlus",
   "version": "0.1.5",
   "description": "ChatGPT上の入力欄へ定型文や現在時刻を挿入し、クリップボードの貼り付けと入力欄のクリアを行います。ボタン・タブの表示、順序、ラベル、色、定型文を設定できます。",
-  "permissions": ["clipboardRead", "storage"],
+  "permissions": ["clipboardRead", "storage", "offscreen"],
   "background": {
     "service_worker": "background.js"
   },
