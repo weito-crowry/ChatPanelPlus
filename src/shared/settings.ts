@@ -6,6 +6,7 @@ import {
   type CustomButtonId,
   type TabId,
 } from './default-ui.ts';
+import { isBuiltinCompletionSoundId, isUserCompletionSoundId } from './answer-completion-sound-definitions.ts';
 
 export const SETTINGS_SCHEMA_VERSION = 1 as const;
 
@@ -24,6 +25,7 @@ export type ExtensionSettings = Readonly<{
   buttonOrder?: Readonly<Record<string, readonly string[]>>;
   tabOrder?: readonly string[];
   answerCompletionSoundEnabled?: boolean;
+  answerCompletionSoundId?: string;
   customButtons?: Readonly<Record<CustomButtonId, CustomButtonDefinition>>;
   [key: string]: unknown;
 }>;
@@ -163,6 +165,11 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
   const tabOrder = orderedIds(DEFAULT_TABS.map(({ id }) => id), value.tabOrder);
   if (!tabOrder) return settingsError('invalid-settings');
   if (value.answerCompletionSoundEnabled !== undefined && typeof value.answerCompletionSoundEnabled !== 'boolean') {
+    return settingsError('invalid-settings');
+  }
+  if (value.answerCompletionSoundId !== undefined
+    && (typeof value.answerCompletionSoundId !== 'string'
+      || (!isBuiltinCompletionSoundId(value.answerCompletionSoundId) && !isUserCompletionSoundId(value.answerCompletionSoundId)))) {
     return settingsError('invalid-settings');
   }
   return {

@@ -71,6 +71,10 @@ export function ChatPanel() {
   const [viewStateLoaded, setViewStateLoaded] = useState(false);
   const [persistViewState, setPersistViewState] = useState(false);
   const [error, setError] = useState('');
+  const [soundToggleError, setSoundToggleError] = useState('');
+  const [soundTogglePending, setSoundTogglePending] = useState(false);
+  const [soundToggleOptimistic, setSoundToggleOptimistic] = useState<boolean | null>(null);
+  const soundTogglePendingRef = useRef(false);
   const [manualPasteOpen, setManualPasteOpen] = useState(false);
   const [manualPasteText, setManualPasteText] = useState('');
   const pointerSnapshot = useRef<SelectionSnapshot | null>(null);
@@ -240,6 +244,36 @@ export function ChatPanel() {
     finishManualPaste(result);
   }
 
+  async function toggleAnswerCompletionSound(enabled: boolean): Promise<void> {
+    if (soundTogglePendingRef.current) return;
+    soundTogglePendingRef.current = true;
+    setSoundTogglePending(true);
+    setSoundToggleOptimistic(enabled);
+    setSoundToggleError('');
+    const repo = repository.current!;
+    const base = settingsRef.current;
+    const result = await repo.saveSettings(base, { ...base, answerCompletionSoundEnabled: enabled });
+    if (result.ok) {
+      settingsRef.current = result.settings;
+      setSettings(result.settings);
+      setSoundToggleOptimistic(null);
+    } else {
+      const latest = await repo.loadSettings();
+      if (latest.ok) {
+        settingsRef.current = latest.settings;
+        setSettings(latest.settings);
+      }
+      setSoundToggleOptimistic(null);
+      setSoundToggleError(result.reason === 'conflict'
+        ? '別のOptions画面で回答完了音が変更されました。保存値を読み直してください。'
+        : result.reason === 'storage-failed'
+          ? '回答完了音の設定を保存できませんでした。表示を保存済みの状態へ戻しました。'
+          : '保存済み設定を確認できませんでした。回答完了音の表示を最後に読み込んだ状態へ戻しました。');
+    }
+    soundTogglePendingRef.current = false;
+    setSoundTogglePending(false);
+  }
+
   return (
     <aside className={`panel${currentViewState.minimized ? ' is-minimized' : ''}`} aria-label="ChatPanelPlus パネル">
       <div className="panel-header">
@@ -247,7 +281,13 @@ export function ChatPanel() {
         <CodexWorkModeToggle minimized={currentViewState.minimized} />
       </div>
       <div className="panel-content" hidden={currentViewState.minimized}>
-        <ConversationStatistics answerCompletionSoundEnabled={settings.answerCompletionSoundEnabled === true} />
+        <ConversationStatistics
+          answerCompletionSoundEnabled={soundToggleOptimistic ?? settings.answerCompletionSoundEnabled === true}
+          answerCompletionSoundId={settings.answerCompletionSoundId ?? 'tone-660'}
+          soundTogglePending={soundTogglePending}
+          soundToggleError={soundToggleError}
+          onToggleAnswerCompletionSound={(enabled) => toggleAnswerCompletionSound(enabled)}
+        />
         <div className="utility-row" aria-label="常時表示操作">
           {model.utilityButtons.map((button) => (
             <button

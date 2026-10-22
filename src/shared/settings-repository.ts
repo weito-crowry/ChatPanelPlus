@@ -61,6 +61,7 @@ function settingPaths(): string[][] {
   for (const group of groups) paths.push(['buttonOrder', group]);
   paths.push(['tabOrder']);
   paths.push(['answerCompletionSoundEnabled']);
+  paths.push(['answerCompletionSoundId']);
   return paths;
 }
 

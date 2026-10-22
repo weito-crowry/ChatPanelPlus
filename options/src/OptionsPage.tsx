@@ -8,7 +8,10 @@ import {
   type TabId,
 } from '../../src/shared/default-ui';
 import { createChromeSettingsRepository } from '../../src/shared/settings-repository';
+import { DEFAULT_COMPLETION_SOUND_ID } from '../../src/shared/answer-completion-sound-definitions.ts';
 import { CustomButtonCreator } from './CustomButtonCreator';
+import { AnswerCompletionSoundSettings } from './AnswerCompletionSoundSettings';
+import { prepareSoundAssetDeletion } from './answer-completion-sound-actions.ts';
 import {
   changeCustomButtonOperation,
   createCustomButton,
@@ -119,6 +122,26 @@ export function OptionsPage() {
   function updateAnswerCompletionSound(enabled: boolean) {
     setDraft((current) => ({ ...current, answerCompletionSoundEnabled: enabled }));
     setStatus('未保存の変更があります。');
+  }
+
+  function updateAnswerCompletionSoundId(soundId: string) {
+    setDraft((current) => ({ ...current, answerCompletionSoundId: soundId }));
+    setStatus('未保存の変更があります。');
+  }
+
+  async function prepareAnswerCompletionSoundDeletion(soundId: string): Promise<boolean> {
+    const result = await prepareSoundAssetDeletion(repository, soundId);
+    if (!result.ok) {
+      setStatus(result.reason === 'settings-load-failed'
+        ? '保存済み設定を確認できないため、音源ファイルは削除していません。'
+        : '選択音を既定値へ保存できなかったため、音源ファイルは削除していません。再読み込みして確認してください。');
+      return false;
+    }
+    setBase(result.base);
+    setDraft((current) => current.answerCompletionSoundId === soundId
+      ? { ...current, answerCompletionSoundId: DEFAULT_COMPLETION_SOUND_ID }
+      : current);
+    return true;
   }
 
   function moveButton(group: ButtonGroupId, id: ButtonId, delta: -1 | 1) {
@@ -374,18 +397,14 @@ export function OptionsPage() {
             <CustomButtonCreator groupId={group.id} onAdd={addCustomButton} />
           </section>
         ))}
-        <section className="settings-card" aria-labelledby="answer-completion-sound-title">
-          <h2 id="answer-completion-sound-title">回答完了音</h2>
-          <label className="tab-visibility">
-            <input
-              type="checkbox"
-              checked={draft.answerCompletionSoundEnabled === true}
-              onChange={(event) => updateAnswerCompletionSound(event.currentTarget.checked)}
-            />
-            ChatGPTの回答完了時に音を鳴らす
-          </label>
-          <p>初期状態は無効です。有効にした後、ChatGPTページで操作すると再生できるようになります。</p>
-        </section>
+        <AnswerCompletionSoundSettings
+          selectedSoundId={draft.answerCompletionSoundId ?? DEFAULT_COMPLETION_SOUND_ID}
+          enabled={draft.answerCompletionSoundEnabled === true}
+          disabled={!ready || saving}
+          onSelect={updateAnswerCompletionSoundId}
+          onToggleEnabled={updateAnswerCompletionSound}
+          onBeforeDelete={prepareAnswerCompletionSoundDeletion}
+        />
       </fieldset>
 
       <section className="settings-card layout-actions" aria-labelledby="layout-actions-title">

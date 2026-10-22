@@ -160,6 +160,23 @@ test('回答完了音の設定を保存・再読込し、既定値への全置�
   if (reset.ok) assert.equal(reset.settings.answerCompletionSoundEnabled ?? false, false);
 });
 
+test('選択音を保存して再読込し、同じ項目の競合は外部値を保持する', async () => {
+  const fake = storage();
+  const repository = new SettingsRepository(fake.area);
+  const selected = { ...DEFAULT_SETTINGS, answerCompletionSoundId: 'soft-chime' };
+  assert.equal((await repository.saveSettings(DEFAULT_SETTINGS, selected)).ok, true);
+  const loaded = await repository.loadSettings();
+  assert.equal(loaded.ok, true);
+  if (!loaded.ok) return;
+  assert.equal(loaded.settings.answerCompletionSoundId, 'soft-chime');
+
+  const external = { ...loaded.settings, answerCompletionSoundId: 'two-tone' };
+  fake.data[CONFIG_STORAGE_KEY] = external;
+  const conflict = await repository.saveSettings(loaded.settings, { ...loaded.settings, answerCompletionSoundId: 'tone-660' });
+  assert.deepEqual(conflict, { ok: false, reason: 'conflict', fields: ['answerCompletionSoundId'] });
+  assert.deepEqual(fake.data[CONFIG_STORAGE_KEY], external);
+});
+
 test('同時に同一fieldを異なる値へ変更した場合は一件を競合拒否する', async () => {
   const fake = storage();
   const locks = sharedLocks();

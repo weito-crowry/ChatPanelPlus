@@ -7,6 +7,8 @@ import {
 } from './conversation-statistics-controller.ts';
 import { findComposerForm } from './conversation-statistics-send-intent.ts';
 import { AnswerCompletionSoundPlayer } from './answer-completion-sound.ts';
+import { createChromeSoundAssetRepository } from '../shared/answer-completion-sound-assets.ts';
+import { DEFAULT_COMPLETION_SOUND_ID } from '../shared/answer-completion-sound-definitions.ts';
 import { calculateStatisticsPopoverPlacement, type StatisticsPopoverPlacement } from './conversation-statistics-popover-position.ts';
 
 const EMPTY_STATE: ConversationStatisticsViewState = {
@@ -40,7 +42,21 @@ function scanMessage(state: ConversationStatisticsViewState): string | null {
   return null;
 }
 
-export function ConversationStatistics({ answerCompletionSoundEnabled = false }: { readonly answerCompletionSoundEnabled?: boolean }) {
+export interface ConversationStatisticsProps {
+  readonly answerCompletionSoundEnabled?: boolean;
+  readonly answerCompletionSoundId?: string;
+  readonly soundTogglePending?: boolean;
+  readonly soundToggleError?: string;
+  readonly onToggleAnswerCompletionSound?: (enabled: boolean) => Promise<void>;
+}
+
+export function ConversationStatistics({
+  answerCompletionSoundEnabled = false,
+  answerCompletionSoundId = DEFAULT_COMPLETION_SOUND_ID,
+  soundTogglePending = false,
+  soundToggleError = '',
+  onToggleAnswerCompletionSound,
+}: ConversationStatisticsProps) {
   const [state, setState] = useState(EMPTY_STATE);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [placement, setPlacement] = useState<StatisticsPopoverPlacement | null>(null);
@@ -48,12 +64,23 @@ export function ConversationStatistics({ answerCompletionSoundEnabled = false }:
   const soundPlayer = useRef<AnswerCompletionSoundPlayer | null>(null);
   const soundEnabled = useRef(answerCompletionSoundEnabled);
   soundEnabled.current = answerCompletionSoundEnabled;
+  const soundId = useRef(answerCompletionSoundId);
+  soundId.current = answerCompletionSoundId;
+  const togglePending = useRef(false);
+  const [localToggleError, setLocalToggleError] = useState('');
+  const [optimisticEnabled, setOptimisticEnabled] = useState<boolean | null>(null);
+  const displayedSoundEnabled = optimisticEnabled ?? answerCompletionSoundEnabled;
   const trigger = useRef<HTMLButtonElement>(null);
   const popover = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const player = new AnswerCompletionSoundPlayer(document);
+    const assetRepository = createChromeSoundAssetRepository();
+    const player = new AnswerCompletionSoundPlayer(document, undefined, async (id) => {
+      const result = await assetRepository.loadAssets();
+      return result.ok ? result.assets.find((asset) => asset.id === id) : undefined;
+    });
     soundPlayer.current = player;
+    player.setSoundId(soundId.current);
     player.setEnabled(soundEnabled.current);
     const active = new ConversationStatisticsController({
       document,
@@ -75,6 +102,27 @@ export function ConversationStatistics({ answerCompletionSoundEnabled = false }:
   useEffect(() => {
     soundPlayer.current?.setEnabled(answerCompletionSoundEnabled);
   }, [answerCompletionSoundEnabled]);
+
+  useEffect(() => {
+    soundPlayer.current?.setSoundId(answerCompletionSoundId);
+  }, [answerCompletionSoundId]);
+
+  async function toggleSound() {
+    if (togglePending.current || soundTogglePending || !onToggleAnswerCompletionSound) return;
+    const next = !displayedSoundEnabled;
+    togglePending.current = true;
+    setOptimisticEnabled(next);
+    setLocalToggleError('');
+    try {
+      await onToggleAnswerCompletionSound(next);
+    } catch {
+      setOptimisticEnabled(answerCompletionSoundEnabled);
+      setLocalToggleError('回答完了音の設定を保存できませんでした。表示は保存済みの状態へ戻しました。');
+    } finally {
+      togglePending.current = false;
+      setOptimisticEnabled(null);
+    }
+  }
 
   useLayoutEffect(() => {
     if (!detailsOpen) {
@@ -116,6 +164,21 @@ export function ConversationStatistics({ answerCompletionSoundEnabled = false }:
   return (
     <section className="conversation-statistics" aria-label="会話統計">
       <button
+        type="button"
+        className="statistics-sound-toggle"
+        aria-label={`回答完了音を${displayedSoundEnabled ? 'オフ' : 'オン'}にする`}
+        aria-pressed={displayedSoundEnabled}
+        title={`回答完了音を${displayedSoundEnabled ? 'オフ' : 'オン'}にする`}
+        disabled={soundTogglePending || togglePending.current || !onToggleAnswerCompletionSound}
+        onClick={() => { void toggleSound(); }}
+      >
+        {displayedSoundEnabled ? (
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z" /><path d="M16 9a5 5 0 0 1 0 6M18.5 6.5a8.5 8.5 0 0 1 0 11" /></svg>
+        ) : (
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z" /><path d="m17 9 5 6m0-6-5 6" /></svg>
+        )}
+      </button>
+      <button
         ref={trigger}
         type="button"
         className="statistics-trigger"
@@ -127,6 +190,7 @@ export function ConversationStatistics({ answerCompletionSoundEnabled = false }:
       >
         {formatCount(state.aggregate.turns)} Turns
       </button>
+      {(soundToggleError || localToggleError) && <p className="statistics-sound-error" role="alert">{soundToggleError || localToggleError}</p>}
       {detailsOpen && (
         <div
           ref={popover}

@@ -5,15 +5,18 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const pagePath = resolve(fileURLToPath(new URL('../options/src/OptionsPage.tsx', import.meta.url)));
+const soundSettingsPath = resolve(fileURLToPath(new URL('../options/src/AnswerCompletionSoundSettings.tsx', import.meta.url)));
 const creatorPath = resolve(fileURLToPath(new URL('../options/src/CustomButtonCreator.tsx', import.meta.url)));
 
 test('Optionsに表示切替・上下並べ替え・ドラフト保存・確認付きimport/reset・exportがある', async () => {
-  const source = await readFile(pagePath, 'utf8');
+  const [source, soundSettings] = await Promise.all([readFile(pagePath, 'utf8'), readFile(soundSettingsPath, 'utf8')]);
   for (const behavior of [
     'type="checkbox"', '上へ', '下へ', '保存', 'window.confirm',
     'この設定をドラフトに適用', 'application/json', 'serializeSettings',
-    'type="color"', '<textarea', '回答完了音', 'answerCompletionSoundEnabled',
+    'type="color"', '<textarea', 'AnswerCompletionSoundSettings',
   ]) assert.ok(source.includes(behavior), `OptionsPage missing ${behavior}`);
+  assert.ok(soundSettings.includes('回答完了音'));
+  assert.ok(source.includes('enabled={draft.answerCompletionSoundEnabled === true}'));
 });
 
 test('カスタムボタン作成・操作変更・削除確認・旧JSON保持と削除予定を表示する', async () => {

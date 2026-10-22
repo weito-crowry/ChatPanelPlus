@@ -1,16 +1,20 @@
 # 回答完了音
 
 - 文書ID: CPP-DESIGN-13
-- 状態: 初版
+- 状態: 実装反映版（2026-10-22）
 - 依存: 00-architecture.md、05-settings-storage.md、06-options-page.md、08-lifecycle.md、09-testing.md、12-conversation-statistics.md
 - 目的: ChatGPTの回答生成完了を、ユーザーが有効にした場合だけ短い音で知らせる。
 
 ## 1. 対象と設定
 
-- Optionsの「回答完了音」で有効・無効を切り替え、既存の設定保存・JSON import/export経路を使う。
+- Optionsの「回答完了音」で有効・無効を切り替える。パネルでは「N Turns」の直前にスピーカー状態ボタンを置き、クリックで即時反映・保存する。保存に失敗した場合は最後に読み込んだ保存状態へ戻し、エラーを表示する。Turns詳細ボタンは独立させる。
 - 初期値は `false`。既存のschemaVersion 1設定で項目が欠けている場合も `false` として扱う。これは既存設定を読み込める追加項目であり、schemaVersionは変更しない。
+- 初期の選択音は `tone-660`（既存の660 Hz短音）。schemaVersion 1の既存JSONで選択IDが欠けている場合も同じ音を使う。選択IDは設定・JSONに含めるが、音声データは含めない。
+- Optionsでは内蔵短音3種類を選択・試聴できる。ユーザー音源は選択・試聴・確認付き削除に対応する。
+- ユーザー音源は `chatPanelPlus.answerCompletionSoundAssets` 専用の `chrome.storage.local` キーへ保存する。形式はWAV、MP3、OGG、1ファイル512 KiB以下・5秒以内・最大5件・Base64化後の合計2 MiBまでとする。拡張子とMIMEタイプに加えてシグネチャ、AudioContextデコード、長さを検証する。
+- 選択IDが参照する音源が見つからない、または再生用デコードに失敗した場合は既定の660 Hz音へフォールバックする。Optionsは欠落状態を表示する。選択音源の削除は既定音IDの設定保存後にファイルデータを削除する。
 - Manifestの権限は追加しない。設定保存には既存の `storage` 権限を使う。
-- 音声はChatGPTページ内のWeb Audio APIで短い合成音を再生する。AudioContextは音が有効な間だけ保持し、ChatGPTページ上のユーザー操作を受けて作成またはresumeする。操作前、ブラウザが停止中、またはAPIが利用できない場合は鳴らさず、操作・表示を妨げない。
+- 内蔵音とユーザー音源はChatGPTページ内のWeb Audio APIで再生する。通常通知の音量は最大0.045に抑える。AudioContextは音が有効な間だけ保持し、ChatGPTページ上の信頼済みユーザー操作を受けて作成またはresumeする。Optionsの試聴は明示クリック時だけ再生し、完了Trackerを呼ばない。
 
 ## 2. 完了イベントの判定
 
@@ -27,12 +31,18 @@
 - 既存のConversation Statistics Controllerが初回識別情報とObserverの候補Turnを追跡器へ渡す。新しいdocument-wide MutationObserverは作らない。
 - 完了サイクル判定は専用の純粋な追跡器に分離し、音声出力は別のPlayerに分ける。統計保存値、Turn集計、Conversation切替処理は変更しない。
 - 統計UIの表示状態やパネル最小化状態は、音声の有効状態に影響させない。設定変更は現在開いているContent Scriptへ反映し、無効化後のイベントは再生しない。
+- 音ON/OFF・音源選択は既存の `chatPanelPlus.config` 保存と設定購読で複数ChatGPTタブへ反映する。音源データは別キーを読み、設定JSON・統計・view stateへ混ぜない。
+- 音量ボタンは独立したbuttonとしてTurnsの左に置く。`title`、`aria-label`、`aria-pressed`、標準キーボード操作、`:focus-visible`を提供し、最小化で統計UIが隠れてもプレイヤーと完了判定は停止しない。
 - Observer、設定購読、ユーザー操作リスナー、AudioContextはContent Scriptの停止・再マウント時に解放する。
 
 ## 4. 検証と受入条件
 
 - schema 1の旧設定を読み込めて、音の既定値が無効である。値の型が不正なら設定全体の保存を拒否する。
 - Optionsから有効・無効を変更し、保存、再読込、JSON export/import後にも値が保たれる。設定の競合マージと既知フィールド初期化も値を失わない。
+- 選択IDは型・既知内蔵ID・ユーザー音源IDを検証し、既存設定との保存・同一項目競合・JSON往復で保持する。旧設定・古いJSONの適用・resetで専用音源キーを削除しない。
+- WAV/MP3/OGGの検査、MIME/シグネチャ不一致、破損・デコード不能・5秒超過・ファイル/件数/合計容量上限をテストする。保存読込失敗・破損データ・Chrome保存容量超過時に既存音源を上書きしない。
+- 音源の追加、別タブ購読、削除、選択中音源の既定音切替、欠落参照時のOptions表示と再生フォールバックをテストする。
+- 内蔵音選択、ユーザー音源デコード再生、ミュート、試聴時のユーザー操作resume、Options/panel UI配置とアクセシビリティ、再マウント後のリスナー解放をテストする。
 - 初回表示済み回答、F5・SPA遷移だけの変化、未知状態、IDなし、`in_progress`を観測しないID変更、同じ完了状態の反復では鳴らない。初期 `in_progress` は、その後の `complete` を観測したときだけ鳴る。
 - 基準化後に観測した `in_progress` → `complete` は1回鳴る。同一Turn Keyで次の `in_progress` → `complete` を観測できた再生成はもう1回鳴る。
 - 有効な完了イベントを設定OFF時に受けても再生せず、UI、Composer、送信処理へイベントを伝播・抑止しない。
@@ -40,6 +50,6 @@
 
 ## 5. 実装上の制約
 
-- Web Audioの利用可能性や自動再生許可を既成事実としない。Contextのresumeに失敗した場合は例外を表へ出さず無音で継続する。
-- Web Audioの短い合成音を用い、音声ファイル取得、Offscreen Document、背景通信、通知API、追加権限は導入しない。
+- Web Audioの利用可能性や自動再生許可を既成事実としない。Contextのresumeに失敗した場合は通知音を鳴らさず、ページ操作を妨げない。
+- ユーザー音源はローカルファイル選択からだけ読み込む。任意URL、ネット通信、Offscreen Document、背景通信、通知API、追加権限は導入しない。
 - 生成完了を既存DOM状態から確定できない場合は推測で通知しない。

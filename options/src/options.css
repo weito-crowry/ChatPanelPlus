@@ -65,6 +65,25 @@ h1 {
   margin-bottom: 0;
 }
 
+.sound-settings { display: grid; gap: 12px; }
+.sound-settings .tab-visibility { margin-top: 0; }
+.sound-select-label { max-width: 420px; }
+.sound-select-label select { width: 100%; padding: 8px 10px; border: 1px solid #c7c8cc; border-radius: 6px; background: #fff; color: inherit; font: inherit; }
+.sound-preview-button,
+.sound-asset-list button,
+.sound-file-picker { width: fit-content; padding: 7px 12px; border: 1px solid #d2d3d6; border-radius: 7px; background: #fff; color: inherit; font: inherit; cursor: pointer; }
+.sound-preview-button:disabled,
+.sound-asset-list button:disabled { cursor: not-allowed; opacity: .6; }
+.sound-file-picker { display: grid; gap: 8px; }
+.sound-file-picker input { max-width: 100%; font: inherit; }
+.sound-asset-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.sound-asset-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px; border: 1px solid #e3e3e5; border-radius: 8px; }
+.sound-asset-name { min-width: 0; flex: 1 1 150px; overflow-wrap: anywhere; }
+.sound-asset-size { color: #5d5e62; font-size: 12px; }
+.sound-settings-error { color: #b42318 !important; }
+.sound-settings-warning { color: #8a4b00 !important; }
+.sound-settings-status { color: #3157a4 !important; }
+
 .settings-status {
   min-height: 24px;
   color: #3157a4;

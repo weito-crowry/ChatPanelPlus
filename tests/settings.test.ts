@@ -61,3 +61,12 @@ test('回答完了音はschema 1の旧設定でOFFとなり、boolean値だけ�
   if (enabled.ok) assert.equal(enabled.settings.answerCompletionSoundEnabled, true);
   assert.equal(validateExtensionSettings({ schemaVersion: 1, answerCompletionSoundEnabled: 'yes' }).ok, false);
 });
+
+test('選択音IDはschema 1の既存設定とJSONで往復し、不明なIDを拒否する', () => {
+  const selected = { schemaVersion: 1, answerCompletionSoundId: 'soft-chime' };
+  const parsed = parseSettingsJson(serializeSettings(selected));
+  assert.equal(parsed.ok, true);
+  if (parsed.ok) assert.equal(parsed.settings.answerCompletionSoundId, 'soft-chime');
+  assert.equal(validateExtensionSettings({ schemaVersion: 1, answerCompletionSoundId: 'unknown' }).ok, false);
+  assert.equal(validateExtensionSettings({ schemaVersion: 1, answerCompletionSoundId: 'user-00000000-0000-4000-8000-000000000001' }).ok, true);
+});

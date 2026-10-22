@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { AnswerCompletionSoundPlayer, AnswerCompletionTracker } from '../src/content/answer-completion-sound.ts';
+import { previewCompletionSound } from '../src/shared/answer-completion-sound-playback.ts';
 import type { TurnIdentity } from '../src/content/conversation-statistics-dom.ts';
 import { createStatisticsStore } from '../src/shared/conversation-statistics.ts';
 import { FakeMutationObserver, harness, settle, turn } from './conversation-statistics-controller-fixture.ts';
@@ -116,6 +117,109 @@ test('音を有効にしたページ操作後だけ再生し、無効化でリ�
   assert.equal(factoryCalls, 1);
   assert.deepEqual([starts, stops], [1, 1]);
   player.dispose();
+});
+
+test('選択した内蔵音の音程と通知向け音量を使い、ユーザー音源が消えたら既定短音へ戻る', async () => {
+  const target = new EventTarget();
+  const frequencies: number[] = [];
+  const peaks: number[] = [];
+  const context = {
+    state: 'running', currentTime: 0, destination: {},
+    close() { this.state = 'closed'; return Promise.resolve(); },
+    createOscillator() {
+      return { type: 'sine', frequency: { setValueAtTime(value: number) { frequencies.push(value); } }, connect() {}, start() {}, stop() {} };
+    },
+    createGain() {
+      return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime(value: number) { peaks.push(value); } }, connect() {} };
+    },
+  };
+  const player = new AnswerCompletionSoundPlayer(target as Document, () => context as unknown as AudioContext);
+  player.setEnabled(true);
+  const gesture = new Event('pointerdown');
+  Object.defineProperty(gesture, 'isTrusted', { value: true });
+  target.dispatchEvent(gesture);
+  player.setSoundId('two-tone');
+  player.play();
+  assert.deepEqual(frequencies, [587.33, 783.99]);
+  assert.ok(peaks.every((volume) => volume <= 0.045));
+  player.dispose();
+
+  frequencies.length = 0;
+  context.state = 'running';
+  const fallback = new AnswerCompletionSoundPlayer(target as Document, () => context as unknown as AudioContext, async () => undefined);
+  fallback.setEnabled(true);
+  target.dispatchEvent(gesture);
+  fallback.setSoundId('user-00000000-0000-4000-8000-000000000001');
+  fallback.play();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(frequencies, [660]);
+  fallback.dispose();
+});
+
+test('ユーザー音源はAudioContextでデコードして再生し、設定変更後の遅延ロードは破棄する', async () => {
+  const target = new EventTarget();
+  let resolveAsset: ((asset: { id: string; name: string; mimeType: 'audio/wav'; data: string; sizeBytes: number; durationSeconds: number }) => void) | undefined;
+  let decoded = 0;
+  let starts = 0;
+  const context = {
+    state: 'running', currentTime: 0, destination: {},
+    close() { this.state = 'closed'; return Promise.resolve(); },
+    async decodeAudioData() { decoded += 1; return { duration: 0.4 } as AudioBuffer; },
+    createBufferSource() { return { buffer: null, connect() {}, start() { starts += 1; } }; },
+    createGain() { return { gain: { setValueAtTime() {} }, connect() {} }; },
+  };
+  const player = new AnswerCompletionSoundPlayer(
+    target as Document,
+    () => context as unknown as AudioContext,
+    () => new Promise((resolve) => { resolveAsset = resolve; }),
+  );
+  player.setEnabled(true);
+  const gesture = new Event('pointerdown');
+  Object.defineProperty(gesture, 'isTrusted', { value: true });
+  target.dispatchEvent(gesture);
+  const selected = 'user-00000000-0000-4000-8000-000000000001';
+  player.setSoundId(selected);
+  player.play();
+  player.setSoundId('tone-660');
+  resolveAsset?.({ id: selected, name: 'notice.wav', mimeType: 'audio/wav', data: 'AA==', sizeBytes: 1, durationSeconds: 0.4 });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(decoded, 0);
+  assert.equal(starts, 0);
+  player.dispose();
+
+  context.state = 'running';
+  const successful = new AnswerCompletionSoundPlayer(
+    target as Document,
+    () => context as unknown as AudioContext,
+    async (id) => ({ id, name: 'notice.wav', mimeType: 'audio/wav', data: 'AA==', sizeBytes: 1, durationSeconds: 0.4 }),
+  );
+  successful.setEnabled(true);
+  target.dispatchEvent(gesture);
+  successful.setSoundId(selected);
+  successful.play();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(decoded, 1);
+  assert.equal(starts, 1);
+  successful.dispose();
+});
+
+test('Optionsの明示試聴はミュート設定と独立し、クリック処理中にAudioContextをresumeする', async () => {
+  const target = new EventTarget();
+  let resumes = 0;
+  let starts = 0;
+  const context = {
+    state: 'suspended', currentTime: 0, destination: {},
+    resume() { resumes += 1; this.state = 'running'; return Promise.resolve(); },
+    close() { this.state = 'closed'; return Promise.resolve(); },
+    createOscillator() {
+      return { type: 'sine', frequency: { setValueAtTime() {} }, connect() {}, start() { starts += 1; }, stop() {} };
+    },
+    createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {} }; },
+  };
+  const preview = previewCompletionSound(target as Document, 'tone-660', undefined, () => context as unknown as AudioContext);
+  assert.equal(resumes, 1);
+  assert.equal(await preview, true);
+  assert.equal(starts, 1);
 });
 
 test('Conversation Statisticsの既存Observerから識別済み完了サイクルを一度だけ通知する', async () => {
