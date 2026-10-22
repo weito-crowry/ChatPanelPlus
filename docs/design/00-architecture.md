@@ -155,6 +155,7 @@ Tampermonkey v7.2 の既存操作を、React 19／TypeScript 6／Vite 8／Chrome
 - 07-clipboard.md: 権限、カーソル保持、手動入力フォールバック
 - 08-lifecycle.md: SPA・DOM 監視、復旧
 - 12-conversation-statistics.md: 会話統計の DOM 収集、台帳、自動/手動集計、分岐と制限
+- 14-codex-work-mode.md: Codex作業中の手動表示、専用保存、複数タブ同期
 - 15-custom-buttons.md: 既存操作を使うユーザー作成ボタン、保存、Options 編集、JSON 入出力
 - 09-testing.md: 各機能の自動試験・Chrome 実機受入
 - 10-implementation-plan.md: 依存関係、段階実装、統合
