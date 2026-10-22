@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import type { ButtonGroupId, CustomButtonDefinition } from '../../src/shared/default-ui';
 import type { CustomButtonOperation } from './options-state';
 
@@ -21,6 +21,7 @@ function colorPickerValue(color: string, fallback: string): string {
 }
 
 export function CustomButtonCreator({ groupId, onAdd }: Props) {
+  const detailsRef = useRef<HTMLDetailsElement>(null);
   const [operation, setOperation] = useState<CustomButtonOperation>('insert');
   const [label, setLabel] = useState(operationDefaults.insert.label);
   const [color, setColor] = useState(operationDefaults.insert.color);
@@ -45,10 +46,19 @@ export function CustomButtonCreator({ groupId, onAdd }: Props) {
     setLabel(defaults.label);
     setColor(defaults.color);
     setText('');
+    if (detailsRef.current) detailsRef.current.open = false;
+  }
+
+  function cancel() {
+    setOperation('insert');
+    setLabel(operationDefaults.insert.label);
+    setColor(operationDefaults.insert.color);
+    setText('');
+    if (detailsRef.current) detailsRef.current.open = false;
   }
 
   return (
-    <details className="custom-button-creator">
+    <details ref={detailsRef} className="custom-button-creator">
       <summary>ボタンを追加</summary>
       <form onSubmit={submit}>
         <label className="field-label">
@@ -76,6 +86,7 @@ export function CustomButtonCreator({ groupId, onAdd }: Props) {
           </label>
         )}
         <button type="submit">このグループに追加</button>
+        <button type="button" onClick={cancel}>取り消す</button>
       </form>
     </details>
   );

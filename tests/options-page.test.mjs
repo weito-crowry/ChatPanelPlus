@@ -27,4 +27,5 @@ test('カスタムボタン作成・操作変更・削除確認・旧JSON保持�
   for (const operation of ['定型文を挿入', '現在時刻を挿入', 'クリップボードを貼り付け', '入力欄をクリア']) {
     assert.ok(creator.includes(operation), `CustomButtonCreator missing ${operation}`);
   }
+  assert.ok(creator.includes('取り消す'), 'CustomButtonCreator needs a form cancel action');
 });
