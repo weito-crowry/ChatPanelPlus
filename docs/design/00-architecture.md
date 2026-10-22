@@ -37,7 +37,7 @@ Tampermonkey v7.2 の既存操作を、React 19／TypeScript 6／Vite 8／Chrome
 
 - ChatGPT API や非公開エンドポイントを使う会話取得・送信、バックグラウンドでの自動送信。
 - 通知、Codex 連携の実機能。将来の拡張境界だけを考慮し、先行して実装しない。
-- 任意の新規ボタン種類・カスタムスクリプト実行機能。既存定型ボタンのカスタマイズを優先する。
+- 既存4操作にない新しいボタン動作・カスタムスクリプト実行機能。既存動作を選ぶユーザー作成ボタンは CPP-DESIGN-15 の別仕様で扱う。
 - 旧 ID の 429 障害原因究明・旧 ID への復帰。原因は未確定のためコード不具合や OpenAI 側制限と断定しない。
 
 ## 3. 設計原則と責務境界
@@ -155,6 +155,7 @@ Tampermonkey v7.2 の既存操作を、React 19／TypeScript 6／Vite 8／Chrome
 - 07-clipboard.md: 権限、カーソル保持、手動入力フォールバック
 - 08-lifecycle.md: SPA・DOM 監視、復旧
 - 12-conversation-statistics.md: 会話統計の DOM 収集、台帳、自動/手動集計、分岐と制限
+- 15-custom-buttons.md: 既存操作を使うユーザー作成ボタン、保存、Options 編集、JSON 入出力
 - 09-testing.md: 各機能の自動試験・Chrome 実機受入
 - 10-implementation-plan.md: 依存関係、段階実装、統合
 - 11-agent-workflow.md: Lunaへの実装委任、自己レビュー、独立受入レビュー

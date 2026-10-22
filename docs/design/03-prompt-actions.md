@@ -2,9 +2,10 @@
 
 - 文書ID: CPP-DESIGN-03
 - 状態: 初版
-- 依存: 00-architecture.md、01-editor-adapter.md、02-panel-ui.md
+- 依存: 00-architecture.md、01-editor-adapter.md、02-panel-ui.md、15-custom-buttons.md
 - 原典: 添付された Tampermonkey「ChatGPT 定型ボタン（UI-tree, tabs, clipboard-fallback）」v7.2 の UI.groups / resolveOnClick
 - 本書で定義するボタンIDと既定プロンプトを移植の正本とする。後で勝手に要約・翻案・翻訳しない。
+- 本書は既定20ボタンの正本である。ユーザー作成ボタンも本書の既存操作だけを使い、追加方法は 15-custom-buttons.md に従う。
 
 ## 1. 共通ボタン型と処理
 
@@ -183,9 +184,10 @@ v7.2 の getJSTDateString() と互換。Intl.DateTimeFormat('ja-JP', {timeZone:'
 ## 7. 設定によるカスタマイズと不変条件
 
 - label、color、visible、order は全20ボタンについてカスタマイズ可能。
+- ユーザー作成ボタンは既定ボタンとは別定義で作成でき、実行できる操作は本書の既存4種類に限る。詳細は 15-custom-buttons.md を参照。
 - text 編集は kind=insert のボタンを対象とする。insert-jst、paste、clear の内部処理文字列を任意テキストに変更する仕組みを設けない。
 - 保存設定がなくても、本書の既定値を描画・操作できること。
-- レイアウト初期化で、既定ラベル、色、可視性、位置、定型文本文をすべて元に戻す。
+- レイアウト初期化で、既定ボタンのラベル、色、可視性、位置、定型文本文をすべて元に戻す。ユーザー作成ボタンの扱いは 15-custom-buttons.md に従う。
 - 任意の HTML、JavaScript、ネットワーク URL を action の実装として保存・実行させない。
 - ラベルの変更でボタンの ID や処理意味論が変化しない。
 - アクション失敗やエディタ不在で送信を試行しない。
