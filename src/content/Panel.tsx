@@ -8,6 +8,7 @@ import { ClipboardPasteController, requiresManualPasteDialog, type ClipboardPast
 import { debugPasteStrategy } from './clipboard-debug';
 import { ConversationStatistics } from './ConversationStatistics';
 import { CodexWorkModeToggle } from './CodexWorkModeToggle';
+import { ProjectPanelTitle } from './ProjectPanelTitle';
 import { pasteFromClipboard, replaceCurrentSelectionWithHTML } from './editor/experimental-insertion';
 import type { ClipboardMetric, ClipboardMetricReporter } from './clipboard-metrics.ts';
 import { dispatchPanelButton } from './panel-button-actions';
@@ -278,7 +279,7 @@ export function ChatPanel() {
   return (
     <aside className={`panel${currentViewState.minimized ? ' is-minimized' : ''}`} aria-label="ChatPanelPlus パネル">
       <div className="panel-header">
-        <h1 className="panel-title" hidden={currentViewState.minimized}>ChatPanelPlus</h1>
+        <h1 className="panel-title" hidden={currentViewState.minimized}><ProjectPanelTitle /></h1>
         <CodexWorkModeToggle minimized={currentViewState.minimized} />
       </div>
       <div className="panel-content" hidden={currentViewState.minimized}>
