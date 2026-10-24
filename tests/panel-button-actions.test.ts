@@ -27,3 +27,39 @@ test('既定・カスタムボタンの4操作は共通ディスパッチャー�
 
   assert.deepEqual(calls, ['insert:本文', 'insert-jst', 'paste', 'clear']);
 });
+
+test('挿入ディスパッチはcaret・beginning・未設定のモードをハンドラーへ渡す', () => {
+  const modes: Array<string | undefined> = [];
+  const button = {
+    id: 'custom-123e4567-e89b-42d3-a456-426614174020',
+    groupId: 'directive',
+    order: 0,
+    label: '定型文',
+    color: '#123456',
+    kind: 'insert',
+    text: '定型文',
+    insertionMode: 'caret',
+    visible: true,
+  } as const satisfies ResolvedButton;
+
+  dispatchPanelButton(button, {
+    insert: (_text, insertionMode) => modes.push(insertionMode),
+    insertJst: () => assert.fail('挿入ボタンは時刻操作へ進まない'),
+    paste: () => assert.fail('挿入ボタンは貼付操作へ進まない'),
+    clear: () => assert.fail('挿入ボタンはクリア操作へ進まない'),
+  });
+  dispatchPanelButton({ ...button, insertionMode: 'beginning' }, {
+    insert: (_text, insertionMode) => modes.push(insertionMode),
+    insertJst: () => assert.fail('挿入ボタンは時刻操作へ進まない'),
+    paste: () => assert.fail('挿入ボタンは貼付操作へ進まない'),
+    clear: () => assert.fail('挿入ボタンはクリア操作へ進まない'),
+  });
+  dispatchPanelButton({ ...button, insertionMode: undefined }, {
+    insert: (_text, insertionMode) => modes.push(insertionMode),
+    insertJst: () => assert.fail('挿入ボタンは時刻操作へ進まない'),
+    paste: () => assert.fail('挿入ボタンは貼付操作へ進まない'),
+    clear: () => assert.fail('挿入ボタンはクリア操作へ進まない'),
+  });
+
+  assert.deepEqual(modes, ['caret', 'beginning', undefined]);
+});

@@ -19,7 +19,7 @@ type MockRange = {
   toString(): string;
 };
 
-export function fixture(firstCharacter = 'o', options: { hasForm?: boolean; nestedText?: string; selectionStart?: number; selectionEnd?: number } = {}) {
+export function fixture(firstCharacter = 'o', options: { hasForm?: boolean; nestedText?: string; selectionStart?: number; selectionEnd?: number; pathname?: string } = {}) {
   let modelText = options.nestedText ?? `${firstCharacter}riginal`;
   const textNode = {
     get textContent() { return modelText; },
@@ -133,6 +133,7 @@ export function fixture(firstCharacter = 'o', options: { hasForm?: boolean; nest
   const selectors = new Map<string, Element[]>([
     ['#prompt-textarea[contenteditable="true"]', [editor]],
   ]);
+  const location = { pathname: options.pathname ?? '/c/test' };
   const listeners = new Map<string, (event: Event) => void>();
   const selection = {
     get rangeCount() { return selectionState.ranges.length; },
@@ -189,6 +190,7 @@ export function fixture(firstCharacter = 'o', options: { hasForm?: boolean; nest
     },
   });
   const document = {
+    location,
     querySelectorAll: (selector: string) => selectors.get(selector) ?? [],
     getSelection: () => selection,
     createRange: () => makeRangeState() as unknown as Range,
@@ -341,6 +343,7 @@ export function fixture(firstCharacter = 'o', options: { hasForm?: boolean; nest
     recordEditorMutation,
     get activeObserverCount() { return mutationObservers.filter((observer) => observer.observing).length; },
     get activeTimerCount() { return pendingTimers.size; },
+    setPathname(pathname: string) { location.pathname = pathname; },
     addAttachment(node = {} as Element) { attachmentNodes.push(node); recordAttachmentMutation(); },
     get text() { return modelText; },
     makeRange(startOffset: number, endOffset: number) {

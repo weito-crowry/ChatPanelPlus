@@ -14,14 +14,15 @@ export type TabId = 'directive' | 'control' | 'wall' | 'binary' | 'quad';
 export type ButtonGroupId = 'always' | TabId;
 export type ButtonAction = 'insert-jst' | 'paste' | 'clear';
 export type ButtonKind = 'insert' | 'action';
+export type InsertionMode = 'beginning' | 'caret';
 export type CustomButtonDefinition = Readonly<{
   groupId: ButtonGroupId;
   label: string;
   color: string;
   visible: boolean;
 } & (
-  | { kind: 'insert'; text: string; action?: never }
-  | { kind: 'action'; action: ButtonAction; text?: never }
+  | { kind: 'insert'; text: string; insertionMode?: InsertionMode; action?: never }
+  | { kind: 'action'; action: ButtonAction; text?: never; insertionMode?: never }
 )>;
 
 export type ButtonDefinition = Readonly<{
@@ -33,6 +34,7 @@ export type ButtonDefinition = Readonly<{
   kind: ButtonKind;
   action?: ButtonAction;
   text?: string;
+  insertionMode?: InsertionMode;
 }>;
 
 export type TabDefinition = Readonly<{

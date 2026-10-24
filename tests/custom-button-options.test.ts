@@ -15,7 +15,7 @@ import { DEFAULT_SETTINGS, parseSettingsJson, serializeSettings } from '../src/s
 
 const firstId = 'custom-123e4567-e89b-42d3-a456-426614174020';
 const secondId = 'custom-123e4567-e89b-42d3-a456-426614174021';
-const first = { groupId: 'directive', label: '一番', color: '#123456', visible: true, kind: 'insert', text: '改行\n本文' } as const;
+const first = { groupId: 'directive', label: '一番', color: '#123456', visible: true, kind: 'insert', text: '改行\n本文', insertionMode: 'caret' } as const;
 const second = { groupId: 'directive', label: '二番', color: '#654321', visible: false, kind: 'action', action: 'paste' } as const;
 
 test('4操作のボタン作成をグループ末尾に追加し、保存JSON後もIDと定義を保つ', () => {
@@ -47,6 +47,14 @@ test('4操作のボタン作成をグループ末尾に追加し、保存JSON後
 test('customボタン編集は項目を保ち、操作切替で古いactionとtextを一括除去する', () => {
   const initial = createCustomButton(DEFAULT_SETTINGS, firstId, first);
   const edited = updateCustomButton(initial, firstId, 'label', '変更名');
+  assert.equal(edited.customButtons?.[firstId]?.insertionMode, 'caret');
+  const editedFields = updateCustomButton(
+    updateCustomButton(updateCustomButton(edited, firstId, 'color', '#abcdef'), firstId, 'visible', false),
+    firstId,
+    'text',
+    '編集後の本文',
+  );
+  assert.equal(editedFields.customButtons?.[firstId]?.insertionMode, 'caret');
   const action = changeCustomButtonOperation(edited, firstId, 'paste');
   assert.deepEqual(action.customButtons?.[firstId], {
     groupId: 'directive', label: '変更名', color: '#123456', visible: true, kind: 'action', action: 'paste',
@@ -56,6 +64,24 @@ test('customボタン編集は項目を保ち、操作切替で古いactionとte
     groupId: 'directive', label: '変更名', color: '#123456', visible: true, kind: 'insert', text: '',
   });
   assert.equal(updateCustomButton(insert, firstId, 'text', '次の本文').customButtons?.[firstId]?.kind, 'insert');
+  assert.deepEqual(updateCustomButton(action, firstId, 'insertionMode', 'caret'), action);
+  assert.deepEqual(changeCustomButtonOperation(initial, firstId, 'clear').customButtons?.[firstId], {
+    groupId: 'directive', label: '一番', color: '#123456', visible: true, kind: 'action', action: 'clear',
+  });
+});
+
+test('insertionModeはJSON出力・読込で維持し、新しい挿入ボタンには従来の既定動作を使う', () => {
+  const initial = createCustomButton(DEFAULT_SETTINGS, firstId, first);
+  const parsed = parseSettingsJson(serializeSettings(initial));
+  assert.equal(parsed.ok, true);
+  if (parsed.ok) assert.equal(parsed.settings.customButtons?.[firstId]?.insertionMode, 'caret');
+
+  const freshId = 'custom-123e4567-e89b-42d3-a456-426614174022' as CustomButtonId;
+  const fresh = createCustomButton(DEFAULT_SETTINGS, freshId, {
+    groupId: 'directive', label: '新規', color: '#123456', visible: true, kind: 'insert', text: '',
+  });
+  assert.equal('insertionMode' in (fresh.customButtons?.[freshId] ?? {}), false);
+  assert.equal(resolveDefaultUI(fresh).buttons.find(({ id }) => id === freshId)?.insertionMode, undefined);
 });
 
 test('削除は定義と全グループの順序参照をドラフトから一緒に除去する', () => {

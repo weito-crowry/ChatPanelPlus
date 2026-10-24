@@ -4,6 +4,7 @@ import {
   type ButtonGroupId,
   type CustomButtonDefinition,
   type CustomButtonId,
+  type InsertionMode,
   type TabId,
 } from './default-ui.ts';
 import { isBuiltinCompletionSoundId, isUserCompletionSoundId } from './answer-completion-sound-definitions.ts';
@@ -123,7 +124,7 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
     for (const [id, rawDefinition] of Object.entries(value.customButtons)) {
       if (!uuidPattern.test(id) || BUTTON_IDS.has(id) || !plainObject(rawDefinition)) return settingsError('invalid-settings');
       const definition = rawDefinition as Record<string, unknown>;
-      const allowedFields = new Set(['groupId', 'label', 'color', 'visible', 'kind', 'action', 'text']);
+      const allowedFields = new Set(['groupId', 'label', 'color', 'visible', 'kind', 'action', 'text', 'insertionMode']);
       if (Object.keys(definition).some((field) => !allowedFields.has(field))) return settingsError('invalid-settings');
       if (!GROUP_IDS.has(definition.groupId as ButtonGroupId)
         || typeof definition.label !== 'string'
@@ -132,8 +133,11 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
         || typeof definition.visible !== 'boolean') return settingsError('invalid-settings');
       if (definition.kind === 'insert') {
         if (typeof definition.text !== 'string' || 'action' in definition) return settingsError('invalid-settings');
+        if ('insertionMode' in definition && definition.insertionMode !== 'beginning' && definition.insertionMode !== 'caret') {
+          return settingsError('invalid-settings');
+        }
       } else if (definition.kind === 'action') {
-        if (typeof definition.action !== 'string' || !actions.has(definition.action) || 'text' in definition) {
+        if (typeof definition.action !== 'string' || !actions.has(definition.action) || 'text' in definition || 'insertionMode' in definition) {
           return settingsError('invalid-settings');
         }
       } else return settingsError('invalid-settings');
@@ -143,7 +147,11 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
         color: definition.color,
         visible: definition.visible,
         ...(definition.kind === 'insert'
-          ? { kind: 'insert' as const, text: definition.text as string }
+          ? {
+            kind: 'insert' as const,
+            text: definition.text as string,
+            ...(definition.insertionMode === undefined ? {} : { insertionMode: definition.insertionMode as InsertionMode }),
+          }
           : { kind: 'action' as const, action: definition.action as 'insert-jst' | 'paste' | 'clear' }),
       };
     }
