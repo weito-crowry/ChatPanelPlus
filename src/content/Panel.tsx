@@ -3,7 +3,7 @@ import { type ResolvedButton } from '../shared/default-ui';
 import { createChromeSettingsRepository, type SettingsRepository, type StoredViewState } from '../shared/settings-repository';
 import { DEFAULT_SETTINGS, type ExtensionSettings } from '../shared/settings';
 import { DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT } from '../shared/answer-completion-sound-volume.ts';
-import { captureSelectionForPaste, clearComposer, insertAtBeginning, replaceCurrentSelection, type SelectionSnapshot } from './editor/adapter';
+import { captureSelectionForPaste, clearComposer, insertAtBeginning, insertAtCaret, replaceCurrentSelection, type SelectionSnapshot } from './editor/adapter';
 import { ClipboardPasteController, requiresManualPasteDialog, type ClipboardPasteResult } from './clipboard';
 import { debugPasteStrategy } from './clipboard-debug';
 import { ConversationStatistics } from './ConversationStatistics';
@@ -79,7 +79,7 @@ export function ChatPanel() {
   const soundTogglePendingRef = useRef(false);
   const [manualPasteOpen, setManualPasteOpen] = useState(false);
   const [manualPasteText, setManualPasteText] = useState('');
-  const pointerSnapshot = useRef<SelectionSnapshot | null>(null);
+  const pointerSnapshot = useRef<{ buttonId: ResolvedButton['id']; snapshot: SelectionSnapshot } | null>(null);
   const activePasteSnapshot = useRef<SelectionSnapshot | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const ignoreNextViewChange = useRef(false);
@@ -189,18 +189,22 @@ export function ChatPanel() {
     });
   }, [currentViewState.selectedTabId, currentViewState.minimized, persistViewState, viewStateLoaded]);
 
-  function dispatchButton(button: ResolvedButton) {
+  function dispatchButton(button: ResolvedButton, isPointerClick: boolean) {
+    const pointerCapture = pointerSnapshot.current;
+    pointerSnapshot.current = null;
+    const snapshot = isPointerClick && pointerCapture?.buttonId === button.id ? pointerCapture.snapshot : null;
     dispatchPanelButton(button, {
-      insert: (text) => showResult(insertAtBeginning(text)),
+      insert: (text, insertionMode) => showResult(insertionMode === 'caret'
+        ? insertAtCaret(text, undefined, snapshot ?? captureSelectionForPaste())
+        : insertAtBeginning(text)),
       insertJst: () => showResult(insertAtBeginning(formatJstTimestamp())),
-      paste: () => { void beginPaste(); },
+      paste: () => { void beginPaste(snapshot); },
       clear: () => showResult(clearComposer()),
     });
   }
 
-  function capturePastePointer() {
-    pointerSnapshot.current = captureSelectionForPaste();
-    returnFocus.current = pointerSnapshot.current.editor;
+  function captureSelectionPointer(buttonId: ResolvedButton['id']) {
+    pointerSnapshot.current = { buttonId, snapshot: captureSelectionForPaste() };
   }
 
   function showResult(result: ReturnType<typeof insertAtBeginning>) {
@@ -216,13 +220,12 @@ export function ChatPanel() {
     }
   }
 
-  async function beginPaste() {
+  async function beginPaste(snapshot: SelectionSnapshot | null = null) {
     if (!pasteController.current) return;
-    const snapshot = pointerSnapshot.current ?? captureSelectionForPaste();
-    pointerSnapshot.current = null;
-    activePasteSnapshot.current = snapshot;
-    returnFocus.current = activePasteSnapshot.current?.editor ?? document.activeElement as HTMLElement | null;
-    showPasteResult(await pasteController.current.start(snapshot, debugPasteStrategy(window.location.search)));
+    const activeSnapshot = snapshot ?? captureSelectionForPaste();
+    activePasteSnapshot.current = activeSnapshot;
+    returnFocus.current = activeSnapshot.editor ?? document.activeElement as HTMLElement | null;
+    showPasteResult(await pasteController.current.start(activeSnapshot, debugPasteStrategy(window.location.search)));
     if (!pasteController.current.isBusy) activePasteSnapshot.current = null;
   }
 
@@ -299,8 +302,8 @@ export function ChatPanel() {
               key={button.id}
               data-button-id={button.id}
               style={{ backgroundColor: button.color }}
-              onPointerDown={button.action === 'paste' ? capturePastePointer : undefined}
-              onClick={() => dispatchButton(button)}
+              onPointerDown={button.action === 'paste' || (button.kind === 'insert' && button.insertionMode === 'caret') ? () => captureSelectionPointer(button.id) : undefined}
+              onClick={(event) => dispatchButton(button, event.detail > 0)}
             >
               {button.label}
             </button>
@@ -342,8 +345,8 @@ export function ChatPanel() {
                 key={button.id}
                 data-button-id={button.id}
                 style={{ backgroundColor: button.color }}
-                onPointerDown={button.action === 'paste' ? capturePastePointer : undefined}
-                onClick={() => dispatchButton(button)}
+                onPointerDown={button.action === 'paste' || (button.kind === 'insert' && button.insertionMode === 'caret') ? () => captureSelectionPointer(button.id) : undefined}
+                onClick={(event) => dispatchButton(button, event.detail > 0)}
               >
                 {button.label}
               </button>

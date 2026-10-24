@@ -5,6 +5,7 @@ import {
   clearComposer,
   findActiveEditor,
   insertAtBeginning,
+  insertAtCaret,
   replaceCurrentSelection,
 } from '../src/content/editor/adapter.ts';
 import type { ClipboardMetric } from '../src/content/clipboard-metrics.ts';
@@ -54,6 +55,58 @@ test('Composer同一性を確認し、保存Rangeで選択を置換する', () =
   assert.deepEqual(replaceCurrentSelection('clip', f.environment, snapshot), { ok: false, reason: 'composer-changed' });
   assert.deepEqual(f.commands, ['insertText:clip']);
   assert.equal(f.text, 'originalclip');
+});
+
+test('フォーカス移動後に保存Rangeを復元し、選択範囲へ定型文を置換する', () => {
+  const caret = fixture('o', { selectionStart: 4 });
+  const caretSnapshot = captureSelectionForPaste(caret.environment);
+  caret.selection.removeAllRanges();
+  assert.deepEqual(replaceCurrentSelection('X', caret.environment, caretSnapshot), { ok: true });
+  assert.equal(caret.text, 'origXinal');
+
+  const selected = fixture('o', { selectionStart: 1, selectionEnd: 4 });
+  const selectedSnapshot = captureSelectionForPaste(selected.environment);
+  selected.selection.removeAllRanges();
+  assert.deepEqual(replaceCurrentSelection('XYZ', selected.environment, selectedSnapshot), { ok: true });
+  assert.equal(selected.text, 'oXYZinal');
+});
+
+test('pathnameが変わった保存Rangeを拒否し、RangeがなければComposer末尾へ挿入する', () => {
+  const changedPage = fixture('o', { selectionStart: 2, pathname: '/c/first' });
+  const staleSnapshot = captureSelectionForPaste(changedPage.environment);
+  changedPage.setPathname('/c/second');
+  assert.deepEqual(insertAtCaret('X', changedPage.environment, staleSnapshot), {
+    ok: false,
+    reason: 'composer-changed',
+  });
+  assert.equal(changedPage.text, 'original');
+  assert.deepEqual(changedPage.commands, []);
+
+  const noRange = fixture();
+  noRange.selection.removeAllRanges();
+  assert.deepEqual(replaceCurrentSelection('tail', noRange.environment, {
+    editor: noRange.editor,
+    range: null,
+    pathname: '/c/test',
+  }), { ok: true });
+  assert.equal(noRange.text, 'originaltail');
+});
+
+test('Documentにlocationがない環境でも既存SelectionSnapshot操作を維持する', () => {
+  const f = fixture('o', { selectionStart: 4 });
+  delete (f.environment.document as unknown as { location?: unknown }).location;
+  const snapshot = captureSelectionForPaste(f.environment);
+  assert.equal(snapshot.pathname, undefined);
+  assert.deepEqual(replaceCurrentSelection('X', f.environment, snapshot), { ok: true });
+  assert.equal(f.text, 'origXinal');
+});
+
+test('共有のテキスト貼付編集経路にはpathname照合を追加しない', () => {
+  const f = fixture('o', { selectionStart: 2, pathname: '/c/first' });
+  const snapshot = captureSelectionForPaste(f.environment);
+  f.setPathname('/c/second');
+  assert.deepEqual(replaceCurrentSelection('X', f.environment, snapshot), { ok: true });
+  assert.equal(f.text, 'orXiginal');
 });
 
 test('明示クリアのみ削除を実行し、コマンド拒否を失敗として返す', () => {

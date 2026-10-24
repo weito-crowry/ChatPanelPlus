@@ -18,6 +18,7 @@ export type EditResult = { ok: true } | { ok: false; reason: EditFailureReason }
 export interface SelectionSnapshot {
   readonly editor: HTMLElement | null;
   readonly range: Range | null;
+  readonly pathname?: string;
 }
 
 export interface EditorEnvironment {
@@ -104,12 +105,15 @@ export function captureSelectionForPaste(
 ): SelectionSnapshot {
   const editor = findActiveEditor(environment);
   const selection = activeSelection(environment);
-  if (!editor || !selection?.rangeCount) return { editor, range: null };
+  const pathname = environment.document.location?.pathname;
+  if (!editor || !selection?.rangeCount) return { editor, range: null, pathname };
   try {
     const range = selection.getRangeAt(0);
-    return rangeBelongsTo(range, editor) ? { editor, range: range.cloneRange() } : { editor, range: null };
+    return rangeBelongsTo(range, editor)
+      ? { editor, range: range.cloneRange(), pathname }
+      : { editor, range: null, pathname };
   } catch {
-    return { editor, range: null };
+    return { editor, range: null, pathname };
   }
 }
 
@@ -433,6 +437,19 @@ export function replaceCurrentSelection(
     range.collapse(false);
   }
   return insertText(environment, editor, range, text.replace(/\r\n/g, '\n'), onMetric, selectionStarted);
+}
+
+export function insertAtCaret(
+  text: string,
+  environment: EditorEnvironment = browserEnvironment(),
+  snapshot: SelectionSnapshot = captureSelectionForPaste(environment),
+): EditResult {
+  if (!text) return { ok: true };
+  const currentPathname = environment.document.location?.pathname;
+  if (snapshot.pathname !== undefined && currentPathname !== undefined && snapshot.pathname !== currentPathname) {
+    return failed('composer-changed');
+  }
+  return replaceCurrentSelection(text, environment, snapshot);
 }
 
 export function clearComposer(environment: EditorEnvironment = browserEnvironment()): EditResult {

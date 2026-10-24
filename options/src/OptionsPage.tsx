@@ -5,6 +5,7 @@ import {
   type ButtonId,
   type CustomButtonDefinition,
   type CustomButtonId,
+  type InsertionMode,
   type TabId,
 } from '../../src/shared/default-ui';
 import { createChromeSettingsRepository } from '../../src/shared/settings-repository';
@@ -96,7 +97,7 @@ export function OptionsPage() {
     setStatus('カスタムボタンをドラフトに追加しました。保存後にパネルへ反映されます。');
   }
 
-  function editCustomButton(id: CustomButtonId, field: 'visible' | 'label' | 'color' | 'text', value: boolean | string) {
+  function editCustomButton(id: CustomButtonId, field: 'visible' | 'label' | 'color' | 'text' | 'insertionMode', value: boolean | string) {
     setDraft((current) => updateCustomButton(current, id, field, value));
     setStatus('未保存の変更があります。');
   }
@@ -341,9 +342,9 @@ export function OptionsPage() {
                   const text = custom?.kind === 'insert'
                     ? custom.text
                     : typeof override?.text === 'string' ? override.text : button.text ?? '';
-                  const edit = (field: 'visible' | 'label' | 'color' | 'text', value: boolean | string) => {
+                  const edit = (field: 'visible' | 'label' | 'color' | 'text' | 'insertionMode', value: boolean | string) => {
                     if (customId) editCustomButton(customId, field, value);
-                    else updateButton(button.id, field, value);
+                    else if (field !== 'insertionMode') updateButton(button.id, field, value);
                   };
                   return <article
                     className="button-settings"
@@ -383,6 +384,18 @@ export function OptionsPage() {
                           <option value="clear">入力欄をクリア</option>
                         </select>
                       </label>
+                      {custom.kind === 'insert' && (
+                        <label className="field-label">
+                          挿入位置
+                          <select
+                            value={custom.insertionMode ?? 'beginning'}
+                            onChange={(event) => editCustomButton(customId, 'insertionMode', event.currentTarget.value as InsertionMode)}
+                          >
+                            <option value="beginning">先頭に挿入</option>
+                            <option value="caret">カーソル位置に挿入</option>
+                          </select>
+                        </label>
+                      )}
                       <button type="button" className="delete-custom-button" onClick={() => removeCustomButton(customId, label)}>このカスタムボタンを削除</button>
                     </>
                   )}

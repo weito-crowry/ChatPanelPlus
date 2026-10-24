@@ -111,11 +111,13 @@ export function createCustomButton(
 export function updateCustomButton(
   settings: ExtensionSettings,
   id: CustomButtonId,
-  field: 'visible' | 'label' | 'color' | 'text',
+  field: 'visible' | 'label' | 'color' | 'text' | 'insertionMode',
   value: boolean | string,
 ): ExtensionSettings {
   const definition = settings.customButtons?.[id];
-  if (!definition || (field === 'text' && definition.kind !== 'insert')) return settings;
+  if (!definition
+    || ((field === 'text' || field === 'insertionMode') && definition.kind !== 'insert')
+    || (field === 'insertionMode' && value !== 'beginning' && value !== 'caret')) return settings;
   return {
     ...settings,
     customButtons: {

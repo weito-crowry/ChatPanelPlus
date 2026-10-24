@@ -52,6 +52,30 @@ test('初回はschema 1既定値を返し、設定とview stateを別keyで保�
   assert.deepEqual(await repository.loadViewState(), { ok: true, viewState: { selectedTabId: 'wall', minimized: true } });
 });
 
+test('保存済みschema 1設定の二つのcaretボタンと順序を変更せず読み込む', async () => {
+  const firstId = 'custom-123e4567-e89b-42d3-a456-426614174020';
+  const secondId = 'custom-123e4567-e89b-42d3-a456-426614174021';
+  const stored = {
+    schemaVersion: 1,
+    customButtons: {
+      [firstId]: { groupId: 'directive', label: '定型文A', color: '#123', visible: true, kind: 'insert', text: '本文A', insertionMode: 'caret' },
+      [secondId]: { groupId: 'directive', label: '定型文B', color: '#456', visible: true, kind: 'insert', text: '本文B', insertionMode: 'caret' },
+    },
+    buttonOrder: { directive: [secondId, firstId] },
+  };
+  const fake = storage({ [CONFIG_STORAGE_KEY]: stored });
+  const repository = new SettingsRepository(fake.area);
+
+  const loaded = await repository.loadSettings();
+  assert.equal(loaded.ok, true);
+  if (!loaded.ok) return;
+  assert.equal(loaded.settings.customButtons?.[firstId]?.insertionMode, 'caret');
+  assert.equal(loaded.settings.customButtons?.[secondId]?.insertionMode, 'caret');
+  assert.deepEqual(loaded.settings.buttonOrder?.directive?.slice(0, 2), [secondId, firstId]);
+  assert.deepEqual(fake.data[CONFIG_STORAGE_KEY], stored);
+  assert.equal(fake.writes, 0);
+});
+
 test('レイアウト保存時だけ別keyのview stateを既定値へ戻す', async () => {
   const fake = storage({
     [CONFIG_STORAGE_KEY]: DEFAULT_SETTINGS,
