@@ -38,6 +38,8 @@ pnpm build
 
 テストは通常ビルドのmanifest参照、最小権限、Content Script/Options/SW出力、余分なファイルの不在を確認します。`build:noop`の検査は一時ディレクトリ内で独立して行います。サイズ制限は手書きコード等1ファイル当たり500物理行かつUTF-8で32 KiBです。
 
+Issue横断の[作業・検証記録](docs/issue-progress-2026-11-07.md)と、通常Chromeでまとめて行う[実機確認表](docs/manual-verification-2026-11-07.md)を用意しています。自動テスト結果、過去の実機PASS、今回版の未確認を分けて記録します。
+
 ## ソース構成
 
 ```text
