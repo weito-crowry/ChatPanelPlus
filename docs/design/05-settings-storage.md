@@ -32,6 +32,8 @@
   - tabOrder: 安定 tabId 配列
   - answerCompletionSoundEnabled?: 回答完了音の有効状態。省略時は無効
   - customButtons?: CustomButtonId をキーとしたユーザー作成ボタン定義。省略時は空
+  - customTabs?: `custom-tab-<UUID v4>` をキーとする `{ label, visible }`。省略時は空
+  - builtinButtonGroupOverrides?: 既定ButtonIdから `always` または既存TabIdへの所属上書き。既定所属へ戻す際はキーを除く
 - ButtonOverride:
   - visible?: boolean
   - label?: string
@@ -45,7 +47,7 @@
 - StorageEnvelope: config と viewState を別のキーで保存する。頻繁なタブ選択更新による設定全体の上書き事故を避ける。
 - 会話統計は設定の StorageEnvelope に含めず、`chatPanelPlus.statistics` 専用キーへ保存する。スキーマと分岐処理は `12-conversation-statistics.md` を参照。
 
-order は同一表示領域内での並び替えを表す。ユーザー作成ボタンは既存6グループのいずれかに作成できるが、作成後のグループ間移動は対象外。詳細は `15-custom-buttons.md` を参照。
+order は同一表示領域内での並び替えを表す。`tabOrder` は既定・カスタムタブを、`buttonOrder` は常時表示と各タブを保持する。所属情報を先に解決してからグループ順を適用する。詳細は `15-custom-buttons.md` を参照。
 
 ## 3. デフォルト解決と状態遷移
 
@@ -66,7 +68,9 @@ order は同一表示領域内での並び替えを表す。ユーザー作成�
 - Service Worker を経由しなくても chrome.storage API で扱える設定は、バックグラウンドに二重キャッシュしない。
 - Storage 全体を無条件に上書きするのではなく、最新値に対してフィールド単位で変更を合成する。並行編集時に古い Options 画面の全値で後書きしてしまうリスクをテストする。
 - `customButtons` の追加・更新・削除は定義レコード全体をボタンID単位で差分化し、同じIDが base 以降に変化していれば保存を競合拒否する。別IDの変更は最新値に保ったまま統合する。
+- カスタムタブは定義ID単位、既定タブは表示名・可視性フィールド単位、既定ボタン所属はButton ID単位で差分化する。`tabOrder`は配列単位、`buttonOrder`はグループ単位で競合を検出する。
 - カスタムボタンを含むグループの `buttonOrder` はグループ単位で競合を検出し、base 以降の順序変更があれば自動合成しない。
+- タブ削除と同時に最新設定へ所属ボタンが追加・移動されていた場合は、参照不整合を競合として返す。
 - 同時書込の厳密な競合解決（比較交換がない API）は制約として明記し、シリアライズ可能な範囲で衝突を抑制する。
 - `chatPanelPlus.config.write` の Web Lock は、同じ Lock Manager を共有する保存呼び出しだけを直列化する。`navigator.locks` がない場合や異なる Lock Manager で動く呼び出し間では直列化を保証しない。現在 `saveSettings` を呼ぶのは Options、Content Script は `saveViewState` のみである。
 - Lock なしの逐次保存では最新値への dirty field 合成と競合検出が働くが、複数の保存処理が同じ最新値を同時に読み取ると、後の書き込みが先の別 field 更新を失わせる場合がある。Chrome Storage に比較交換操作はないため、この経路の厳密な原子性は保証しない。

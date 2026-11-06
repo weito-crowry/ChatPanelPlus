@@ -49,15 +49,19 @@ function pathValue(settings: ExtensionSettings, path: readonly string[]): unknow
   return value;
 }
 
-function settingPaths(): string[][] {
+function settingPaths(base?: ExtensionSettings, draft?: ExtensionSettings): string[][] {
   const paths: string[][] = [];
   for (const button of DEFAULT_BUTTONS) {
     for (const field of ['visible', 'label', 'color', ...(button.kind === 'insert' ? ['text'] : [])]) {
       paths.push(['buttonOverrides', button.id, field]);
     }
   }
-  for (const tab of DEFAULT_TABS) paths.push(['tabOverrides', tab.id, 'visible']);
-  const groups: ButtonGroupId[] = ['always', ...DEFAULT_TABS.map(({ id }) => id)];
+  for (const tab of DEFAULT_TABS) for (const field of ['visible', 'label']) paths.push(['tabOverrides', tab.id, field]);
+  const customTabs = new Set([...Object.keys(base?.customTabs ?? {}), ...Object.keys(draft?.customTabs ?? {})]);
+  for (const id of customTabs) paths.push(['customTabs', id]);
+  const builtinIds = new Set([...Object.keys(base?.builtinButtonGroupOverrides ?? {}), ...Object.keys(draft?.builtinButtonGroupOverrides ?? {})]);
+  for (const id of builtinIds) paths.push(['builtinButtonGroupOverrides', id]);
+  const groups: ButtonGroupId[] = ['always', ...DEFAULT_TABS.map(({ id }) => id), ...[...customTabs] as TabId[]];
   for (const group of groups) paths.push(['buttonOrder', group]);
   paths.push(['tabOrder']);
   paths.push(['answerCompletionSoundEnabled']);
@@ -75,7 +79,7 @@ function customButtonPaths(base: ExtensionSettings, draft: ExtensionSettings): s
 }
 
 function patchesBetween(base: ExtensionSettings, draft: ExtensionSettings): Patch[] {
-  return [...settingPaths(), ...customButtonPaths(base, draft)].flatMap((path) => {
+  return [...settingPaths(base, draft), ...customButtonPaths(base, draft)].flatMap((path) => {
     const before = pathValue(base, path);
     const after = pathValue(draft, path);
     return same(before, after) ? [] : [{ path, before, after }];
@@ -83,15 +87,11 @@ function patchesBetween(base: ExtensionSettings, draft: ExtensionSettings): Patc
 }
 
 function replacementPatches(base: ExtensionSettings, draft: ExtensionSettings): Patch[] {
-  return [...settingPaths(), ...customButtonPaths(base, draft)].map((path) => ({
+  return [...settingPaths(base, draft), ...customButtonPaths(base, draft)].map((path) => ({
     path,
     before: pathValue(base, path),
     after: pathValue(draft, path),
   }));
-}
-
-function hasCustomButtonInGroup(settings: ExtensionSettings, groupId: string): boolean {
-  return Object.values(settings.customButtons ?? {}).some((button) => button.groupId === groupId);
 }
 
 function cloneSettings(settings: ExtensionSettings): Record<string, unknown> {
@@ -122,9 +122,9 @@ function readViewState(value: unknown): StoredViewState | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const state = value as Record<string, unknown>;
   if (typeof state.minimized !== 'boolean') return null;
-  const knownTabs = new Set(DEFAULT_TABS.map(({ id }) => id));
   const selected = state.selectedTabId;
-  if (selected !== null && (typeof selected !== 'string' || !knownTabs.has(selected as TabId))) return null;
+  if (selected !== null && (typeof selected !== 'string' || !(/^(directive|control|wall|binary|quad)$/.test(selected)
+    || /^custom-tab-[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(selected)))) return null;
   return { selectedTabId: selected as TabId | null, minimized: state.minimized };
 }
 
@@ -203,13 +203,8 @@ export class SettingsRepository {
         : patchesBetween(base, draft);
       const conflicts = patches.filter((patch) => {
         const current = pathValue(latest.settings, patch.path);
-        if (patch.path[0] === 'customButtons') return !same(current, patch.before);
-        if (patch.path[0] === 'buttonOrder') {
-          const groupId = patch.path[1] ?? '';
-          const customOrder = [base, draft, latest.settings]
-            .some((settings) => hasCustomButtonInGroup(settings, groupId));
-          if (customOrder) return !same(current, patch.before);
-        }
+        if (patch.path[0] === 'customButtons' || patch.path[0] === 'customTabs' || patch.path[0] === 'builtinButtonGroupOverrides') return !same(current, patch.before);
+        if (patch.path[0] === 'buttonOrder') return !same(current, patch.before);
         return !same(current, patch.before) && !same(current, patch.after);
       });
       if (conflicts.length) {
@@ -218,7 +213,18 @@ export class SettingsRepository {
       const merged = cloneSettings(latest.settings);
       for (const patch of patches) setPath(merged, patch.path, patch.after);
       const validated = validateExtensionSettings(merged);
-      if (!validated.ok) return { ok: false, reason: 'invalid-draft' };
+      if (!validated.ok) {
+        const removedTabs = Object.keys(base.customTabs ?? {}).filter((id) => !draft.customTabs?.[id as `custom-tab-${string}`]);
+        const latestButtonsUseRemovedTab = removedTabs.some((id) =>
+          Object.values(latest.settings.customButtons ?? {}).some((button) => button.groupId === id)
+          || Object.values(latest.settings.builtinButtonGroupOverrides ?? {}).some((group) => group === id));
+        const removedExternally = Object.keys(base.customTabs ?? {}).filter((id) =>
+          draft.customTabs?.[id as `custom-tab-${string}`] && !latest.settings.customTabs?.[id as `custom-tab-${string}`]);
+        const conflictingTabs = [...new Set([...(latestButtonsUseRemovedTab ? removedTabs : []), ...removedExternally])];
+        return conflictingTabs.length
+          ? { ok: false, reason: 'conflict', fields: conflictingTabs.map((id) => `customTabs.${id}`) }
+          : { ok: false, reason: 'invalid-draft' };
+      }
       // resetViewState is a deliberate second-key write and may be last-writer-wins with saveViewState.
       await this.area.set({
         [CONFIG_STORAGE_KEY]: validated.settings,

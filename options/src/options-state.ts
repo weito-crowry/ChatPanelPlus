@@ -7,6 +7,7 @@ import {
   type ButtonId,
   type CustomButtonDefinition,
   type CustomButtonId,
+  type CustomTabId,
   type TabId,
 } from '../../src/shared/default-ui.ts';
 import { DEFAULT_SETTINGS, type ExtensionSettings } from '../../src/shared/settings.ts';
@@ -21,7 +22,9 @@ export type LayoutPreview = Readonly<{
 
 export type CustomButtonOperation = 'insert' | ButtonAction;
 
-const GROUP_IDS: readonly ButtonGroupId[] = ['always', ...DEFAULT_TABS.map(({ id }) => id)];
+function groupIds(settings: ExtensionSettings): ButtonGroupId[] {
+  return ['always', ...resolveDefaultUI(settings).tabs.map(({ id }) => id)];
+}
 
 function normalizedButtonOrder(settings: ExtensionSettings, group: ButtonGroupId): ButtonId[] {
   return resolveDefaultUI(settings).buttons
@@ -164,8 +167,9 @@ export function deleteCustomButton(settings: ExtensionSettings, id: CustomButton
 
 export function resetSettingsPreservingCustomButtons(settings: ExtensionSettings): ExtensionSettings {
   const customButtons = settings.customButtons ?? {};
+  const customTabs = settings.customTabs ?? {};
   const currentOrder = resolveDefaultUI(settings).buttons;
-  const buttonOrder = Object.fromEntries(GROUP_IDS.map((group) => [
+  const buttonOrder = Object.fromEntries(groupIds(settings).map((group) => [
     group,
     [
       ...DEFAULT_BUTTONS.filter((button) => button.groupId === group).map(({ id }) => id),
@@ -174,6 +178,7 @@ export function resetSettingsPreservingCustomButtons(settings: ExtensionSettings
   ]));
   return {
     ...DEFAULT_SETTINGS,
+    ...(Object.keys(customTabs).length ? { customTabs, tabOrder: [...DEFAULT_TABS.map(({ id }) => id), ...resolveDefaultUI(settings).tabs.filter(({ id }) => id.startsWith('custom-tab-')).map(({ id }) => id)] } : {}),
     ...(Object.keys(customButtons).length ? { customButtons } : {}),
     buttonOrder,
   };
@@ -183,19 +188,34 @@ export function mergeImportedSettings(
   imported: ExtensionSettings,
   current: ExtensionSettings,
 ): ExtensionSettings {
-  if (Object.prototype.hasOwnProperty.call(imported, 'customButtons')) return imported;
+  let merged: ExtensionSettings = {
+    ...imported,
+    ...(!Object.prototype.hasOwnProperty.call(imported, 'customTabs') && current.customTabs ? { customTabs: current.customTabs } : {}),
+    ...(!Object.prototype.hasOwnProperty.call(imported, 'builtinButtonGroupOverrides') && current.builtinButtonGroupOverrides
+      ? { builtinButtonGroupOverrides: current.builtinButtonGroupOverrides } : {}),
+  };
+  if (!Object.prototype.hasOwnProperty.call(imported, 'customTabs') && current.customTabs) {
+    merged = {
+      ...merged,
+      tabOrder: [
+        ...resolveDefaultUI(imported).tabs.filter(({ id }) => !id.startsWith('custom-tab-')).map(({ id }) => id),
+        ...resolveDefaultUI(current).tabs.filter(({ id }) => id.startsWith('custom-tab-')).map(({ id }) => id),
+      ],
+    };
+  }
+  if (Object.prototype.hasOwnProperty.call(imported, 'customButtons')) return merged;
   const customButtons = current.customButtons;
-  if (!customButtons || Object.keys(customButtons).length === 0) return imported;
-  const importedUI = resolveDefaultUI(imported);
+  if (!customButtons || Object.keys(customButtons).length === 0) return merged;
+  const importedUI = resolveDefaultUI(merged);
   const currentUI = resolveDefaultUI(current);
-  const buttonOrder = Object.fromEntries(GROUP_IDS.map((group) => [
+  const buttonOrder = Object.fromEntries(groupIds(merged).map((group) => [
     group,
     [
       ...importedUI.buttons.filter((button) => button.groupId === group && !button.id.startsWith('custom-')).map(({ id }) => id),
       ...currentUI.buttons.filter((button) => button.groupId === group && button.id.startsWith('custom-')).map(({ id }) => id),
     ],
   ]));
-  return { ...imported, customButtons, buttonOrder };
+  return { ...merged, customButtons, buttonOrder };
 }
 
 export function getCustomButtonImportDeletions(
@@ -209,6 +229,15 @@ export function getCustomButtonImportDeletions(
     .map(({ id }) => id as CustomButtonId);
 }
 
+export function getCustomTabImportDeletions(current: ExtensionSettings, imported: ExtensionSettings): Array<{ id: TabId; buttonCount: number }> {
+  if (!Object.prototype.hasOwnProperty.call(imported, 'customTabs')) return [];
+  const retained = new Set(Object.keys(imported.customTabs ?? {}));
+  return Object.keys(current.customTabs ?? {}).filter((id) => !retained.has(id)).map((id) => ({
+    id: id as TabId,
+    buttonCount: resolveDefaultUI(current).buttons.filter(({ groupId }) => groupId === id).length,
+  }));
+}
+
 export function reorderTabBefore(
   settings: ExtensionSettings,
   draggedId: TabId,
@@ -216,6 +245,68 @@ export function reorderTabBefore(
 ): ExtensionSettings {
   const ids = moveBefore(resolveDefaultUI(settings).tabs.map(({ id }) => id), draggedId, targetId);
   return ids ? { ...settings, tabOrder: ids } : settings;
+}
+
+export function createCustomTab(settings: ExtensionSettings, id: TabId, label: string): ExtensionSettings {
+  const normalized = label.trim();
+  if (!/^custom-tab-[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(id)
+    || normalized.length < 1 || normalized.length > 40 || settings.customTabs?.[id as CustomTabId]) return settings;
+  return {
+    ...settings,
+    customTabs: { ...(settings.customTabs ?? {}), [id]: { label: normalized, visible: true } },
+    tabOrder: [...resolveDefaultUI(settings).tabs.map(({ id: tabId }) => tabId), id],
+    buttonOrder: { ...(settings.buttonOrder ?? {}), [id]: [] },
+  };
+}
+
+export function renameTab(settings: ExtensionSettings, id: TabId, label: string): ExtensionSettings {
+  const normalized = label.trim();
+  if (normalized.length < 1 || normalized.length > 40) return settings;
+  if (id.startsWith('custom-tab-')) {
+    const customId = id as CustomTabId;
+    const tab = settings.customTabs?.[customId];
+    return tab ? { ...settings, customTabs: { ...settings.customTabs, [customId]: { ...tab, label: normalized } } } : settings;
+  }
+  return { ...settings, tabOverrides: { ...(settings.tabOverrides ?? {}), [id]: { ...(settings.tabOverrides?.[id] ?? {}), label: normalized } } };
+}
+
+export function setTabVisibility(settings: ExtensionSettings, id: TabId, visible: boolean): ExtensionSettings {
+  if (id.startsWith('custom-tab-')) {
+    const customId = id as CustomTabId;
+    const tab = settings.customTabs?.[customId];
+    return tab ? { ...settings, customTabs: { ...settings.customTabs, [customId]: { ...tab, visible } } } : settings;
+  }
+  return { ...settings, tabOverrides: { ...(settings.tabOverrides ?? {}), [id]: { ...(settings.tabOverrides?.[id] ?? {}), visible } } };
+}
+
+export function moveButtonGroup(settings: ExtensionSettings, id: ButtonId, destination: ButtonGroupId): ExtensionSettings {
+  if (!groupIds(settings).includes(destination)) return settings;
+  const button = resolveDefaultUI(settings).buttons.find(({ id: buttonId }) => buttonId === id);
+  if (!button || button.groupId === destination) return settings;
+  const source = button.groupId;
+  const buttonOrder = { ...(settings.buttonOrder ?? {}), [source]: normalizedButtonOrder(settings, source).filter((buttonId) => buttonId !== id), [destination]: [...normalizedButtonOrder(settings, destination), id] };
+  if (id.startsWith('custom-')) {
+    return { ...settings, customButtons: { ...settings.customButtons, [id as CustomButtonId]: { ...settings.customButtons![id as CustomButtonId]!, groupId: destination } }, buttonOrder };
+  }
+  const builtinButtonGroupOverrides = { ...(settings.builtinButtonGroupOverrides ?? {}) };
+  const base = DEFAULT_BUTTONS.find(({ id: buttonId }) => buttonId === id)!;
+  if (destination === base.groupId) delete builtinButtonGroupOverrides[id];
+  else builtinButtonGroupOverrides[id] = destination;
+  return { ...settings, builtinButtonGroupOverrides, buttonOrder };
+}
+
+export function deleteCustomTab(settings: ExtensionSettings, id: TabId, destination?: ButtonGroupId): ExtensionSettings {
+  const customId = id as CustomTabId;
+  const tab = settings.customTabs?.[customId];
+  if (!tab || !destination || destination === id || !groupIds(settings).includes(destination)) return settings;
+  const buttons = resolveDefaultUI(settings).buttons.filter(({ groupId }) => groupId === id);
+  let result = settings;
+  for (const button of buttons) result = moveButtonGroup(result, button.id, destination);
+  const customTabs = { ...(result.customTabs ?? {}) };
+  delete customTabs[customId];
+  const buttonOrder = { ...(result.buttonOrder ?? {}) };
+  delete buttonOrder[id];
+  return { ...result, customTabs, buttonOrder, tabOrder: resolveDefaultUI(result).tabs.filter(({ id: tabId }) => tabId !== id).map(({ id: tabId }) => tabId) };
 }
 
 export function getLayoutPreview(settings: ExtensionSettings = DEFAULT_SETTINGS): LayoutPreview {
