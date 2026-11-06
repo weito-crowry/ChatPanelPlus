@@ -74,4 +74,10 @@
 
 既存checkoutで作業ブランチを作り、#14回収・#8診断・#1端判定を別コミットに分離した。通常pushとDraft PRでレビューに渡す。PRのmergeは行わない。
 
+- [Draft PR #18](https://github.com/weito-crowry/ChatPanelPlus/pull/18) を作成、通常の非強制push成功。コードは `b30ac02` / `ff199b8` / `b3c4219`、調査・手順は `343a569` に分離。
+- 全15件へ状態・根拠・検証・再開条件・PR/文書リンクをコメントし、APIで各1件の投稿を再取得して確認した。新しいラベルは作らず、Issueは全件Openを維持。
+- PRのreadbackでOpen/Draft/未マージ、競合なしを確認。リポジトリ内にGitHub Actions workflow定義はなく、上記はローカル検証結果。
+- push後のupstream参照確認は既存fetch設定がmain限定のため初回失敗。当該作業ブランチのfetch参照だけを追加して取得し、ローカル/remote-tracking/リモートHEADの一致を確認した。
+- Chromeデプロイ、Chrome操作、PR merge、Issue close、外部リポジトリ変更は未実施。
+
 #14は既定ブランチ反映前、実機依存Issueは完了条件未達のためOpen維持。#7/#9/#10/#17は文書成果/調査完了として記録し、文書のPR反映を残す。全15件を一巡し、未着手は0件。実機確認は [統合確認表](manual-verification-2026-11-07.md) にまとめている。
