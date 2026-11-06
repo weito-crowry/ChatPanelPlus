@@ -90,3 +90,36 @@ test('回答完了音の音量は旧設定を保ちつつ整数0〜100だけを�
   assert.equal(parsed.ok, true);
   if (parsed.ok) assert.equal(parsed.settings.answerCompletionSoundVolumePercent, 37);
 });
+
+test('custom tabs and button group overrides validate and resolve through stable IDs', async () => {
+  const { resolveDefaultUI } = await import('../src/shared/default-ui.ts');
+  const tabId = 'custom-tab-123e4567-e89b-42d3-a456-426614174000';
+  const customButtonId = 'custom-123e4567-e89b-42d3-a456-426614174001';
+  const settings = {
+    schemaVersion: 1,
+    customTabs: { [tabId]: { label: '  新しいタブ  ', visible: true } },
+    tabOrder: [tabId],
+    builtinButtonGroupOverrides: { 'full-btn': tabId },
+    customButtons: { [customButtonId]: { groupId: tabId, label: '追加', color: '#123', visible: true, kind: 'insert', text: '本文', insertionMode: 'caret' } },
+    buttonOrder: { [tabId]: ['full-btn', customButtonId] },
+  };
+  const validated = validateExtensionSettings(settings);
+  assert.equal(validated.ok, true);
+  if (!validated.ok) return;
+  const resolved = resolveDefaultUI(validated.settings);
+  assert.equal(resolved.tabs.find(({ id }) => id === tabId)?.label, '新しいタブ');
+  assert.deepEqual(resolved.tabs.find(({ id }) => id === tabId)?.buttonIds, ['full-btn', customButtonId]);
+  assert.equal(resolved.buttons.find(({ id }) => id === customButtonId)?.text, '本文');
+  assert.equal(parseSettingsJson(serializeSettings(validated.settings)).ok, true);
+});
+
+test('custom tab names, dangling references and malformed tab IDs are rejected', () => {
+  const id = 'custom-tab-123e4567-e89b-42d3-a456-426614174000';
+  for (const customTabs of [
+    { [id]: { label: '  ', visible: true } },
+    { 'custom-tab-not-a-uuid': { label: 'bad', visible: true } },
+  ]) assert.equal(validateExtensionSettings({ schemaVersion: 1, customTabs }).ok, false);
+  assert.equal(validateExtensionSettings({ schemaVersion: 1, tabOrder: [id] }).ok, false);
+  assert.equal(validateExtensionSettings({ schemaVersion: 1, builtinButtonGroupOverrides: { 'full-btn': id } }).ok, false);
+  assert.equal(validateExtensionSettings({ schemaVersion: 1, buttonOrder: { [id]: [] } }).ok, false);
+});

@@ -10,7 +10,9 @@ export type DefaultButtonId =
 export type CustomButtonId = `custom-${string}`;
 export type ButtonId = DefaultButtonId | CustomButtonId;
 
-export type TabId = 'directive' | 'control' | 'wall' | 'binary' | 'quad';
+export type DefaultTabId = 'directive' | 'control' | 'wall' | 'binary' | 'quad';
+export type CustomTabId = `custom-tab-${string}`;
+export type TabId = DefaultTabId | CustomTabId;
 export type ButtonGroupId = 'always' | TabId;
 export type ButtonAction = 'insert-jst' | 'paste' | 'clear';
 export type ButtonKind = 'insert' | 'action';
@@ -51,6 +53,7 @@ export type ResolvedUI = Readonly<{
   tabs: readonly ResolvedTab[];
   selectedTabId: TabId | null;
 }>;
+export type CustomTabDefinition = Readonly<{ label: string; visible: boolean }>;
 
 export const HANDOVER_TEXT = "あなたの出力は「次スレッド先頭に貼る本文のみ」です。\n前置き・説明・挨拶・注釈・引用符・コードブロックを一切出力してはいけません。\n\n# 目的\n会話の継続に必要な情報の目次のみを提示し、不足情報を指摘できる状態を作る。\n\n# 最適化目標\n・必要情報の網羅性を最大化\n・不要な詳細の持ち込みを最小化\n・後続の追加提供で完全復元可能にする\n・推測せず不足を明示する\n\n# タスク\nこのスレッド全体を解析し、\n「次スレでユーザーが段階的に情報提供できるようにするための目次」を作成する。\n\n# 出力仕様（厳守）\n以下の構造のみ出力すること\n説明文は禁止\n\n【作業の概要】\n\n【現在のゴール】\n\n【必要な資料カテゴリ】\n・コード\n・設定\n・ログ\n・環境\n・仕様\n・外部依存\n・再現手順\n・期待結果\n・実際の結果\n\n【不足の可能性が高い情報】\n推測せず、欠けると作業不能になる情報のみ列挙\n\n【次にユーザーが貼るべき情報】\n最小限で作業再開できる順序\n\n# ルール\n・内容は具体的に書く\n・憶測を書かない\n・冗長説明を書かない\n・第三者が読んでも追加資料を判断できる粒度にする\n\n以上です、生成を開始してください\n";
 export const WALL_START_TEXT = "これから壁打ちを行います。\n\nあなたの役割は「思考を邪魔しない低干渉の壁」です。\n相槌に加えて、最小限の知的反射のみを行います。\n以下の制約を厳守してください。\n\n【出力形式】\n- 出力は最大4行まで\n  1行目：必ず短い相槌\n  2〜4行目：以下の「反射」から1種類だけ選択して1〜3行で発話\n- 反射は毎回1種類のみ（混ぜない）\n\n【反射の種類（いずれか1つだけ）】\n1. 感想\n   - 軽い印象のみ\n   - 評価・賛否は禁止\n\n2. 簡単な整理\n   - 言い換えない\n   - 構造化しない\n   - 要約しない\n   - ただし話題の“方向性”だけを1〜3行で言語化\n\n3. 不足している点\n   - 1つだけ指摘\n   - 質問形は禁止\n   - 解決策を出さない\n\n【禁止事項】\n- 要約・整理・再表現\n- 論点抽出・前提整理・分類\n- 評価・同意・否定\n- 助言・提案・誘導\n- 質問\n- 私の発言の言い換え\n- 長文説明\n- 反射を2種類以上混ぜること\n\n【例外ルール】\n私が明示的に\n「整理して」\n「要約して」\n「構造化して」\nと指示した場合のみ通常の応答を開始する\n\n以上を守り、以降の発言に応答してください。";
@@ -153,15 +156,25 @@ export function resolveDefaultUI(settings: ExtensionSettings = { schemaVersion: 
   const buttonOverrides = record(source.buttonOverrides);
   const customButtons = record(source.customButtons) as Record<string, CustomButtonDefinition>;
   const tabOverrides = record(source.tabOverrides);
+  const customTabs = record(source.customTabs) as Record<string, CustomTabDefinition>;
+  const builtinButtonGroupOverrides = record(source.builtinButtonGroupOverrides);
   const buttonOrder = record(source.buttonOrder);
-  const tabIds = orderedIds(DEFAULT_TABS.map(({ id }) => id), stringArray(source.tabOrder));
-  const tabById = new Map(DEFAULT_TABS.map((tab) => [tab.id, tab]));
+  const allTabs: TabDefinition[] = [
+    ...DEFAULT_TABS.map((tab) => ({ ...tab, id: tab.id as TabId })),
+    ...Object.entries(customTabs).map(([id, tab]) => ({ id: id as TabId, order: 0, label: tab.label.trim(), buttonIds: [] })),
+  ];
+  const tabIds = orderedIds(allTabs.map(({ id }) => id), stringArray(source.tabOrder));
+  const tabById = new Map(allTabs.map((tab) => [tab.id, tab]));
   const resolvedTabs = tabIds.map((id, order) => {
     const base = tabById.get(id)!;
     const override = record(tabOverrides[id]);
-    return Object.freeze({ ...base, order, visible: typeof override.visible === 'boolean' ? override.visible : true });
+    const custom = customTabs[id];
+    return Object.freeze({ ...base, label: custom?.label.trim() ?? (typeof override.label === 'string' ? override.label.trim() : base.label), order, visible: custom?.visible ?? (typeof override.visible === 'boolean' ? override.visible : true) });
   });
-  const buttonById = new Map<ButtonId, ButtonDefinition>(DEFAULT_BUTTONS.map((button) => [button.id, button]));
+  const buttonById = new Map<ButtonId, ButtonDefinition>(DEFAULT_BUTTONS.map((button) => {
+    const override = builtinButtonGroupOverrides[button.id];
+    return [button.id, { ...button, groupId: typeof override === 'string' ? override as ButtonGroupId : button.groupId }];
+  }));
   const customIdsByGroup = new Map<ButtonGroupId, CustomButtonId[]>();
   for (const [id, definition] of Object.entries(customButtons)) {
     const customId = id as CustomButtonId;
@@ -174,7 +187,7 @@ export function resolveDefaultUI(settings: ExtensionSettings = { schemaVersion: 
   const groups: ButtonGroupId[] = ['always', ...tabIds];
   const resolvedButtons: ResolvedButton[] = [];
   for (const groupId of groups) {
-    const defaults = DEFAULT_BUTTONS.filter((button) => button.groupId === groupId);
+    const defaults = [...buttonById.values()].filter((button) => !button.id.startsWith('custom-') && button.groupId === groupId);
     const ids = orderedButtonIds(
       defaults.map(({ id }) => id),
       customIdsByGroup.get(groupId) ?? [],
@@ -196,6 +209,10 @@ export function resolveDefaultUI(settings: ExtensionSettings = { schemaVersion: 
       };
       resolvedButtons.push(Object.freeze(resolved));
     }
+  }
+  for (const tab of resolvedTabs) {
+    const index = resolvedTabs.indexOf(tab);
+    resolvedTabs[index] = Object.freeze({ ...tab, buttonIds: resolvedButtons.filter(({ groupId }) => groupId === tab.id).map(({ id }) => id) });
   }
   const visibleTabs = resolvedTabs.filter(({ visible }) => visible);
   return Object.freeze({

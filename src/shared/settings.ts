@@ -4,6 +4,8 @@ import {
   type ButtonGroupId,
   type CustomButtonDefinition,
   type CustomButtonId,
+  type CustomTabDefinition,
+  type CustomTabId,
   type InsertionMode,
   type TabId,
 } from './default-ui.ts';
@@ -27,7 +29,9 @@ export type ButtonOverride = Readonly<{
 export type ExtensionSettings = Readonly<{
   schemaVersion: typeof SETTINGS_SCHEMA_VERSION;
   buttonOverrides?: Readonly<Record<string, ButtonOverride>>;
-  tabOverrides?: Readonly<Record<string, Readonly<{ visible?: boolean; [key: string]: unknown }>>>;
+  tabOverrides?: Readonly<Record<string, Readonly<{ visible?: boolean; label?: string; [key: string]: unknown }>>>;
+  customTabs?: Readonly<Record<CustomTabId, CustomTabDefinition>>;
+  builtinButtonGroupOverrides?: Readonly<Record<string, ButtonGroupId>>;
   buttonOrder?: Readonly<Record<string, readonly string[]>>;
   tabOrder?: readonly string[];
   answerCompletionSoundEnabled?: boolean;
@@ -50,7 +54,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = Object.freeze({
 const BUTTON_IDS = new Set<string>(DEFAULT_BUTTONS.map(({ id }) => id));
 const INSERT_BUTTON_IDS = new Set<string>(DEFAULT_BUTTONS.filter(({ kind }) => kind === 'insert').map(({ id }) => id));
 const TAB_IDS = new Set<string>(DEFAULT_TABS.map(({ id }) => id));
-const GROUP_IDS = new Set<ButtonGroupId>(['always', ...DEFAULT_TABS.map(({ id }) => id)]);
+const CUSTOM_TAB_ID = /^custom-tab-[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i;
 
 function plainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
@@ -112,9 +116,31 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
       if (!TAB_IDS.has(rawId)) continue;
       if (!plainObject(rawOverride)) return settingsError('invalid-settings');
       if ('visible' in rawOverride && typeof rawOverride.visible !== 'boolean') return settingsError('invalid-settings');
-      tabOverrides[rawId] = { ...rawOverride };
+      if ('label' in rawOverride && !validTabLabel(rawOverride.label)) return settingsError('invalid-settings');
+      tabOverrides[rawId] = { ...rawOverride, ...(typeof rawOverride.label === 'string' ? { label: rawOverride.label.trim() } : {}) };
     }
   }
+
+  const customTabs: Record<string, CustomTabDefinition> = {};
+  if (value.customTabs !== undefined) {
+    if (!plainObject(value.customTabs)) return settingsError('invalid-settings');
+    for (const [id, rawTab] of Object.entries(value.customTabs)) {
+      if (!CUSTOM_TAB_ID.test(id) || TAB_IDS.has(id) || !plainObject(rawTab)
+        || Object.keys(rawTab).some((field) => !['label', 'visible'].includes(field))
+        || !validTabLabel(rawTab.label) || typeof rawTab.visible !== 'boolean') return settingsError('invalid-settings');
+      customTabs[id] = { label: (rawTab.label as string).trim(), visible: rawTab.visible };
+    }
+  }
+  const validTabIds = new Set<string>([...TAB_IDS, ...Object.keys(customTabs)]);
+  const builtinButtonGroupOverrides: Record<string, ButtonGroupId> = {};
+  if (value.builtinButtonGroupOverrides !== undefined) {
+    if (!plainObject(value.builtinButtonGroupOverrides)) return settingsError('invalid-settings');
+    for (const [id, group] of Object.entries(value.builtinButtonGroupOverrides)) {
+      if (!BUTTON_IDS.has(id) || typeof group !== 'string' || (group !== 'always' && !validTabIds.has(group))) return settingsError('invalid-settings');
+      builtinButtonGroupOverrides[id] = group as ButtonGroupId;
+    }
+  }
+  const groupIds = new Set<string>(['always', ...validTabIds]);
 
   const customButtons: Record<string, CustomButtonDefinition> = {};
   if (value.customButtons !== undefined) {
@@ -126,7 +152,7 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
       const definition = rawDefinition as Record<string, unknown>;
       const allowedFields = new Set(['groupId', 'label', 'color', 'visible', 'kind', 'action', 'text', 'insertionMode']);
       if (Object.keys(definition).some((field) => !allowedFields.has(field))) return settingsError('invalid-settings');
-      if (!GROUP_IDS.has(definition.groupId as ButtonGroupId)
+      if (!groupIds.has(definition.groupId as string)
         || typeof definition.label !== 'string'
         || typeof definition.color !== 'string'
         || !/^#[\da-f]{3}(?:[\da-f]{3})?$/i.test(definition.color)
@@ -161,13 +187,14 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
   if (value.buttonOrder !== undefined) {
     if (!plainObject(value.buttonOrder)) return settingsError('invalid-settings');
     for (const [rawGroup, rawOrder] of Object.entries(value.buttonOrder)) {
-      if (!GROUP_IDS.has(rawGroup as ButtonGroupId)) {
+      if (!groupIds.has(rawGroup)) {
+        if (rawGroup.startsWith('custom-tab-')) return settingsError('invalid-settings');
         if (Array.isArray(rawOrder) && rawOrder.some((id) => typeof id === 'string' && id.startsWith('custom-'))) {
           return settingsError('invalid-settings');
         }
         continue;
       }
-      const defaults = DEFAULT_BUTTONS.filter(({ groupId }) => groupId === rawGroup).map(({ id }) => id);
+      const defaults = DEFAULT_BUTTONS.filter((button) => (builtinButtonGroupOverrides[button.id] ?? button.groupId) === rawGroup).map(({ id }) => id);
       const customIds = Object.entries(customButtons)
         .filter(([, definition]) => definition.groupId === rawGroup)
         .map(([id]) => id);
@@ -177,7 +204,7 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
     }
   }
 
-  const tabOrder = orderedIds(DEFAULT_TABS.map(({ id }) => id), value.tabOrder);
+  const tabOrder = orderedIds(DEFAULT_TABS.map(({ id }) => id), value.tabOrder, Object.keys(customTabs));
   if (!tabOrder) return settingsError('invalid-settings');
   if (value.answerCompletionSoundEnabled !== undefined && typeof value.answerCompletionSoundEnabled !== 'boolean') {
     return settingsError('invalid-settings');
@@ -201,11 +228,17 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
       schemaVersion: SETTINGS_SCHEMA_VERSION,
       ...(value.buttonOverrides === undefined ? {} : { buttonOverrides }),
       ...(value.tabOverrides === undefined ? {} : { tabOverrides }),
+      ...(value.customTabs === undefined ? {} : { customTabs }),
+      ...(value.builtinButtonGroupOverrides === undefined ? {} : { builtinButtonGroupOverrides }),
       ...(value.customButtons === undefined ? {} : { customButtons }),
       ...(value.buttonOrder === undefined ? {} : { buttonOrder }),
       ...(value.tabOrder === undefined ? {} : { tabOrder: tabOrder as TabId[] }),
     } as ExtensionSettings,
   };
+}
+
+function validTabLabel(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length >= 1 && value.trim().length <= 40;
 }
 
 export function isExtensionSettings(value: unknown): value is ExtensionSettings {

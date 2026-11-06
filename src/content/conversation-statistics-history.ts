@@ -203,7 +203,19 @@ export class ConversationStatisticsHistoryScanner {
         await this.waitForDomSettle();
         if (!this.isCurrent()) return false;
         this.collectSnapshot(direction);
-        const signature = `${container.scrollTop}:${container.scrollHeight}:${this.turnKeysSeen.size}:${this.mutationVersion}`;
+        const currentScrollTop = container.scrollTop;
+        const currentScrollHeight = container.scrollHeight;
+        const currentClientHeight = container.clientHeight;
+        const currentMaximum = Math.max(0, currentScrollHeight - currentClientHeight);
+        const stillAtEdge = direction === 'older'
+          ? currentScrollTop <= 1
+          : currentScrollTop >= currentMaximum - 1;
+        if (!stillAtEdge) {
+          stableAtEdge = 0;
+          previousEdgeSignature = '';
+          continue;
+        }
+        const signature = `${currentScrollTop}:${currentScrollHeight}:${currentClientHeight}:${this.turnKeysSeen.size}:${this.mutationVersion}`;
         stableAtEdge = signature === previousEdgeSignature ? stableAtEdge + 1 : 1;
         previousEdgeSignature = signature;
         if (stableAtEdge >= stableRequired) return true;

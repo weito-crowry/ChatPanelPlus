@@ -17,19 +17,18 @@ function sourceKind(event: Event): string {
   const origin = event.composedPath()[0];
   if (typeof Element === 'undefined' || !(origin instanceof Element)) return 'document';
 
-  if (origin instanceof HTMLElement) {
-    const root = origin.getRootNode();
-    if (typeof ShadowRoot !== 'undefined' && root instanceof ShadowRoot
-      && root.host.id === 'chatpanelplus-extension-root') {
-      const buttonId = origin.closest('button')?.getAttribute('data-button-id');
-      if (buttonId === 'paste-btn') return 'paste-button';
-      if (buttonId === 'clear-btn') return 'clear-button';
-      return origin.closest('button') ? 'panel-button' : 'panel';
-    }
-    if (origin.isContentEditable) return 'composer';
-    if (origin.closest('form')) return origin instanceof HTMLButtonElement ? 'form-button' : 'form-control';
-    if (origin instanceof HTMLButtonElement) return 'page-button';
+  const root = origin.getRootNode();
+  const button = origin.closest('button');
+  if (typeof ShadowRoot !== 'undefined' && root instanceof ShadowRoot
+    && root.host.id === 'chatpanelplus-extension-root') {
+    const buttonId = button?.getAttribute('data-button-id');
+    if (buttonId === 'paste-btn') return 'paste-button';
+    if (buttonId === 'clear-btn') return 'clear-button';
+    return button ? 'panel-button' : 'panel';
   }
+  if (origin instanceof HTMLElement && origin.isContentEditable) return 'composer';
+  if (origin.closest('form')) return button ? 'form-button' : 'form-control';
+  if (button) return 'page-button';
   return 'page';
 }
 

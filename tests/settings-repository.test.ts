@@ -52,6 +52,33 @@ test('初回はschema 1既定値を返し、設定とview stateを別keyで保�
   assert.deepEqual(await repository.loadViewState(), { ok: true, viewState: { selectedTabId: 'wall', minimized: true } });
 });
 
+test('custom tab definition and moved builtin button save together and same-tab edits conflict', async () => {
+  const id = 'custom-tab-123e4567-e89b-42d3-a456-426614174030';
+  const base = DEFAULT_SETTINGS;
+  const draft: ExtensionSettings = {
+    ...base,
+    customTabs: { [id]: { label: '自分のタブ', visible: true } },
+    tabOrder: [...(base.tabOrder ?? ['directive', 'control', 'wall', 'binary', 'quad']), id],
+    builtinButtonGroupOverrides: { 'full-btn': id },
+    buttonOrder: { [id]: ['full-btn'] },
+  };
+  const fake = storage();
+  const repository = new SettingsRepository(fake.area);
+  const saved = await repository.saveSettings(base, draft);
+  assert.equal(saved.ok, true);
+  if (!saved.ok) return;
+  assert.equal(saved.settings.customTabs?.[id]?.label, '自分のタブ');
+  assert.equal(saved.settings.builtinButtonGroupOverrides?.['full-btn'], id);
+  const external: ExtensionSettings = { ...saved.settings, customTabs: { [id]: { label: '別画面', visible: true } } };
+  const conflictFake = storage({ [CONFIG_STORAGE_KEY]: external });
+  const conflict = await new SettingsRepository(conflictFake.area).saveSettings(saved.settings, {
+    ...saved.settings,
+    customTabs: { [id]: { label: '自分の変更', visible: true } },
+  });
+  assert.equal(conflict.ok, false);
+  if (!conflict.ok) assert.equal(conflict.reason, 'conflict');
+});
+
 test('保存済みschema 1設定の二つのcaretボタンと順序を変更せず読み込む', async () => {
   const firstId = 'custom-123e4567-e89b-42d3-a456-426614174020';
   const secondId = 'custom-123e4567-e89b-42d3-a456-426614174021';
