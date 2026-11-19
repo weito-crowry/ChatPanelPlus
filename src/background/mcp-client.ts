@@ -62,6 +62,14 @@ function readTimestamp(value: unknown): string | null {
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
+function readThreadUpdatedAt(value: unknown): string | null {
+  if (typeof value !== 'number') return readTimestamp(value);
+  if (!Number.isSafeInteger(value)) return null;
+  // Codex App Server Thread.updatedAt is an integer Unix timestamp in seconds.
+  const date = new Date(value * 1000);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
 function readToolPayload(value: unknown): Record<string, unknown> {
   if (!isRecord(value) || value.isError === true) throw new McpTransportError('readonly-probe-failed');
   const structured = value.structuredContent ?? value.structured_content;
@@ -146,7 +154,7 @@ function readThreads(value: unknown, targetId: string): CodexBridgeThreadPage {
       title: boundedText(item.name, 240) ?? boundedText(item.title, 240),
       preview: boundedText(item.preview, 240),
       cwd: boundedText(item.cwd, 240),
-      updatedAt: readTimestamp(item.updatedAt) ?? readTimestamp(item.updated_at),
+      updatedAt: readThreadUpdatedAt(item.updatedAt) ?? readThreadUpdatedAt(item.updated_at),
       currentExecution: readObservation(item.current_execution),
       lastTurn: readLastTurn(item.last_turn),
       needsAttention: typeof item.needs_attention === 'boolean' ? item.needs_attention : null,

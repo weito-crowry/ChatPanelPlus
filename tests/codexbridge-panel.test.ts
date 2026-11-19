@@ -121,11 +121,11 @@ test('thread pages request bounded history-free data, deduplicate external rows 
         turn_id: '01a1f529-a890-7120-8925-27298b4e46dc', status: 'completed',
         observed_at: '2026-11-19T19:37:59.464Z', reason: 'completed', category: 'success', evidence: 'live', needs_attention: false,
       },
-      updatedAt: 1_795_117_079_464,
+      updatedAt: 1_795_117_079,
     }],
     external_threads: [
       { id: 'thread-1', target_id: 'machine-1', name: 'Duplicate', current_execution: { state: 'unknown' } },
-      { id: 'thread-2', target_id: 'machine-1', preview: 'External preview', updated_at: 1_795_117_079.464, needs_attention: true },
+      { id: 'thread-2', target_id: 'machine-1', preview: 'External preview', updated_at: 1_795_117_079, needs_attention: true },
     ],
     next_cursor: 'cursor-2',
   };
@@ -136,7 +136,7 @@ test('thread pages request bounded history-free data, deduplicate external rows 
   const firstData = firstPage.data as CodexBridgeThreadPage;
   assert.equal(firstData.threads.length, 2);
   assert.deepEqual(firstData.threads[0], {
-    targetId: 'machine-1', id: 'thread-1', title: 'Native', preview: null, cwd: 'C:\\work', updatedAt: '2026-11-19T19:37:59.464Z',
+    targetId: 'machine-1', id: 'thread-1', title: 'Native', preview: null, cwd: 'C:\\work', updatedAt: '2026-11-19T19:37:59.000Z',
     currentExecution: { state: 'estimated_running', evidence: 'inferred', reason: null, observedAt: '2026-11-20T01:00:00.000Z', needsAttention: null },
     lastTurn: {
       turnId: '01a1f529-a890-7120-8925-27298b4e46dc', status: 'completed', category: 'success', evidence: 'live',
@@ -146,7 +146,7 @@ test('thread pages request bounded history-free data, deduplicate external rows 
   });
   assert.equal(firstData.threads[1]?.title, null);
   assert.equal(firstData.threads[1]?.preview, 'External preview');
-  assert.equal(firstData.threads[1]?.updatedAt, '2026-11-19T19:37:59.464Z');
+  assert.equal(firstData.threads[1]?.updatedAt, '2026-11-19T19:37:59.000Z');
   assert.equal(firstData.threads[1]?.needsAttention, true);
   assert.equal(firstData.nextCursor, 'cursor-2');
   const call = first.requests.find(({ payload }) => payload.method === 'tools/call')?.payload;
