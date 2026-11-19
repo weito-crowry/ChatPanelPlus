@@ -174,6 +174,7 @@ export function resetSettingsPreservingCustomButtons(settings: ExtensionSettings
   ]));
   return {
     ...DEFAULT_SETTINGS,
+    ...(settings.codexBridgeMcpUrl === undefined ? {} : { codexBridgeMcpUrl: settings.codexBridgeMcpUrl }),
     ...(Object.keys(customButtons).length ? { customButtons } : {}),
     buttonOrder,
   };
@@ -183,9 +184,12 @@ export function mergeImportedSettings(
   imported: ExtensionSettings,
   current: ExtensionSettings,
 ): ExtensionSettings {
-  if (Object.prototype.hasOwnProperty.call(imported, 'customButtons')) return imported;
+  const withMcpUrl = imported.codexBridgeMcpUrl !== undefined || current.codexBridgeMcpUrl === undefined
+    ? imported
+    : { ...imported, codexBridgeMcpUrl: current.codexBridgeMcpUrl };
+  if (Object.prototype.hasOwnProperty.call(imported, 'customButtons')) return withMcpUrl;
   const customButtons = current.customButtons;
-  if (!customButtons || Object.keys(customButtons).length === 0) return imported;
+  if (!customButtons || Object.keys(customButtons).length === 0) return withMcpUrl;
   const importedUI = resolveDefaultUI(imported);
   const currentUI = resolveDefaultUI(current);
   const buttonOrder = Object.fromEntries(GROUP_IDS.map((group) => [
@@ -195,7 +199,7 @@ export function mergeImportedSettings(
       ...currentUI.buttons.filter((button) => button.groupId === group && button.id.startsWith('custom-')).map(({ id }) => id),
     ],
   ]));
-  return { ...imported, customButtons, buttonOrder };
+  return { ...withMcpUrl, customButtons, buttonOrder };
 }
 
 export function getCustomButtonImportDeletions(

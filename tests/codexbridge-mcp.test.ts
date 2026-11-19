@@ -1,0 +1,232 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {
+  CODEX_BRIDGE_MCP_TEST_MESSAGE,
+  CODEX_BRIDGE_MCP_TOKEN_SESSION_KEY,
+} from '../src/shared/codexbridge-mcp-protocol.ts';
+import {
+  createCodexBridgeMcpTestHandler,
+} from '../src/background/codexbridge-mcp.ts';
+
+type RecordedRequest = Readonly<{
+  payload: Record<string, unknown>;
+  headers: Headers;
+  init: RequestInit;
+}>;
+
+function jsonRpcResponse(id: number, result: unknown, sessionId?: string): Response {
+  const headers = new Headers({ 'content-type': 'application/json' });
+  if (sessionId) headers.set('Mcp-Session-Id', sessionId);
+  return new Response(JSON.stringify({ jsonrpc: '2.0', id, result }), { status: 200, headers });
+}
+
+function sseResponse(id: number, result: unknown): Response {
+  const event = JSON.stringify({ jsonrpc: '2.0', id, result });
+  return new Response(`event: message\ndata: ${event}\n\n`, {
+    status: 200,
+    headers: { 'content-type': 'text/event-stream' },
+  });
+}
+
+function recordRequest(_input: RequestInfo | URL, init?: RequestInit): RecordedRequest {
+  return {
+    payload: JSON.parse(String(init?.body)) as Record<string, unknown>,
+    headers: new Headers(init?.headers),
+    init: init ?? {},
+  };
+}
+
+function createHandler(
+  fetchImpl: typeof fetch,
+  options: { permission?: boolean; token?: string; timeoutMs?: number } = {},
+) {
+  let containsOrigins: string[] = [];
+  const token = options.token;
+  const handler = createCodexBridgeMcpTestHandler({
+    sessionStorage: {
+      async get() {
+        return token === undefined ? {} : { [CODEX_BRIDGE_MCP_TOKEN_SESSION_KEY]: token };
+      },
+    },
+    permissions: {
+      async contains({ origins }) {
+        containsOrigins = origins;
+        return options.permission ?? true;
+      },
+    },
+    extensionId: 'test-extension',
+    optionsPageUrl: 'chrome-extension://test-extension/index.html',
+    fetchImpl,
+    timeoutMs: options.timeoutMs,
+  });
+  return {
+    handler,
+    get containsOrigins() { return containsOrigins; },
+  };
+}
+
+const trustedSender = {
+  id: 'test-extension',
+  url: 'chrome-extension://test-extension/index.html',
+};
+const testMessage = {
+  type: CODEX_BRIDGE_MCP_TEST_MESSAGE,
+  endpoint: 'http://127.0.0.1:18000/mcp',
+};
+
+test('JSON Streamable HTTP negotiates session and protocol headers and calls only codex_targets', async () => {
+  const requests: RecordedRequest[] = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const request = recordRequest(input, init);
+    requests.push(request);
+    const { id, method } = request.payload;
+    if (method === 'initialize') return jsonRpcResponse(id as number, { protocolVersion: '2025-03-26' }, 'session-json');
+    if (method === 'notifications/initialized') return new Response(null, { status: 202 });
+    if (method === 'tools/list') {
+      return jsonRpcResponse(id as number, {
+        tools: [{ name: 'codex_targets' }, { name: 'codex_start' }, { name: 'codex_continue' }],
+      });
+    }
+    if (method === 'tools/call') return jsonRpcResponse(id as number, { content: [{ type: 'text', text: 'private result' }] });
+    return new Response(null, { status: 400 });
+  };
+  const { handler } = createHandler(fetchImpl, { token: 'mcp-test-secret' });
+
+  const result = await handler(testMessage, trustedSender);
+
+  assert.deepEqual(result, {
+    ok: true,
+    protocolVersion: '2025-03-26',
+    toolCount: 3,
+    readOnlyProbe: 'codex_targets',
+  });
+  assert.deepEqual(requests.map(({ payload }) => payload.method), [
+    'initialize', 'notifications/initialized', 'tools/list', 'tools/call',
+  ]);
+  assert.equal(requests[0]?.headers.get('mcp-session-id'), null);
+  assert.equal(requests[0]?.headers.get('mcp-protocol-version'), null);
+  for (const request of requests.slice(1)) {
+    assert.equal(request.headers.get('mcp-session-id'), 'session-json');
+    assert.equal(request.headers.get('mcp-protocol-version'), '2025-03-26');
+    assert.equal(request.headers.get('authorization'), 'Bearer mcp-test-secret');
+    assert.equal(request.init.credentials, 'omit');
+  }
+  const toolCall = requests.find(({ payload }) => payload.method === 'tools/call')?.payload;
+  assert.deepEqual(toolCall?.params, { name: 'codex_targets', arguments: {} });
+  assert.equal(JSON.stringify(result).includes('mcp-test-secret'), false);
+  assert.equal(JSON.stringify(result).includes('private result'), false);
+});
+
+test('SSE responses work and a 404 session expiry reinitializes before retrying the read-only probe', async () => {
+  const requests: RecordedRequest[] = [];
+  let initialized = 0;
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const request = recordRequest(input, init);
+    requests.push(request);
+    const { id, method } = request.payload;
+    if (method === 'initialize') {
+      initialized += 1;
+      return jsonRpcResponse(id as number, { protocolVersion: '2025-03-26' }, `session-${initialized}`);
+    }
+    if (method === 'notifications/initialized') return new Response(null, { status: 202 });
+    if (method === 'tools/list' && request.headers.get('mcp-session-id') === 'session-1') {
+      return new Response(null, { status: 404 });
+    }
+    if (method === 'tools/list') return sseResponse(id as number, { tools: [{ name: 'codex_targets' }] });
+    if (method === 'tools/call') return sseResponse(id as number, { content: [{ type: 'text', text: 'redacted target' }] });
+    return new Response(null, { status: 400 });
+  };
+  const { handler } = createHandler(fetchImpl);
+
+  const result = await handler(testMessage, trustedSender);
+
+  assert.deepEqual(result, {
+    ok: true,
+    protocolVersion: '2025-03-26',
+    toolCount: 1,
+    readOnlyProbe: 'codex_targets',
+  });
+  assert.equal(initialized, 2);
+  assert.equal(requests.filter(({ payload }) => payload.method === 'tools/list').length, 2);
+  assert.equal(requests.filter(({ payload }) => payload.method === 'tools/call').length, 1);
+  assert.equal(requests.filter(({ payload }) => payload.method === 'tools/call')
+    .every(({ payload }) => (payload.params as { name?: string }).name === 'codex_targets'), true);
+  assert.equal(requests.at(-1)?.headers.get('mcp-session-id'), 'session-2');
+  assert.equal(requests.at(-1)?.headers.get('mcp-protocol-version'), '2025-03-26');
+});
+
+test('connection diagnostics classify authentication, forbidden, endpoint, HTTP, disconnect, timeout, and expired session', async () => {
+  for (const [status, reason] of [
+    [401, 'authentication-required'],
+    [403, 'forbidden'],
+    [404, 'endpoint-not-found'],
+    [502, 'http-error'],
+  ] as const) {
+    const { handler } = createHandler(async () => new Response(null, { status }));
+    assert.deepEqual(await handler(testMessage, trustedSender), { ok: false, reason });
+  }
+
+  const disconnected = createHandler(async () => { throw new TypeError('private network detail'); });
+  assert.deepEqual(await disconnected.handler(testMessage, trustedSender), { ok: false, reason: 'disconnected' });
+
+  const timeout = createHandler((_input, init) => new Promise((_resolve, reject) => {
+    init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+  }), { timeoutMs: 5 });
+  assert.deepEqual(await timeout.handler(testMessage, trustedSender), { ok: false, reason: 'timeout' });
+
+  const expired = createHandler(async (input, init) => {
+    const request = recordRequest(input, init);
+    const { id, method } = request.payload;
+    if (method === 'initialize') return jsonRpcResponse(id as number, { protocolVersion: '2025-03-26' }, 'expired-session');
+    if (method === 'notifications/initialized') return new Response(null, { status: 202 });
+    return new Response(null, { status: 404 });
+  });
+  assert.deepEqual(await expired.handler(testMessage, trustedSender), { ok: false, reason: 'session-expired' });
+});
+
+test('host permission denial prevents fetch, and only the Options page can request a connection check', async () => {
+  let fetchCount = 0;
+  const fetchImpl: typeof fetch = async () => {
+    fetchCount += 1;
+    return new Response(null, { status: 500 });
+  };
+  const denied = createHandler(fetchImpl, { permission: false });
+
+  assert.deepEqual(await denied.handler(testMessage, trustedSender), { ok: false, reason: 'permission-required' });
+  assert.deepEqual(denied.containsOrigins, ['http://127.0.0.1/*']);
+  assert.equal(fetchCount, 0);
+  assert.equal(await denied.handler(testMessage, { id: 'test-extension', url: 'https://chatgpt.com/c/example' }), null);
+  assert.equal(fetchCount, 0);
+});
+
+test('a fresh handler can reconnect from session storage without retaining a worker session', async () => {
+  const storage = {
+    async get() { return { [CODEX_BRIDGE_MCP_TOKEN_SESSION_KEY]: 'restart-secret' }; },
+  };
+  let initializeCount = 0;
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const request = recordRequest(input, init);
+    const { id, method } = request.payload;
+    if (method === 'initialize') {
+      initializeCount += 1;
+      return jsonRpcResponse(id as number, { protocolVersion: '2025-03-26' }, `worker-${initializeCount}`);
+    }
+    if (method === 'notifications/initialized') return new Response(null, { status: 202 });
+    if (method === 'tools/list') return jsonRpcResponse(id as number, { tools: [{ name: 'codex_targets' }] });
+    if (method === 'tools/call') return jsonRpcResponse(id as number, { content: [] });
+    return new Response(null, { status: 400 });
+  };
+  const options = {
+    sessionStorage: storage,
+    permissions: { async contains() { return true; } },
+    extensionId: 'test-extension',
+    optionsPageUrl: 'chrome-extension://test-extension/index.html',
+    fetchImpl,
+  };
+  const firstWorker = createCodexBridgeMcpTestHandler(options);
+  const secondWorker = createCodexBridgeMcpTestHandler(options);
+
+  assert.equal((await firstWorker(testMessage, trustedSender))?.ok, true);
+  assert.equal((await secondWorker(testMessage, trustedSender))?.ok, true);
+  assert.equal(initializeCount, 2);
+});

@@ -63,6 +63,7 @@ function settingPaths(): string[][] {
   paths.push(['answerCompletionSoundEnabled']);
   paths.push(['answerCompletionSoundId']);
   paths.push(['answerCompletionSoundVolumePercent']);
+  paths.push(['codexBridgeMcpUrl']);
   return paths;
 }
 

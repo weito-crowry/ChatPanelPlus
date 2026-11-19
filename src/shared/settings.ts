@@ -33,6 +33,7 @@ export type ExtensionSettings = Readonly<{
   answerCompletionSoundEnabled?: boolean;
   answerCompletionSoundId?: string;
   answerCompletionSoundVolumePercent?: number;
+  codexBridgeMcpUrl?: string;
   customButtons?: Readonly<Record<CustomButtonId, CustomButtonDefinition>>;
   [key: string]: unknown;
 }>;
@@ -192,6 +193,9 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
       || !Number.isInteger(value.answerCompletionSoundVolumePercent)
       || value.answerCompletionSoundVolumePercent < MIN_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT
       || value.answerCompletionSoundVolumePercent > MAX_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT)) {
+    return settingsError('invalid-settings');
+  }
+  if (value.codexBridgeMcpUrl !== undefined && typeof value.codexBridgeMcpUrl !== 'string') {
     return settingsError('invalid-settings');
   }
   return {

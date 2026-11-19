@@ -13,6 +13,8 @@ import { DEFAULT_COMPLETION_SOUND_ID } from '../../src/shared/answer-completion-
 import { DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT } from '../../src/shared/answer-completion-sound-volume.ts';
 import { CustomButtonCreator } from './CustomButtonCreator';
 import { AnswerCompletionSoundSettings } from './AnswerCompletionSoundSettings';
+import { McpConnectionSettings } from './McpConnectionSettings';
+import { CODEX_BRIDGE_MCP_DEFAULT_URL } from '../../src/shared/codexbridge-mcp-protocol.ts';
 import { prepareSoundAssetDeletion } from './answer-completion-sound-actions.ts';
 import {
   changeCustomButtonOperation,
@@ -133,6 +135,11 @@ export function OptionsPage() {
 
   function updateAnswerCompletionSoundVolume(volumePercent: number) {
     setDraft((current) => ({ ...current, answerCompletionSoundVolumePercent: volumePercent }));
+    setStatus('未保存の変更があります。');
+  }
+
+  function updateCodexBridgeMcpUrl(value: string) {
+    setDraft((current) => ({ ...current, codexBridgeMcpUrl: value }));
     setStatus('未保存の変更があります。');
   }
 
@@ -306,6 +313,12 @@ export function OptionsPage() {
         </div>
         <p className="preview-note">プレビューはドラフトに反映されます。パネルへの適用は保存後です。</p>
       </section>
+
+      <McpConnectionSettings
+        endpoint={draft.codexBridgeMcpUrl ?? CODEX_BRIDGE_MCP_DEFAULT_URL}
+        disabled={!ready || saving}
+        onEndpointChange={updateCodexBridgeMcpUrl}
+      />
 
       <fieldset className="settings-editor" disabled={!ready || saving}>
         {buttonGroups.map((group) => (

@@ -8,6 +8,8 @@ import { createChromeSoundAssetRepository } from './shared/answer-completion-sou
 import { createChromeAnswerCompletionOutputDeviceRepository } from './shared/answer-completion-output-device.ts';
 import { ANSWER_COMPLETION_SOUND_PREVIEW, ANSWER_COMPLETION_SOUND_ROUTE } from './shared/answer-completion-output-device-protocol.ts';
 import { CODEX_WORK_MODE_GET, CODEX_WORK_MODE_SET } from './shared/codex-work-mode-protocol.ts';
+import { CODEX_BRIDGE_MCP_TEST_MESSAGE } from './shared/codexbridge-mcp-protocol.ts';
+import { createCodexBridgeMcpTestHandler } from './background/codexbridge-mcp.ts';
 
 type OpenOptionsMessage = Readonly<{ type: 'OPEN_OPTIONS' }>;
 
@@ -20,11 +22,22 @@ function isCodexWorkModeMessage(message: unknown): boolean {
     && (message.type === CODEX_WORK_MODE_GET || message.type === CODEX_WORK_MODE_SET);
 }
 
+function isCodexBridgeMcpTestMessage(message: unknown): boolean {
+  return typeof message === 'object' && message !== null && 'type' in message
+    && message.type === CODEX_BRIDGE_MCP_TEST_MESSAGE;
+}
+
 const handleCodexWorkModeMessage = createCodexWorkModeMessageHandler(
   chrome.storage.session,
   chrome.runtime.id,
   (tabId, message) => chrome.tabs.sendMessage(tabId, message),
 );
+const handleCodexBridgeMcpTest = createCodexBridgeMcpTestHandler({
+  sessionStorage: chrome.storage.session,
+  permissions: chrome.permissions,
+  extensionId: chrome.runtime.id,
+  optionsPageUrl: chrome.runtime.getURL('index.html'),
+});
 
 const outputDeviceRepository = createChromeAnswerCompletionOutputDeviceRepository();
 const soundAssetRepository = createChromeSoundAssetRepository();
@@ -48,6 +61,12 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   if (isOpenOptionsMessage(message)) {
     void chrome.runtime.openOptionsPage();
     return;
+  }
+  if (isCodexBridgeMcpTestMessage(message)) {
+    void handleCodexBridgeMcpTest(message, sender).then((response) => {
+      sendResponse(response ?? { ok: false, reason: 'unknown-error' });
+    }).catch(() => sendResponse({ ok: false, reason: 'unknown-error' }));
+    return true;
   }
   if (typeof message === 'object' && message !== null && 'type' in message
     && (message.type === ANSWER_COMPLETION_SOUND_ROUTE || message.type === ANSWER_COMPLETION_SOUND_PREVIEW)) {

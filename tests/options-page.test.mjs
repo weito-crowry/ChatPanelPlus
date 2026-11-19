@@ -6,6 +6,7 @@ import test from 'node:test';
 
 const pagePath = resolve(fileURLToPath(new URL('../options/src/OptionsPage.tsx', import.meta.url)));
 const soundSettingsPath = resolve(fileURLToPath(new URL('../options/src/AnswerCompletionSoundSettings.tsx', import.meta.url)));
+const mcpSettingsPath = resolve(fileURLToPath(new URL('../options/src/McpConnectionSettings.tsx', import.meta.url)));
 const creatorPath = resolve(fileURLToPath(new URL('../options/src/CustomButtonCreator.tsx', import.meta.url)));
 
 test('Optionsに表示切替・上下並べ替え・ドラフト保存・確認付きimport/reset・exportがある', async () => {
@@ -31,4 +32,18 @@ test('カスタムボタン作成・操作変更・削除確認・旧JSON保持�
     assert.ok(creator.includes(operation), `CustomButtonCreator missing ${operation}`);
   }
   assert.ok(creator.includes('取り消す'), 'CustomButtonCreator needs a form cancel action');
+});
+
+test('MCP接続確認はホスト権限を明示要求し、tokenをsession storageに閉じ込める', async () => {
+  const [page, connection] = await Promise.all([readFile(pagePath, 'utf8'), readFile(mcpSettingsPath, 'utf8')]);
+  assert.ok(page.includes('McpConnectionSettings'));
+  for (const behavior of [
+    'type="url"', 'type="password"', 'chrome.storage.session.set',
+    'chrome.storage.session.remove', 'chrome.permissions.request({ origins: [parsed.originPattern] })',
+    'CODEX_BRIDGE_MCP_TEST_MESSAGE', '接続確認', 'codex_targets',
+  ]) assert.ok(connection.includes(behavior), `MCP connection settings missing ${behavior}`);
+  assert.ok(!connection.includes('chrome.storage.local'));
+  assert.ok(!connection.includes('console.'));
+  assert.ok(connection.includes('endpoint: parsed.url'));
+  assert.ok(!connection.includes('endpoint: token'));
 });
