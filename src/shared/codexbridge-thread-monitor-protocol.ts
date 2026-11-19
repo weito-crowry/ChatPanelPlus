@@ -32,6 +32,7 @@ export type CodexBridgeWatchFetchOutcome =
   | 'connection-changed';
 
 export type CodexBridgeWatchTurnChange = 'baseline' | 'same' | 'advanced' | 'gap' | 'unknown';
+export type CodexBridgeWatchBaselineKind = 'turn' | 'none' | 'unknown';
 
 export type CodexBridgeWatchSnapshot = Readonly<{
   watchId: string;
@@ -40,6 +41,7 @@ export type CodexBridgeWatchSnapshot = Readonly<{
   threadId: string;
   enabled: boolean;
   baselineCaptured: boolean;
+  baselineTurnKind: CodexBridgeWatchBaselineKind;
   baselineTurnId: string | null;
   baselineTurnStatus: CodexBridgeLastTurn['status'];
   lastObservedTurnId: string | null;
@@ -114,23 +116,33 @@ export async function createCodexBridgeConnectionId(endpointValue: string): Prom
 export function deriveCodexBridgeWatchTurnState(snapshot: CodexBridgeWatchSnapshot):
   | 'unknown' | 'baseline' | 'running' | 'in_progress' | 'completed' | 'failed' | 'interrupted' | 'gap' {
   if (snapshot.fetchOutcome !== 'ok') return 'unknown';
-  if (!snapshot.baselineCaptured || snapshot.baselineTurnId === null
-    || snapshot.lastObservedTurnId === null || snapshot.lastTurnStatus === null) return 'unknown';
+  if (!snapshot.baselineCaptured) return 'unknown';
   if (snapshot.statusState === 'not_loaded' || snapshot.statusState === 'unknown') return 'unknown';
-  if (snapshot.turnChange === 'gap') return 'gap';
   if (snapshot.currentExecutionState === 'estimated_running') return 'unknown';
 
   const executionState = snapshot.currentExecutionState;
-  const executionEvidence = snapshot.currentExecutionEvidence ?? '';
-  if ((executionState === 'running' || executionState === 'in_progress')
-    && /estimated|inferred|heuristic/i.test(executionEvidence)) return 'unknown';
-  const exactRunning = executionState === 'running' || executionState === 'in_progress';
-  if (exactRunning && snapshot.currentExecutionTurnId
-    && snapshot.currentExecutionTurnId !== snapshot.lastObservedTurnId) return 'running';
-  if (exactRunning && snapshot.currentExecutionTurnId === snapshot.lastObservedTurnId) return 'in_progress';
+  const executionActive = executionState === 'running' || executionState === 'in_progress';
+  const executionEvidence = snapshot.currentExecutionEvidence?.toLowerCase() ?? '';
+  if (executionActive) {
+    if (executionEvidence !== 'live' || !snapshot.currentExecutionTurnId) return 'unknown';
+    if (snapshot.currentExecutionTurnId !== snapshot.lastObservedTurnId) return 'running';
+    if (snapshot.turnChange === 'gap') return 'gap';
+    return 'in_progress';
+  }
+  if (snapshot.currentExecutionTurnId
+    && snapshot.currentExecutionTurnId !== snapshot.lastObservedTurnId) return 'unknown';
+  if (snapshot.turnChange === 'gap') return 'gap';
 
+  if (snapshot.baselineTurnKind === 'none' && snapshot.turnChange === 'baseline'
+    && snapshot.lastObservedTurnId === null && snapshot.lastTurnStatus === null) return 'baseline';
+  if (snapshot.lastTurnStatus === null) return 'unknown';
   if (snapshot.lastTurnStatus === 'in_progress') return 'in_progress';
   if (!['completed', 'failed', 'interrupted'].includes(snapshot.lastTurnStatus)) return 'unknown';
+  if (snapshot.baselineTurnKind === 'unknown' || snapshot.lastObservedTurnId === null) return 'unknown';
+  if (snapshot.baselineTurnKind === 'none') {
+    return snapshot.turnChange === 'advanced' || snapshot.turnChange === 'same'
+      ? snapshot.lastTurnStatus : 'unknown';
+  }
   if (snapshot.lastObservedTurnId !== snapshot.baselineTurnId) return snapshot.lastTurnStatus;
   if (snapshot.baselineTurnStatus === 'completed' || snapshot.baselineTurnStatus === 'failed'
     || snapshot.baselineTurnStatus === 'interrupted') return 'baseline';

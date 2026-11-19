@@ -239,7 +239,7 @@ test('polling bounds simultaneous MCP requests across different targets', async 
 test('terminal states are turn-specific; estimated execution and an older completion do not imply the current turn is done', () => {
   const base: CodexBridgeWatchSnapshot = {
     watchId: 'watch', connectionId: 'connection-A', targetId: 'target-1', threadId: 'thread-1', enabled: true,
-    baselineCaptured: true, baselineTurnId: 'turn-0', baselineTurnStatus: 'in_progress',
+    baselineCaptured: true, baselineTurnKind: 'turn', baselineTurnId: 'turn-0', baselineTurnStatus: 'in_progress',
     lastObservedTurnId: 'turn-1', statusState: 'idle', lastTurnStatus: 'completed', lastTurnEvidence: 'live',
     currentExecutionState: null, currentExecutionEvidence: null, currentExecutionTurnId: null,
     needsAttention: false, turnChange: 'advanced', observedAt: null, lastSuccessAt: null,
@@ -257,10 +257,10 @@ test('terminal states are turn-specific; estimated execution and an older comple
   }), 'running');
   assert.equal(deriveCodexBridgeWatchTurnState({ ...base, turnChange: 'gap' }), 'gap');
   assert.equal(deriveCodexBridgeWatchTurnState({
-    ...base, baselineTurnId: null, lastObservedTurnId: 'turn-1',
+    ...base, baselineTurnKind: 'unknown', baselineTurnId: null, lastObservedTurnId: 'turn-1',
   }), 'unknown');
   assert.equal(deriveCodexBridgeWatchTurnState({
-    ...base, baselineTurnId: 'turn-1', baselineTurnStatus: 'completed', lastObservedTurnId: 'turn-1', turnChange: 'baseline',
+    ...base, baselineTurnKind: 'turn', baselineTurnId: 'turn-1', baselineTurnStatus: 'completed', lastObservedTurnId: 'turn-1', turnChange: 'baseline',
   }), 'baseline');
 });
 

@@ -12,7 +12,7 @@ import { createCodexBridgeThreadMonitorMessageHandler } from '../src/background/
 
 const item: CodexBridgeWatchSnapshot = {
   watchId: 'watch-1', connectionId: 'sha256:abc', targetId: 'target-1', threadId: 'thread-1', enabled: true,
-  baselineCaptured: true, baselineTurnId: 'turn-1', baselineTurnStatus: 'completed',
+  baselineCaptured: true, baselineTurnKind: 'turn', baselineTurnId: 'turn-1', baselineTurnStatus: 'completed',
   lastObservedTurnId: 'turn-1', statusState: 'not_loaded', lastTurnStatus: 'completed', lastTurnEvidence: 'live',
   currentExecutionState: null, currentExecutionEvidence: null, currentExecutionTurnId: null,
   needsAttention: false, turnChange: 'baseline', observedAt: '2026-11-20T00:00:00.000Z',

@@ -55,6 +55,10 @@ function isStatus(value: unknown): value is CodexBridgeWatchSnapshot['lastTurnSt
     || value === 'in_progress' || value === 'unknown';
 }
 
+function isBaselineTurnKind(value: unknown): value is CodexBridgeWatchSnapshot['baselineTurnKind'] {
+  return value === 'turn' || value === 'none' || value === 'unknown';
+}
+
 function nullableText(value: unknown, maxLength = 512): value is string | null {
   return value === null || (typeof value === 'string' && value.length <= maxLength
     && !Array.from(value).some((character) => {
@@ -64,7 +68,15 @@ function nullableText(value: unknown, maxLength = 512): value is string | null {
 }
 
 function readSnapshot(value: unknown): CodexBridgeWatchSnapshot | null {
-  if (!isRecord(value) || typeof value.watchId !== 'string' || value.watchId.length > 96
+  if (!isRecord(value)) return null;
+  const baselineTurnKind = value.baselineTurnKind === undefined
+    ? (value.baselineTurnId === null ? 'unknown' : 'turn')
+    : value.baselineTurnKind;
+  if (!isBaselineTurnKind(baselineTurnKind)
+    || (baselineTurnKind === 'turn') !== (typeof value.baselineTurnId === 'string')
+    || (baselineTurnKind === 'none' && value.baselineCaptured !== true)
+    || (value.baselineCaptured === false && baselineTurnKind !== 'unknown')
+    || typeof value.watchId !== 'string' || value.watchId.length > 96
     || !isCodexBridgeWatchIdentifier(value.connectionId) || value.connectionId.length > 96
     || !isCodexBridgeWatchIdentifier(value.targetId) || !isCodexBridgeWatchIdentifier(value.threadId)
     || value.enabled !== true || typeof value.baselineCaptured !== 'boolean'
@@ -80,7 +92,7 @@ function readSnapshot(value: unknown): CodexBridgeWatchSnapshot | null {
     || !Number.isSafeInteger(value.nextPollAt) || (value.nextPollAt as number) < 0
     || !Number.isSafeInteger(value.failureCount) || (value.failureCount as number) < 0
     || (value.failureCount as number) > MAX_POLL_FAILURES) return null;
-  return value as unknown as CodexBridgeWatchSnapshot;
+  return { ...value, baselineTurnKind } as unknown as CodexBridgeWatchSnapshot;
 }
 
 function mapError(error: unknown): CodexBridgeWatchFetchOutcome {
@@ -108,7 +120,7 @@ function timestamp(value: number | null): string | null {
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
-function statusEvidence(status: CodexBridgeThreadStatus): Omit<CodexBridgeWatchSnapshot, 'watchId' | 'connectionId' | 'targetId' | 'threadId' | 'enabled' | 'baselineCaptured' | 'baselineTurnId' | 'baselineTurnStatus' | 'lastObservedTurnId' | 'turnChange' | 'observedAt' | 'lastSuccessAt' | 'fetchOutcome' | 'nextPollAt' | 'failureCount'> {
+function statusEvidence(status: CodexBridgeThreadStatus): Omit<CodexBridgeWatchSnapshot, 'watchId' | 'connectionId' | 'targetId' | 'threadId' | 'enabled' | 'baselineCaptured' | 'baselineTurnKind' | 'baselineTurnId' | 'baselineTurnStatus' | 'lastObservedTurnId' | 'turnChange' | 'observedAt' | 'lastSuccessAt' | 'fetchOutcome' | 'nextPollAt' | 'failureCount'> {
   return {
     statusState: status.state,
     lastTurnStatus: status.lastTurn?.status ?? null,
@@ -181,7 +193,7 @@ export class CodexBridgeThreadMonitor {
     const key = codexBridgeWatchKey(access.connectionId, targetId, threadId);
     const initial: CodexBridgeWatchSnapshot = {
       watchId: this.createWatchId(), connectionId: access.connectionId, targetId, threadId, enabled: true,
-      baselineCaptured: false, baselineTurnId: null, baselineTurnStatus: null,
+      baselineCaptured: false, baselineTurnKind: 'unknown', baselineTurnId: null, baselineTurnStatus: null,
       lastObservedTurnId: null, statusState: null, lastTurnStatus: null, lastTurnEvidence: null,
       currentExecutionState: null, currentExecutionEvidence: null, currentExecutionTurnId: null,
       needsAttention: null, turnChange: 'unknown', observedAt: null, lastSuccessAt: null,
@@ -216,7 +228,7 @@ export class CodexBridgeThreadMonitor {
   async restore(): Promise<void> {
     const items = await this.list();
     await this.syncAlarm(items);
-    if (items.some((item) => item.enabled)) await this.refresh('background', true);
+    if (items.some((item) => item.enabled)) await this.refresh('background');
   }
 
   async refreshForeground(): Promise<void> {
@@ -295,31 +307,35 @@ export class CodexBridgeThreadMonitor {
       const previous = items[index]!;
       const currentTurnId = status.lastTurn?.turnId ?? null;
       let baselineCaptured = previous.baselineCaptured;
+      let baselineTurnKind = previous.baselineTurnKind;
       let baselineTurnId = previous.baselineTurnId;
       let baselineTurnStatus = previous.baselineTurnStatus;
       let turnChange: CodexBridgeWatchTurnChange;
       if (!baselineCaptured) {
         baselineCaptured = true;
+        baselineTurnKind = currentTurnId !== null
+          ? 'turn'
+          : status.state === 'idle' && status.lastTurn === null && status.currentExecution === null ? 'none' : 'unknown';
         baselineTurnId = currentTurnId;
         baselineTurnStatus = status.lastTurn?.status ?? null;
         turnChange = 'baseline';
-      } else if (currentTurnId && status.currentExecution?.turnId
-        && status.currentExecution.turnId !== currentTurnId
-        && status.currentExecution.state !== null && status.currentExecution.state !== 'unknown'
-        && status.currentExecution.state !== 'not_loaded') {
-        turnChange = 'gap';
       } else if (!currentTurnId) {
-        turnChange = 'unknown';
+        turnChange = previous.turnChange === 'gap' ? 'gap' : 'unknown';
       } else if (previous.lastObservedTurnId === currentTurnId) {
         turnChange = previous.turnChange === 'gap' ? 'gap' : 'same';
       } else if (!previous.lastObservedTurnId) {
-        turnChange = 'unknown';
+        if (previous.baselineTurnKind === 'none') {
+          const lastSuccessMs = previous.lastSuccessAt === null ? null : Date.parse(previous.lastSuccessAt);
+          turnChange = lastSuccessMs !== null && now - lastSuccessMs >= this.gapThresholdMs ? 'gap' : 'advanced';
+        } else {
+          turnChange = 'unknown';
+        }
       } else {
         const lastSuccessMs = previous.lastSuccessAt === null ? null : Date.parse(previous.lastSuccessAt);
         turnChange = lastSuccessMs !== null && now - lastSuccessMs >= this.gapThresholdMs ? 'gap' : 'advanced';
       }
       const success: CodexBridgeWatchSnapshot = {
-        ...previous, ...statusEvidence(status), baselineCaptured, baselineTurnId, baselineTurnStatus,
+        ...previous, ...statusEvidence(status), baselineCaptured, baselineTurnKind, baselineTurnId, baselineTurnStatus,
         lastObservedTurnId: currentTurnId ?? previous.lastObservedTurnId,
         turnChange, observedAt: timestamp(now), lastSuccessAt: timestamp(now), fetchOutcome: 'ok',
         nextPollAt: now + (interval ?? (cadence === 'foreground' || this.foregroundUntil > now ? 15_000 : 30_000)),
