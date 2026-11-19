@@ -80,6 +80,7 @@ export type CodexBridgeWatchSnapshot = Readonly<{
   lastTurnEvidence: string | null;
   currentExecutionState: string | null;
   currentExecutionEvidence: string | null;
+  currentExecutionReason?: string | null;
   currentExecutionTurnId: string | null;
   needsAttention: boolean | null;
   turnChange: CodexBridgeWatchTurnChange;
@@ -126,9 +127,8 @@ export function codexBridgeTerminalEventKey(
   targetId: string,
   threadId: string,
   turnId: string,
-  status: CodexBridgeTerminalStatus,
 ): string {
-  return `${codexBridgeWatchKey(connectionId, targetId, threadId)}\u0000${turnId}\u0000${status}`;
+  return `${codexBridgeWatchKey(connectionId, targetId, threadId)}\u0000${turnId}`;
 }
 
 export function isCodexBridgeTerminalEvent(value: unknown): value is CodexBridgeTerminalEvent {

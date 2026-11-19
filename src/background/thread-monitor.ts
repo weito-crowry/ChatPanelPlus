@@ -85,6 +85,7 @@ function statusEvidence(status: CodexBridgeThreadStatus): Omit<CodexBridgeWatchS
     lastTurnEvidence: status.lastTurn?.evidence ?? null,
     currentExecutionState: status.currentExecution?.state ?? null,
     currentExecutionEvidence: status.currentExecution?.evidence ?? null,
+    currentExecutionReason: status.currentExecution?.reason ?? null,
     currentExecutionTurnId: status.currentExecution?.turnId ?? null,
     needsAttention: status.needsAttention,
   };
@@ -164,7 +165,7 @@ export class CodexBridgeThreadMonitor {
       watchId: this.createWatchId(), connectionId: access.connectionId, targetId, threadId, enabled: true,
       baselineCaptured: false, baselineTurnKind: 'unknown', baselineTurnId: null, baselineTurnStatus: null,
       lastObservedTurnId: null, statusState: null, lastTurnStatus: null, lastTurnEvidence: null,
-      currentExecutionState: null, currentExecutionEvidence: null, currentExecutionTurnId: null,
+      currentExecutionState: null, currentExecutionEvidence: null, currentExecutionReason: null, currentExecutionTurnId: null,
       needsAttention: null, turnChange: 'unknown', observedAt: null, lastSuccessAt: null,
       fetchOutcome: 'unknown', nextPollAt: this.now(), failureCount: 0,
     };
@@ -315,9 +316,9 @@ export class CodexBridgeThreadMonitor {
       const terminalStatus = detectCodexBridgeTerminalStatus(previous, success, this.gapThresholdMs);
       if (!terminalStatus) return { items: next, events, result: null };
       const eventKey = codexBridgeTerminalEventKey(success.connectionId, success.targetId, success.threadId,
-        success.lastObservedTurnId!, terminalStatus);
+        success.lastObservedTurnId!);
       if (events.some((record) => codexBridgeTerminalEventKey(record.connectionId, record.targetId,
-        record.threadId, record.turnId, record.status) === eventKey)) {
+        record.threadId, record.turnId) === eventKey)) {
         return { items: next, events, result: null };
       }
       const created: CodexBridgeTerminalEvent = {

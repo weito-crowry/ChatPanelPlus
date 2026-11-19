@@ -27,12 +27,20 @@ export function detectCodexBridgeTerminalStatus(
     || currentSuccess < previousSuccess || currentSuccess - previousSuccess >= gapThresholdMs) return null;
 
   const executionState = current.currentExecutionState?.toLowerCase() ?? null;
-  if (executionState === 'unknown' || executionState === 'not_loaded' || executionState === 'estimated_running') return null;
+  const executionEvidence = current.currentExecutionEvidence?.toLowerCase() ?? null;
+  const unconfirmedExecution = executionState === 'unknown'
+    && executionEvidence === 'inferred'
+    && current.currentExecutionReason?.toLowerCase() === 'execution_unconfirmed';
+  if (executionState === 'not_loaded' || executionState === 'estimated_running') return null;
+  if (executionState === 'unknown' && !unconfirmedExecution) return null;
   if (executionState === 'running' || executionState === 'in_progress') return null;
-  if (current.currentExecutionTurnId !== null && executionState === null) return null;
-  if (current.currentExecutionState !== null && current.currentExecutionEvidence?.toLowerCase() !== 'live') return null;
-  if (current.currentExecutionState === null && current.currentExecutionEvidence !== null
-    && current.currentExecutionEvidence.toLowerCase() !== 'live') return null;
+  if (unconfirmedExecution) {
+    if (current.currentExecutionTurnId !== null && current.currentExecutionTurnId !== current.lastObservedTurnId) return null;
+  } else {
+    if (current.currentExecutionTurnId !== null && executionState === null) return null;
+    if (current.currentExecutionState !== null && executionEvidence !== 'live') return null;
+    if (current.currentExecutionState === null && current.currentExecutionEvidence !== null && executionEvidence !== 'live') return null;
+  }
 
   if (deriveCodexBridgeWatchTurnState(current) !== current.lastTurnStatus) return null;
   if (current.baselineTurnKind === 'unknown') return null;

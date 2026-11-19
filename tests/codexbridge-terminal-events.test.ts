@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { CODEX_BRIDGE_THREAD_MONITOR_ALARM, CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY } from '../src/shared/codexbridge-thread-monitor-protocol.ts';
+import {
+  CODEX_BRIDGE_THREAD_MONITOR_ALARM,
+  CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY,
+} from '../src/shared/codexbridge-thread-monitor-protocol.ts';
 import { CodexBridgeThreadMonitor, type CodexBridgeNotificationHandler } from '../src/background/thread-monitor.ts';
 import type { CodexBridgeLastTurn, CodexBridgeThreadStatus } from '../src/shared/codexbridge-mcp-protocol.ts';
 
@@ -103,6 +106,91 @@ test('an actively observed baseline turn and a later new terminal turn notify on
   assert.equal(events[0]?.turnId, 'turn-a');
   assert.equal(events[0]?.notificationState, 'played');
   assert.equal(notificationCalls, 1);
+});
+
+test('live terminal turns complete when current execution is specifically unconfirmed', async () => {
+  for (const terminal of ['completed', 'failed', 'interrupted'] as const) {
+    let playbackCalls = 0;
+    const h = harness(status('turn-a', 'in_progress'), {
+      async prepare() {
+        return { state: 'ready', async play() { playbackCalls += 1; return { ok: true }; } };
+      },
+    });
+    await h.monitor.startWatch('target-1', 'thread-1');
+    h.setStatus(status('turn-a', terminal, {
+      turnId: null, state: 'unknown', evidence: 'inferred', reason: 'execution_unconfirmed',
+      observedAt: null, needsAttention: false,
+    }, 'live', terminal));
+    h.advance(30_000);
+    await h.monitor.refreshAlarm();
+    assert.equal((await h.monitor.listEvents()).length, 1);
+    assert.equal((await h.monitor.listEvents())[0]?.status, terminal);
+    assert.equal(playbackCalls, 1);
+  }
+});
+
+test('unconfirmed execution with another turn or another reason stays nonterminal', async () => {
+  for (const currentExecution of [
+    { turnId: null, state: 'unknown', evidence: 'inferred', reason: 'other_reason', observedAt: null, needsAttention: false },
+    { turnId: 'turn-b', state: 'unknown', evidence: 'inferred', reason: 'execution_unconfirmed', observedAt: null, needsAttention: false },
+  ]) {
+    const h = harness(status('turn-a', 'in_progress'));
+    await h.monitor.startWatch('target-1', 'thread-1');
+    h.setStatus(status('turn-a', 'completed', currentExecution, 'live', 'completed'));
+    h.advance(30_000);
+    await h.monitor.refreshAlarm();
+    assert.equal((await h.monitor.listEvents()).length, 0);
+  }
+
+  const oldTerminalAndNewExecution = harness(status('turn-a', 'completed'));
+  await oldTerminalAndNewExecution.monitor.startWatch('target-1', 'thread-1');
+  oldTerminalAndNewExecution.setStatus(status('turn-a', 'completed', {
+    turnId: 'turn-b', state: 'running', evidence: 'live', reason: null, observedAt: null, needsAttention: false,
+  }, 'live', 'running'));
+  oldTerminalAndNewExecution.advance(30_000);
+  await oldTerminalAndNewExecution.monitor.refreshAlarm();
+  assert.equal((await oldTerminalAndNewExecution.monitor.listEvents()).length, 0);
+});
+
+test('version 2 events with the same four-part key normalize and do not replay audio', async () => {
+  let prepareCalls = 0;
+  const h = harness(status('turn-a', 'in_progress'), {
+    async prepare() {
+      prepareCalls += 1;
+      return { state: 'ready', async play() { return { ok: true }; } };
+    },
+  });
+  await h.monitor.startWatch('target-1', 'thread-1');
+  const stored = h.storage.values[CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY] as {
+    version: number;
+    items: unknown[];
+    events: Array<Record<string, unknown>>;
+  };
+  stored.events = [
+    {
+      eventId: 'event-played', watchId: 'id-1', connectionId: 'connection-A', targetId: 'target-1',
+      threadId: 'thread-1', turnId: 'turn-a', status: 'completed', detectedAt: '2026-11-20T00:00:00.000Z',
+      notificationState: 'played', notificationReason: null,
+    },
+    {
+      eventId: 'event-pending', watchId: 'id-1', connectionId: 'connection-A', targetId: 'target-1',
+      threadId: 'thread-1', turnId: 'turn-a', status: 'failed', detectedAt: '2026-11-20T00:00:01.000Z',
+      notificationState: 'pending', notificationReason: null,
+    },
+  ];
+  await h.storage.set({ [CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY]: stored });
+
+  h.setStatus(status('turn-a', 'failed'));
+  h.advance(30_000);
+  await h.monitor.refreshAlarm();
+  const events = await h.monitor.listEvents();
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.eventId, 'event-played');
+  assert.equal(events[0]?.status, 'completed');
+  assert.equal(events[0]?.notificationState, 'played');
+  assert.equal(prepareCalls, 0);
+  const persisted = h.storage.values[CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY] as { events: unknown[] };
+  assert.equal(persisted.events.length, 1);
 });
 
 test('a fresh worker restores the ledger without repeating its audio request', async () => {

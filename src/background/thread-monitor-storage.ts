@@ -43,6 +43,7 @@ function nullableText(value: unknown, maxLength = 512): value is string | null {
 
 function readSnapshot(value: unknown): CodexBridgeWatchSnapshot | null {
   if (!isRecord(value)) return null;
+  const currentExecutionReason = value.currentExecutionReason === undefined ? null : value.currentExecutionReason;
   const baselineTurnKind = value.baselineTurnKind === undefined
     ? (value.baselineTurnId === null ? 'unknown' : 'turn') : value.baselineTurnKind;
   if (!isBaselineTurnKind(baselineTurnKind)
@@ -57,6 +58,7 @@ function readSnapshot(value: unknown): CodexBridgeWatchSnapshot | null {
     || !nullableText(value.lastObservedTurnId) || !isStatus(value.lastTurnStatus)
     || !nullableText(value.statusState, 80) || !nullableText(value.lastTurnEvidence, 80)
     || !nullableText(value.currentExecutionState, 80) || !nullableText(value.currentExecutionEvidence, 80)
+    || !nullableText(currentExecutionReason, 160)
     || !nullableText(value.currentExecutionTurnId)
     || (typeof value.needsAttention !== 'boolean' && value.needsAttention !== null)
     || !['baseline', 'same', 'advanced', 'gap', 'unknown'].includes(String(value.turnChange))
@@ -65,7 +67,7 @@ function readSnapshot(value: unknown): CodexBridgeWatchSnapshot | null {
     || !Number.isSafeInteger(value.nextPollAt) || (value.nextPollAt as number) < 0
     || !Number.isSafeInteger(value.failureCount) || (value.failureCount as number) < 0
     || (value.failureCount as number) > 8) return null;
-  return { ...value, baselineTurnKind } as unknown as CodexBridgeWatchSnapshot;
+  return { ...value, baselineTurnKind, currentExecutionReason } as unknown as CodexBridgeWatchSnapshot;
 }
 
 function readState(value: unknown): MonitorState {
@@ -81,13 +83,20 @@ function readState(value: unknown): MonitorState {
   const storedEvents = value.version === 2 && Array.isArray(value.events) ? value.events : [];
   for (const candidate of storedEvents.filter(isCodexBridgeTerminalEvent)) {
     const key = codexBridgeTerminalEventKey(candidate.connectionId, candidate.targetId,
-      candidate.threadId, candidate.turnId, candidate.status);
-    if (!events.has(key)) events.set(key, candidate);
+      candidate.threadId, candidate.turnId);
+    const existing = events.get(key);
+    if (!existing || notificationStatePriority(candidate.notificationState) > notificationStatePriority(existing.notificationState)) {
+      events.set(key, candidate);
+    }
   }
   return {
     items: [...items.values()],
     events: [...events.values()].slice(-CODEX_BRIDGE_THREAD_MONITOR_MAX_EVENTS),
   };
+}
+
+function notificationStatePriority(state: CodexBridgeTerminalEvent['notificationState']): number {
+  return { pending: 0, skipped: 1, failed: 2, requested: 3, played: 4 }[state];
 }
 
 export class CodexBridgeThreadMonitorStorage {
