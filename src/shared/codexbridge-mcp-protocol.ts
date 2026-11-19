@@ -57,6 +57,7 @@ export type CodexBridgeTarget = Readonly<{
 }>;
 
 export type CodexBridgeObservation = Readonly<{
+  turnId: string | null;
   state: string | null;
   evidence: string | null;
   reason: string | null;

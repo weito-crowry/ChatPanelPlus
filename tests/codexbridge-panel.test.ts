@@ -116,7 +116,7 @@ test('thread pages request bounded history-free data, deduplicate external rows 
   const rows = {
     threads: [{
       id: 'thread-1', target_id: 'machine-1', name: 'Native', cwd: 'C:\\work',
-      current_execution: { state: 'estimated_running', evidence: 'inferred', observed_at: '2026-11-20T01:00:00Z' },
+      current_execution: { turn_id: 'estimated-turn', state: 'estimated_running', evidence: 'inferred', observed_at: '2026-11-20T01:00:00Z' },
       last_turn: {
         turn_id: '01a1f529-a890-7120-8925-27298b4e46dc', status: 'completed',
         observed_at: '2026-11-19T19:37:59.464Z', reason: 'completed', category: 'success', evidence: 'live', needs_attention: false,
@@ -137,7 +137,7 @@ test('thread pages request bounded history-free data, deduplicate external rows 
   assert.equal(firstData.threads.length, 2);
   assert.deepEqual(firstData.threads[0], {
     targetId: 'machine-1', id: 'thread-1', title: 'Native', preview: null, cwd: 'C:\\work', updatedAt: '2026-11-19T19:37:59.000Z',
-    currentExecution: { state: 'estimated_running', evidence: 'inferred', reason: null, observedAt: '2026-11-20T01:00:00.000Z', needsAttention: null },
+    currentExecution: { turnId: 'estimated-turn', state: 'estimated_running', evidence: 'inferred', reason: null, observedAt: '2026-11-20T01:00:00.000Z', needsAttention: null },
     lastTurn: {
       turnId: '01a1f529-a890-7120-8925-27298b4e46dc', status: 'completed', category: 'success', evidence: 'live',
       reason: 'completed', observedAt: '2026-11-19T19:37:59.464Z', needsAttention: false,
@@ -170,7 +170,7 @@ test('empty pages are valid and selected status stays bound to its target/thread
 
   const statusClient = createMock({ status: {
     state: 'not_loaded',
-    current_execution: { state: 'unknown', evidence: 'inferred', reason: 'execution_unconfirmed' },
+    current_execution: { turn_id: 'current-turn', state: 'unknown', evidence: 'inferred', reason: 'execution_unconfirmed' },
     last_turn: {
       turn_id: '01a1f529-a890-7120-8925-27298b4e46dc', status: 'completed', observed_at: '2026-11-19T19:37:59.464Z',
       reason: 'completed', category: 'success', evidence: 'live', needs_attention: false,
@@ -184,7 +184,7 @@ test('empty pages are valid and selected status stays bound to its target/thread
   }, trustedSender);
   assert.deepEqual(status, { ok: true, data: {
     targetId: 'machine-remote', threadId: 'machine-remote::remote-thread', state: 'not_loaded',
-    currentExecution: { state: 'unknown', evidence: 'inferred', reason: 'execution_unconfirmed', observedAt: null, needsAttention: null },
+    currentExecution: { turnId: 'current-turn', state: 'unknown', evidence: 'inferred', reason: 'execution_unconfirmed', observedAt: null, needsAttention: null },
     lastTurn: {
       turnId: '01a1f529-a890-7120-8925-27298b4e46dc', status: 'completed', category: 'success', evidence: 'live',
       reason: 'completed', observedAt: '2026-11-19T19:37:59.464Z', needsAttention: false,

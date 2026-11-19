@@ -7,6 +7,7 @@ import {
 import {
   createCodexBridgeMcpTestHandler,
 } from '../src/background/codexbridge-mcp.ts';
+import { CodexBridgeMcpClient } from '../src/background/mcp-client.ts';
 
 type RecordedRequest = Readonly<{
   payload: Record<string, unknown>;
@@ -288,4 +289,110 @@ test('a fresh handler can reconnect from session storage without retaining a wor
   assert.equal((await firstWorker(testMessage, trustedSender))?.ok, true);
   assert.equal((await secondWorker(testMessage, trustedSender))?.ok, true);
   assert.equal(initializeCount, 2);
+});
+
+test('a reused client initializes and lists tools once for multiple status reads, then recovers a 404 session read-only', async () => {
+  const requests: RecordedRequest[] = [];
+  let sessionCount = 0;
+  let expireFirstStatus = true;
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const request = recordRequest(input, init);
+    requests.push(request);
+    const { id, method } = request.payload;
+    if (method === 'initialize') {
+      sessionCount += 1;
+      return jsonRpcResponse(id as number, { protocolVersion: '2025-03-26' }, `monitor-session-${sessionCount}`);
+    }
+    if (method === 'notifications/initialized') return new Response(null, { status: 202 });
+    if (method === 'tools/list') return jsonRpcResponse(id as number, { tools: [{ name: 'codex_status' }] });
+    if (method === 'tools/call' && expireFirstStatus && request.headers.get('mcp-session-id') === 'monitor-session-1') {
+      expireFirstStatus = false;
+      return new Response(null, { status: 404 });
+    }
+    if (method === 'tools/call') return jsonRpcResponse(id as number, {
+      content: [],
+      structuredContent: {
+        state: 'not_loaded',
+        current_execution: { state: 'unknown', turn_id: 'active-turn' },
+        last_turn: { turn_id: 'completed-turn', status: 'completed' },
+      },
+    });
+    return new Response(null, { status: 400 });
+  };
+  const client = new CodexBridgeMcpClient('http://127.0.0.1:18000/mcp', 'monitor-token', { fetchImpl });
+
+  const first = await client.readStatus('machine-1', 'machine-1::thread-1');
+  const second = await client.readStatus('machine-2', 'machine-2::thread-2');
+
+  assert.equal(first.currentExecution?.turnId, 'active-turn');
+  assert.equal(second.lastTurn?.turnId, 'completed-turn');
+  assert.equal(requests.filter(({ payload }) => payload.method === 'initialize').length, 2);
+  assert.equal(requests.filter(({ payload }) => payload.method === 'tools/list').length, 2);
+  assert.equal(requests.filter(({ payload }) => payload.method === 'tools/call').length, 3);
+  for (const request of requests.filter(({ payload }) => payload.method === 'tools/call')) {
+    assert.deepEqual((request.payload.params as { name?: string }).name, 'codex_status');
+    assert.equal((request.payload.params as { arguments?: unknown }).arguments && typeof (request.payload.params as { arguments?: unknown }).arguments, 'object');
+  }
+  assert.equal(JSON.stringify(first).includes('monitor-token'), false);
+});
+
+test('concurrent reads share one initial MCP handshake and tools list', async () => {
+  const requests: RecordedRequest[] = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const request = recordRequest(input, init);
+    requests.push(request);
+    const { id, method } = request.payload;
+    if (method === 'initialize') return jsonRpcResponse(id as number, { protocolVersion: '2025-03-26' }, 'parallel-session');
+    if (method === 'notifications/initialized') return new Response(null, { status: 202 });
+    if (method === 'tools/list') return jsonRpcResponse(id as number, { tools: [{ name: 'codex_status' }] });
+    if (method === 'tools/call') return jsonRpcResponse(id as number, {
+      content: [], structuredContent: { state: 'unknown', last_turn: { status: 'unknown' } },
+    });
+    return new Response(null, { status: 400 });
+  };
+  const client = new CodexBridgeMcpClient('http://127.0.0.1:18000/mcp', '', { fetchImpl });
+
+  await Promise.all([
+    client.readStatus('machine-1', 'machine-1::thread-1'),
+    client.readStatus('machine-2', 'machine-2::thread-2'),
+  ]);
+
+  assert.equal(requests.filter(({ payload }) => payload.method === 'initialize').length, 1);
+  assert.equal(requests.filter(({ payload }) => payload.method === 'tools/list').length, 1);
+  assert.equal(requests.filter(({ payload }) => payload.method === 'tools/call').length, 2);
+});
+
+test('staggered 404 responses during parallel reads share one session reinitialization', async () => {
+  const requests: RecordedRequest[] = [];
+  let sessionCount = 0;
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const request = recordRequest(input, init);
+    requests.push(request);
+    const { id, method } = request.payload;
+    if (method === 'initialize') {
+      sessionCount += 1;
+      return jsonRpcResponse(id as number, { protocolVersion: '2025-03-26' }, `staggered-${sessionCount}`);
+    }
+    if (method === 'notifications/initialized') return new Response(null, { status: 202 });
+    if (method === 'tools/list') return jsonRpcResponse(id as number, { tools: [{ name: 'codex_status' }] });
+    if (method === 'tools/call' && request.headers.get('mcp-session-id') === 'staggered-1') {
+      const args = (request.payload.params as { arguments?: { thread_id?: string } }).arguments;
+      if (args?.thread_id?.endsWith('thread-2')) await new Promise((resolve) => setTimeout(resolve, 25));
+      return new Response(null, { status: 404 });
+    }
+    if (method === 'tools/call') return jsonRpcResponse(id as number, {
+      content: [], structuredContent: { state: 'unknown', last_turn: { status: 'unknown' } },
+    });
+    return new Response(null, { status: 400 });
+  };
+  const client = new CodexBridgeMcpClient('http://127.0.0.1:18000/mcp', '', { fetchImpl });
+
+  await Promise.all([
+    client.readStatus('machine-1', 'machine-1::thread-1'),
+    client.readStatus('machine-2', 'machine-2::thread-2'),
+  ]);
+
+  assert.equal(requests.filter(({ payload }) => payload.method === 'initialize').length, 2);
+  assert.equal(requests.filter(({ payload }) => payload.method === 'tools/list').length, 2);
+  assert.equal(requests.filter(({ payload }) => payload.method === 'tools/call').length, 4);
 });

@@ -91,7 +91,10 @@ function readToolPayload(value: unknown): Record<string, unknown> {
 function readObservation(value: unknown): CodexBridgeObservation | null {
   if (value === undefined || value === null) return null;
   if (!isRecord(value)) throw new McpTransportError('protocol-error');
+  const turnId = value.turn_id === undefined || value.turn_id === null ? null : identifier(value.turn_id);
+  if (value.turn_id !== undefined && value.turn_id !== null && !turnId) throw new McpTransportError('protocol-error');
   return {
+    turnId,
     state: boundedText(value.state, 80),
     evidence: boundedText(value.evidence, 80),
     reason: boundedText(value.reason, 160),
@@ -199,6 +202,10 @@ function isSessionExpired(error: unknown): boolean {
 export class CodexBridgeMcpClient {
   private readonly transport: StreamableHttpMcpTransport;
   private negotiatedProtocolVersion: CodexBridgeMcpProtocolVersion | null = null;
+  private availableTools: ReadonlySet<string> | null = null;
+  private initializeFlight: Promise<void> | null = null;
+  private toolsFlight: Promise<readonly Record<string, unknown>[]> | null = null;
+  private sessionEpoch = 0;
 
   constructor(endpoint: string, token: string, options: { fetchImpl?: typeof fetch; timeoutMs?: number } = {}) {
     this.transport = new StreamableHttpMcpTransport(endpoint, token, options);
@@ -215,7 +222,7 @@ export class CodexBridgeMcpClient {
       await this.callTool(CODEX_BRIDGE_MCP_READ_ONLY_PROBE, {});
     } catch (error) {
       if (!isSessionExpired(error)) throw error;
-      await this.initializeSession();
+      await this.initializeSession(true);
       tools = await this.listTools();
       if (!tools.some(({ name }) => name === CODEX_BRIDGE_MCP_READ_ONLY_PROBE)) {
         throw new McpTransportError('readonly-tool-unavailable');
@@ -247,18 +254,26 @@ export class CodexBridgeMcpClient {
     return readStatus(await this.callReadonlyTool('codex_status', { thread_id: threadId }), targetId, threadId);
   }
 
-  private async initializeSession(): Promise<void> {
-    try {
-      await this.initializeSessionOnce();
-    } catch (error) {
+  private async initializeSession(force = false): Promise<void> {
+    if (!force && this.negotiatedProtocolVersion) return;
+    if (this.initializeFlight) return this.initializeFlight;
+    const flight = this.initializeSessionOnce().catch(async (error) => {
       if (!isSessionExpired(error)) throw error;
       await this.initializeSessionOnce();
+    });
+    this.initializeFlight = flight;
+    try {
+      await flight;
+    } finally {
+      if (this.initializeFlight === flight) this.initializeFlight = null;
     }
   }
 
   private async initializeSessionOnce(): Promise<void> {
     this.transport.clearSession();
     this.negotiatedProtocolVersion = null;
+    this.availableTools = null;
+    this.toolsFlight = null;
     const result = await this.transport.request<InitializeResult>('initialize', {
       protocolVersion: CODEX_BRIDGE_MCP_PROTOCOL_VERSION,
       capabilities: {},
@@ -268,24 +283,39 @@ export class CodexBridgeMcpClient {
     if (!isSupportedCodexBridgeMcpProtocolVersion(result.protocolVersion)) {
       throw new McpTransportError('protocol-version-unsupported');
     }
-    this.negotiatedProtocolVersion = result.protocolVersion;
     this.transport.setProtocolVersion(result.protocolVersion);
     await this.transport.notify('notifications/initialized');
+    this.negotiatedProtocolVersion = result.protocolVersion;
+    this.sessionEpoch += 1;
   }
 
   private async listToolsWithRecovery(): Promise<readonly Record<string, unknown>[]> {
+    if (this.availableTools) return [...this.availableTools].map((name) => ({ name }));
+    if (this.toolsFlight) return this.toolsFlight;
+    const flight = this.listToolsOnceWithRecovery();
+    this.toolsFlight = flight;
+    try {
+      return await flight;
+    } finally {
+      if (this.toolsFlight === flight) this.toolsFlight = null;
+    }
+  }
+
+  private async listToolsOnceWithRecovery(): Promise<readonly Record<string, unknown>[]> {
     try {
       return await this.listTools();
     } catch (error) {
       if (!isSessionExpired(error)) throw error;
-      await this.initializeSession();
+      await this.initializeSession(true);
       return this.listTools();
     }
   }
 
   private async listTools(): Promise<readonly Record<string, unknown>[]> {
     const result = await this.transport.request<ToolsListResult>('tools/list', {});
-    return readTools(result);
+    const tools = readTools(result);
+    this.availableTools = new Set(tools.map(({ name }) => name as string));
+    return tools;
   }
 
   private async callTool(name: string, argumentsValue: Record<string, unknown>): Promise<void> {
@@ -295,16 +325,23 @@ export class CodexBridgeMcpClient {
   }
 
   private async callReadonlyTool(name: 'codex_targets' | 'codex_threads' | 'codex_status', argumentsValue: Record<string, unknown>): Promise<unknown> {
-    await this.initializeSession();
-    let tools = await this.listToolsWithRecovery();
-    if (!tools.some((tool) => tool.name === name)) throw new McpTransportError('readonly-tool-unavailable');
+    if (!this.negotiatedProtocolVersion) await this.initializeSession();
+    let availableTools = this.availableTools;
+    if (!availableTools) {
+      await this.listToolsWithRecovery();
+      availableTools = this.availableTools;
+    }
+    if (!availableTools?.has(name)) throw new McpTransportError('readonly-tool-unavailable');
+    const requestSessionEpoch = this.sessionEpoch;
     try {
       return await this.callToolResult(name, argumentsValue);
     } catch (error) {
       if (!isSessionExpired(error)) throw error;
-      await this.initializeSession();
-      tools = await this.listTools();
-      if (!tools.some((tool) => tool.name === name)) throw new McpTransportError('readonly-tool-unavailable');
+      if (this.sessionEpoch === requestSessionEpoch) await this.initializeSession(true);
+      else if (!this.negotiatedProtocolVersion) await this.initializeSession();
+      await this.listToolsWithRecovery();
+      availableTools = this.availableTools;
+      if (!availableTools?.has(name)) throw new McpTransportError('readonly-tool-unavailable');
       return this.callToolResult(name, argumentsValue);
     }
   }

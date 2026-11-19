@@ -16,6 +16,15 @@ import {
 } from './shared/codexbridge-mcp-protocol.ts';
 import { createCodexBridgeMcpTestHandler } from './background/codexbridge-mcp.ts';
 import { createDefaultCodexBridgePanelHandler } from './background/codexbridge-panel.ts';
+import {
+  CODEX_BRIDGE_THREAD_MONITOR_ALARM,
+  CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH,
+  CODEX_BRIDGE_WATCH_LIST,
+  CODEX_BRIDGE_WATCH_READ,
+  CODEX_BRIDGE_WATCH_START,
+  CODEX_BRIDGE_WATCH_STOP,
+} from './shared/codexbridge-thread-monitor-protocol.ts';
+import { createDefaultCodexBridgeThreadMonitor } from './background/codexbridge-thread-monitor.ts';
 
 type OpenOptionsMessage = Readonly<{ type: 'OPEN_OPTIONS' }>;
 
@@ -40,6 +49,13 @@ function isCodexBridgePanelMessage(message: unknown): boolean {
       || message.type === CODEX_BRIDGE_MCP_GET_STATUS);
 }
 
+function isCodexBridgeWatchMessage(message: unknown): boolean {
+  return typeof message === 'object' && message !== null && 'type' in message
+    && (message.type === CODEX_BRIDGE_WATCH_START || message.type === CODEX_BRIDGE_WATCH_STOP
+      || message.type === CODEX_BRIDGE_WATCH_LIST || message.type === CODEX_BRIDGE_WATCH_READ
+      || message.type === CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH);
+}
+
 const handleCodexWorkModeMessage = createCodexWorkModeMessageHandler(
   chrome.storage.session,
   chrome.runtime.id,
@@ -52,6 +68,20 @@ const handleCodexBridgeMcpTest = createCodexBridgeMcpTestHandler({
   optionsPageUrl: chrome.runtime.getURL('index.html'),
 });
 const handleCodexBridgePanel = createDefaultCodexBridgePanelHandler(chrome.runtime.id);
+const codexBridgeThreadMonitor = createDefaultCodexBridgeThreadMonitor(chrome.runtime.id);
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === CODEX_BRIDGE_THREAD_MONITOR_ALARM) {
+    void codexBridgeThreadMonitor.monitor.refreshAlarm().catch(() => {});
+  }
+});
+chrome.runtime.onStartup.addListener(() => {
+  void codexBridgeThreadMonitor.monitor.restore().catch(() => {});
+});
+chrome.runtime.onInstalled.addListener(() => {
+  void codexBridgeThreadMonitor.monitor.restore().catch(() => {});
+});
+void codexBridgeThreadMonitor.monitor.restore().catch(() => {});
 
 const outputDeviceRepository = createChromeAnswerCompletionOutputDeviceRepository();
 const soundAssetRepository = createChromeSoundAssetRepository();
@@ -86,6 +116,12 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     void handleCodexBridgePanel(message, sender).then((response) => {
       sendResponse(response ?? { ok: false, reason: 'protocol-error' });
     }).catch(() => sendResponse({ ok: false, reason: 'unknown-error' }));
+    return true;
+  }
+  if (isCodexBridgeWatchMessage(message)) {
+    void codexBridgeThreadMonitor.handleMessage(message, sender).then((response) => {
+      sendResponse(response ?? { ok: false, reason: 'invalid-request' });
+    }).catch(() => sendResponse({ ok: false, reason: 'storage-error' }));
     return true;
   }
   if (typeof message === 'object' && message !== null && 'type' in message

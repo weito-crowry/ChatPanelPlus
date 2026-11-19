@@ -62,7 +62,7 @@ test('manifest declares only the expected ChatGPT content script, worker, and op
   }]);
   assert.deepEqual(manifest.background, { service_worker: 'background.js' });
   assert.deepEqual(manifest.options_ui, { page: 'index.html', open_in_tab: true });
-  assert.deepEqual(manifest.permissions, ['clipboardRead', 'storage', 'offscreen']);
+  assert.deepEqual(manifest.permissions, ['clipboardRead', 'storage', 'offscreen', 'alarms']);
   assert.equal('host_permissions' in manifest, false, 'Required host permissions must not be present.');
   assert.deepEqual(manifest.optional_host_permissions, ['http://*/*', 'https://*/*']);
 

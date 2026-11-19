@@ -13,6 +13,7 @@ import {
   type CodexBridgeThreadStatus,
 } from '../shared/codexbridge-mcp-protocol.ts';
 import { CodexBridgeRequestTracker, mergeCodexBridgeThreads } from './codexbridge-request-tracker.ts';
+import { CodexBridgeWatchPanel } from './CodexBridgeWatchPanel.tsx';
 
 type ConnectionState = 'loading' | 'connected' | 'error';
 
@@ -83,7 +84,7 @@ function isReadResponse<T>(value: unknown): value is CodexBridgeReadResponse<T> 
   return isRecord(value) && typeof value.ok === 'boolean';
 }
 
-export function CodexBridgeList() {
+export function CodexBridgeList({ foregroundEnabled = true }: Readonly<{ foregroundEnabled?: boolean }> = {}) {
   const [connection, setConnection] = useState<ConnectionState>('loading');
   const [connectionMessage, setConnectionMessage] = useState('対象マシンを確認しています。');
   const [targets, setTargets] = useState<readonly CodexBridgeTarget[]>([]);
@@ -370,6 +371,10 @@ export function CodexBridgeList() {
           )}
         </>
       )}
+      <CodexBridgeWatchPanel
+        selected={selected ? { targetId: selected.targetId, threadId: selected.id } : null}
+        foregroundEnabled={foregroundEnabled}
+      />
     </section>
   );
 }

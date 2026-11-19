@@ -295,7 +295,7 @@ export function ChatPanel() {
           soundToggleError={soundToggleError}
           onToggleAnswerCompletionSound={(enabled) => toggleAnswerCompletionSound(enabled)}
         />
-        <CodexBridgeList />
+        <CodexBridgeList foregroundEnabled={!currentViewState.minimized} />
         <div className="utility-row" aria-label="常時表示操作">
           {model.utilityButtons.map((button) => (
             <button

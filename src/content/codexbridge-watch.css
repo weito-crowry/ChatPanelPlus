@@ -1,0 +1,7 @@
+.codex-bridge-watch { display: grid; gap: 5px; padding-top: 6px; border-top: 1px solid var(--border-light, #d9dadd); }
+.codex-bridge-watch h3 { margin: 0; font-size: 12px; }
+.codex-bridge-watch-list { display: grid; gap: 5px; max-height: 210px; overflow: auto; margin: 0; padding: 0; list-style: none; }
+.codex-bridge-watch-item { display: grid; gap: 2px; min-width: 0; padding: 6px; border: 1px solid var(--border-light, #d9dadd); border-radius: 7px; overflow-wrap: anywhere; }
+.codex-bridge-watch-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.codex-bridge-watch-heading strong { min-width: 0; overflow-wrap: anywhere; }
+.codex-bridge-watch-item small { color: var(--text-secondary, #565869); overflow-wrap: anywhere; }
