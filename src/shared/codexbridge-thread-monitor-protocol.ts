@@ -12,6 +12,36 @@ export const CODEX_BRIDGE_WATCH_STOP = 'CODEX_BRIDGE_WATCH_STOP' as const;
 export const CODEX_BRIDGE_WATCH_LIST = 'CODEX_BRIDGE_WATCH_LIST' as const;
 export const CODEX_BRIDGE_WATCH_READ = 'CODEX_BRIDGE_WATCH_READ' as const;
 export const CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH = 'CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH' as const;
+export const CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER = 'CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER' as const;
+
+export type CodexBridgeTerminalStatus = 'completed' | 'failed' | 'interrupted';
+export type CodexBridgeNotificationState = 'pending' | 'requested' | 'played' | 'skipped' | 'failed';
+export type CodexBridgeNotificationReason = 'disabled' | 'volume-zero' | 'settings-unavailable'
+  | 'output-device-unavailable' | 'device-unavailable' | 'permission-denied' | 'sink-failed' | 'playback-failed';
+
+export type CodexBridgeTerminalEvent = Readonly<{
+  eventId: string;
+  watchId: string;
+  connectionId: string;
+  targetId: string;
+  threadId: string;
+  turnId: string;
+  status: CodexBridgeTerminalStatus;
+  detectedAt: string;
+  notificationState: CodexBridgeNotificationState;
+  notificationReason: CodexBridgeNotificationReason | null;
+}>;
+
+export type CodexBridgeFinalAnswerResult =
+  | Readonly<{ status: 'retrieved'; text: string; completeness: 'unconfirmed' }>
+  | Readonly<{ status: 'no-final-answer'; completeness: 'unconfirmed' }>
+  | Readonly<{ status: 'incomplete'; reason: 'history-too-large' | 'text-too-large' | 'malformed-history'
+    | 'turn-not-found' | 'multiple-matching-turns' | 'multiple-final-answers'; completeness: 'unconfirmed' }>
+  | Readonly<{ status: 'failed'; reason: 'connection-changed' | 'event-not-found' | 'authentication-required'
+    | 'forbidden' | 'endpoint-not-found' | 'session-expired' | 'http-error' | 'disconnected' | 'timeout'
+    | 'protocol-error' | 'protocol-version-unsupported' | 'readonly-tool-unavailable' | 'readonly-probe-failed'
+    | 'permission-required' | 'settings-unavailable' | 'unknown-error' }>
+  | Readonly<{ status: 'pending' }>;
 
 export type CodexBridgeWatchFetchOutcome =
   | 'ok'
@@ -65,10 +95,12 @@ export type CodexBridgeWatchMessage =
   | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_STOP; connectionId: string; targetId: string; threadId: string }>
   | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_LIST }>
   | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_READ; connectionId: string; targetId: string; threadId: string }>
-  | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH }>;
+  | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH }>
+  | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER; eventId: string }>;
 
 export type CodexBridgeWatchListData = Readonly<{
   items: readonly CodexBridgeWatchSnapshot[];
+  events: readonly CodexBridgeTerminalEvent[];
   currentConnectionId: string | null;
 }>;
 
@@ -87,6 +119,32 @@ export function isCodexBridgeWatchFetchOutcome(value: unknown): value is CodexBr
 
 export function codexBridgeWatchKey(connectionId: string, targetId: string, threadId: string): string {
   return `${connectionId}\u0000${targetId}\u0000${threadId}`;
+}
+
+export function codexBridgeTerminalEventKey(
+  connectionId: string,
+  targetId: string,
+  threadId: string,
+  turnId: string,
+  status: CodexBridgeTerminalStatus,
+): string {
+  return `${codexBridgeWatchKey(connectionId, targetId, threadId)}\u0000${turnId}\u0000${status}`;
+}
+
+export function isCodexBridgeTerminalEvent(value: unknown): value is CodexBridgeTerminalEvent {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const event = value as Record<string, unknown>;
+  return typeof event.eventId === 'string' && event.eventId.length > 0 && event.eventId.length <= 96
+    && typeof event.watchId === 'string' && event.watchId.length > 0 && event.watchId.length <= 96
+    && isCodexBridgeWatchIdentifier(event.connectionId) && event.connectionId.length <= 96
+    && isCodexBridgeWatchIdentifier(event.targetId) && isCodexBridgeWatchIdentifier(event.threadId)
+    && isCodexBridgeWatchIdentifier(event.turnId) && event.status !== null
+    && ['completed', 'failed', 'interrupted'].includes(String(event.status))
+    && typeof event.detectedAt === 'string' && event.detectedAt.length <= 40
+    && ['pending', 'requested', 'played', 'skipped', 'failed'].includes(String(event.notificationState))
+    && (event.notificationReason === null || ['disabled', 'volume-zero', 'settings-unavailable',
+      'output-device-unavailable', 'device-unavailable', 'permission-denied', 'sink-failed', 'playback-failed']
+      .includes(String(event.notificationReason)));
 }
 
 export function isCodexBridgeWatchIdentifier(value: unknown): value is string {

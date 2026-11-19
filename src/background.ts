@@ -16,11 +16,14 @@ import {
 } from './shared/codexbridge-mcp-protocol.ts';
 import { createCodexBridgeMcpTestHandler } from './background/codexbridge-mcp.ts';
 import { createDefaultCodexBridgePanelHandler } from './background/codexbridge-panel.ts';
+import { createCodexBridgeNotificationHandler } from './background/codexbridge-notifications.ts';
+import { createChromeSettingsRepository } from './shared/settings-repository.ts';
 import {
   CODEX_BRIDGE_THREAD_MONITOR_ALARM,
   CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH,
   CODEX_BRIDGE_WATCH_LIST,
   CODEX_BRIDGE_WATCH_READ,
+  CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER,
   CODEX_BRIDGE_WATCH_START,
   CODEX_BRIDGE_WATCH_STOP,
 } from './shared/codexbridge-thread-monitor-protocol.ts';
@@ -53,7 +56,8 @@ function isCodexBridgeWatchMessage(message: unknown): boolean {
   return typeof message === 'object' && message !== null && 'type' in message
     && (message.type === CODEX_BRIDGE_WATCH_START || message.type === CODEX_BRIDGE_WATCH_STOP
       || message.type === CODEX_BRIDGE_WATCH_LIST || message.type === CODEX_BRIDGE_WATCH_READ
-      || message.type === CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH);
+      || message.type === CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH
+      || message.type === CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER);
 }
 
 const handleCodexWorkModeMessage = createCodexWorkModeMessageHandler(
@@ -68,20 +72,6 @@ const handleCodexBridgeMcpTest = createCodexBridgeMcpTestHandler({
   optionsPageUrl: chrome.runtime.getURL('index.html'),
 });
 const handleCodexBridgePanel = createDefaultCodexBridgePanelHandler(chrome.runtime.id);
-const codexBridgeThreadMonitor = createDefaultCodexBridgeThreadMonitor(chrome.runtime.id);
-
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === CODEX_BRIDGE_THREAD_MONITOR_ALARM) {
-    void codexBridgeThreadMonitor.monitor.refreshAlarm().catch(() => {});
-  }
-});
-chrome.runtime.onStartup.addListener(() => {
-  void codexBridgeThreadMonitor.monitor.restore().catch(() => {});
-});
-chrome.runtime.onInstalled.addListener(() => {
-  void codexBridgeThreadMonitor.monitor.restore().catch(() => {});
-});
-void codexBridgeThreadMonitor.monitor.restore().catch(() => {});
 
 const outputDeviceRepository = createChromeAnswerCompletionOutputDeviceRepository();
 const soundAssetRepository = createChromeSoundAssetRepository();
@@ -96,6 +86,26 @@ const handleOutputDevicePlayback = createOutputDevicePlaybackMessageHandler({
     ? offscreenTransport.play(request)
     : Promise.resolve({ ok: false, reason: 'playback-failed' }),
 });
+const notification = createCodexBridgeNotificationHandler({
+  settings: createChromeSettingsRepository(),
+  outputDevice: outputDeviceRepository,
+  assets: soundAssetRepository,
+  audio: offscreenTransport,
+});
+const codexBridgeThreadMonitor = createDefaultCodexBridgeThreadMonitor(chrome.runtime.id, notification);
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === CODEX_BRIDGE_THREAD_MONITOR_ALARM) {
+    void codexBridgeThreadMonitor.monitor.refreshAlarm().catch(() => {});
+  }
+});
+chrome.runtime.onStartup.addListener(() => {
+  void codexBridgeThreadMonitor.monitor.restore().catch(() => {});
+});
+chrome.runtime.onInstalled.addListener(() => {
+  void codexBridgeThreadMonitor.monitor.restore().catch(() => {});
+});
+void codexBridgeThreadMonitor.monitor.restore().catch(() => {});
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   void removeCodexWorkModeEntriesForTab(chrome.storage.session, tabId);

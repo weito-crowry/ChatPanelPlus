@@ -9,7 +9,8 @@ export type McpFailureCode =
   | 'protocol-error'
   | 'protocol-version-unsupported'
   | 'readonly-tool-unavailable'
-  | 'readonly-probe-failed';
+  | 'readonly-probe-failed'
+  | 'response-too-large';
 
 export class McpTransportError extends Error {
   readonly code: McpFailureCode;
@@ -22,6 +23,7 @@ export class McpTransportError extends Error {
 }
 type JsonRpcEnvelope = Readonly<Record<string, unknown>>;
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+const MAX_MCP_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -148,12 +150,34 @@ export class StreamableHttpMcpTransport {
   }
 
   private async readJsonResponse(response: Response, expectedId: number): Promise<JsonRpcEnvelope | null> {
-    let payload: unknown;
-    try {
-      payload = await response.json() as unknown;
-    } catch {
-      throw new McpTransportError('protocol-error');
+    const declaredLength = Number(response.headers.get('content-length'));
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_MCP_RESPONSE_BYTES) {
+      throw new McpTransportError('response-too-large');
     }
+    if (!response.body) throw new McpTransportError('protocol-error');
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let byteCount = 0;
+    let text = '';
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (value) {
+          byteCount += value.byteLength;
+          if (byteCount > MAX_MCP_RESPONSE_BYTES) throw new McpTransportError('response-too-large');
+          text += decoder.decode(value, { stream: !done });
+        }
+        if (done) break;
+      }
+      text += decoder.decode();
+    } catch (error) {
+      if (error instanceof McpTransportError) throw error;
+      throw new McpTransportError('protocol-error');
+    } finally {
+      void reader.cancel().catch(() => {});
+    }
+    let payload: unknown;
+    try { payload = JSON.parse(text) as unknown; } catch { throw new McpTransportError('protocol-error'); }
     return responseForId(payload, expectedId);
   }
 
@@ -163,6 +187,7 @@ export class StreamableHttpMcpTransport {
     const reader = body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let byteCount = 0;
 
     const consumeFrame = (frame: string): JsonRpcEnvelope | null => {
       const payload = parseSseData(frame);
@@ -172,6 +197,10 @@ export class StreamableHttpMcpTransport {
     try {
       while (true) {
         const { value, done } = await reader.read();
+        if (value) {
+          byteCount += value.byteLength;
+          if (byteCount > MAX_MCP_RESPONSE_BYTES) throw new McpTransportError('response-too-large');
+        }
         buffer += decoder.decode(value, { stream: !done });
         let separator = /\r?\n\r?\n/.exec(buffer);
         while (separator) {

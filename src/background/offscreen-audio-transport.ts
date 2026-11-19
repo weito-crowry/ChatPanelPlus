@@ -38,7 +38,7 @@ export function createOffscreenAudioTransport(
       creating = offscreen.createDocument({
         url: offscreenUrl,
         reasons: ['AUDIO_PLAYBACK'],
-        justification: 'ユーザーが指定した出力デバイスで回答完了音を再生するため',
+        justification: '回答完了音とCodexBridge監視通知を既存設定の出力先で再生するため',
       }).finally(() => { creating = null; });
     }
     await creating;

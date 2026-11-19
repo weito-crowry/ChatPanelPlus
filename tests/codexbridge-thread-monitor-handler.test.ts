@@ -4,9 +4,11 @@ import {
   CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH,
   CODEX_BRIDGE_WATCH_LIST,
   CODEX_BRIDGE_WATCH_READ,
+  CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER,
   CODEX_BRIDGE_WATCH_START,
   CODEX_BRIDGE_WATCH_STOP,
   type CodexBridgeWatchSnapshot,
+  type CodexBridgeTerminalEvent,
 } from '../src/shared/codexbridge-thread-monitor-protocol.ts';
 import { createCodexBridgeThreadMonitorMessageHandler } from '../src/background/codexbridge-thread-monitor.ts';
 
@@ -18,8 +20,13 @@ const item: CodexBridgeWatchSnapshot = {
   needsAttention: false, turnChange: 'baseline', observedAt: '2026-11-20T00:00:00.000Z',
   lastSuccessAt: '2026-11-20T00:00:00.000Z', fetchOutcome: 'ok', nextPollAt: 0, failureCount: 0,
 };
+const event: CodexBridgeTerminalEvent = {
+  eventId: 'event-1', watchId: item.watchId, connectionId: item.connectionId, targetId: item.targetId,
+  threadId: item.threadId, turnId: 'turn-2', status: 'completed', detectedAt: item.observedAt ?? '2026-11-20T00:00:00.000Z',
+  notificationState: 'played', notificationReason: null,
+};
 
-function handlerFixture() {
+function handlerFixture(connectionId = item.connectionId) {
   const calls: string[] = [];
   const monitor = {
     async startWatch(targetId: string, threadId: string) {
@@ -34,6 +41,8 @@ function handlerFixture() {
       calls.push('list');
       return [item];
     },
+    async listEvents() { return [event]; },
+    async readEvent(eventId: string) { calls.push(`read-event:${eventId}`); return eventId === event.eventId ? event : null; },
     async read(connectionId: string, targetId: string, threadId: string) {
       calls.push(`read:${connectionId}:${targetId}:${threadId}`);
       return item;
@@ -43,7 +52,16 @@ function handlerFixture() {
   const handle = createCodexBridgeThreadMonitorMessageHandler({
     extensionId: 'test-extension',
     monitor,
-    async resolveAccess() { return { connectionId: 'sha256:abc', failure: 'permission-required' }; },
+    async resolveAccess() {
+      return {
+        connectionId,
+        failure: 'permission-required' as const,
+        async readFinalAnswer(targetId: string, threadId: string, turnId: string) {
+          calls.push(`final:${targetId}:${threadId}:${turnId}`);
+          return { status: 'retrieved', text: 'final', completeness: 'unconfirmed' };
+        },
+      };
+    },
   });
   return { handle, calls };
 }
@@ -84,10 +102,10 @@ test('start, stop, read, list, and foreground refresh are explicit bounded opera
     type: CODEX_BRIDGE_WATCH_READ, connectionId: item.connectionId, targetId: item.targetId, threadId: item.threadId,
   }, trustedSender), { ok: true, data: item });
   assert.deepEqual(await handle({ type: CODEX_BRIDGE_WATCH_LIST }, trustedSender), {
-    ok: true, data: { items: [item], currentConnectionId: item.connectionId },
+    ok: true, data: { items: [item], events: [event], currentConnectionId: item.connectionId },
   });
   assert.deepEqual(await handle({ type: CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH }, trustedSender), {
-    ok: true, data: { items: [item], currentConnectionId: item.connectionId },
+    ok: true, data: { items: [item], events: [event], currentConnectionId: item.connectionId },
   });
   assert.deepEqual(calls, [
     'start:target-1:thread-1',
@@ -95,4 +113,24 @@ test('start, stop, read, list, and foreground refresh are explicit bounded opera
     `read:${item.connectionId}:${item.targetId}:${item.threadId}`,
     'list', 'foreground', 'list',
   ]);
+});
+
+test('final answer requests read only saved exact events and require the current connection', async () => {
+  const current = handlerFixture();
+  assert.deepEqual(await current.handle({ type: CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER, eventId: event.eventId }, trustedSender), {
+    ok: true, data: { status: 'retrieved', text: 'final', completeness: 'unconfirmed' },
+  });
+  assert.deepEqual(current.calls, [`read-event:${event.eventId}`, `final:${event.targetId}:${event.threadId}:${event.turnId}`, `read-event:${event.eventId}`]);
+
+  const changed = handlerFixture('sha256:other');
+  assert.deepEqual(await changed.handle({ type: CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER, eventId: event.eventId }, trustedSender), {
+    ok: true, data: { status: 'failed', reason: 'connection-changed' },
+  });
+  assert.deepEqual(changed.calls, [`read-event:${event.eventId}`]);
+
+  const invalid = handlerFixture();
+  assert.deepEqual(await invalid.handle({
+    type: CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER, eventId: event.eventId, threadId: 'arbitrary',
+  }, trustedSender), { ok: false, reason: 'invalid-request' });
+  assert.deepEqual(invalid.calls, []);
 });

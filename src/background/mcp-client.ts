@@ -10,7 +10,9 @@ import {
   type CodexBridgeThreadStatus,
   type CodexBridgeMcpProtocolVersion,
 } from '../shared/codexbridge-mcp-protocol.ts';
+import type { CodexBridgeFinalAnswerResult } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import { McpTransportError, StreamableHttpMcpTransport } from './mcp-transport.ts';
+import { parseCodexBridgeFinalAnswer } from './codexbridge-final-answer.ts';
 
 type InitializeResult = Readonly<{ protocolVersion?: unknown }>;
 type ToolsListResult = Readonly<{ tools?: unknown }>;
@@ -252,6 +254,22 @@ export class CodexBridgeMcpClient {
 
   async readStatus(targetId: string, threadId: string): Promise<CodexBridgeThreadStatus> {
     return readStatus(await this.callReadonlyTool('codex_status', { thread_id: threadId }), targetId, threadId);
+  }
+
+  async readFinalAnswer(targetId: string, threadId: string, turnId: string): Promise<CodexBridgeFinalAnswerResult> {
+    try {
+      const payload = readToolPayload(await this.callReadonlyTool('codex_threads', {
+        thread_id: threadId,
+        target_id: targetId,
+        include_history: true,
+      }));
+      return parseCodexBridgeFinalAnswer(payload, threadId, turnId);
+    } catch (error) {
+      if (error instanceof McpTransportError && error.code === 'response-too-large') {
+        return { status: 'incomplete', reason: 'history-too-large', completeness: 'unconfirmed' };
+      }
+      throw error;
+    }
   }
 
   private async initializeSession(force = false): Promise<void> {

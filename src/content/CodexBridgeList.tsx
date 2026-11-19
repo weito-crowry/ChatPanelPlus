@@ -31,6 +31,7 @@ const ERROR_LABELS: Record<CodexBridgeReadFailureReason, string> = {
   'protocol-version-unsupported': 'MCP protocol versionに対応していません。',
   'readonly-tool-unavailable': '必要な読み取りtoolがありません。',
   'readonly-probe-failed': 'Bridgeの読み取りtoolが失敗しました。',
+  'response-too-large': 'Bridgeの応答が上限を超えました。',
   'storage-error': '保存済み接続情報を読み取れません。',
   'settings-unavailable': '保存済み接続設定を読み取れません。',
   'unknown-error': 'Bridgeの読み取りに失敗しました。',

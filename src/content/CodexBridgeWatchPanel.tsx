@@ -4,16 +4,25 @@ import {
   CODEX_BRIDGE_THREAD_MONITOR_FOREGROUND_MS,
   CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH,
   CODEX_BRIDGE_WATCH_LIST,
+  CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER,
   CODEX_BRIDGE_WATCH_START,
   CODEX_BRIDGE_WATCH_STOP,
   deriveCodexBridgeWatchTurnState,
+  isCodexBridgeTerminalEvent,
   type CodexBridgeWatchFetchOutcome,
   type CodexBridgeWatchSnapshot,
+  type CodexBridgeTerminalEvent,
+  type CodexBridgeFinalAnswerResult,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
+import { captureSelectionForPaste, getBrowserEditorEnvironment, insertAtCaret } from './editor/adapter.ts';
 
 type SelectedThread = Readonly<{ targetId: string; threadId: string }>;
 type Props = Readonly<{ selected: SelectedThread | null; foregroundEnabled: boolean }>;
-type ListData = Readonly<{ items: readonly CodexBridgeWatchSnapshot[]; currentConnectionId: string | null }>;
+type ListData = Readonly<{
+  items: readonly CodexBridgeWatchSnapshot[];
+  events: readonly CodexBridgeTerminalEvent[];
+  currentConnectionId: string | null;
+}>;
 
 const OUTCOME_LABELS: Record<CodexBridgeWatchFetchOutcome, string> = {
   ok: '取得成功', '401': '認証失敗（401）', '403': '拒否（403）', timeout: 'timeout',
@@ -39,8 +48,34 @@ function readWatchList(value: unknown): ListData | null {
     || !(typeof value.data.currentConnectionId === 'string' || value.data.currentConnectionId === null)) return null;
   return {
     items: value.data.items.filter(isWatchSnapshot),
+    events: Array.isArray(value.data.events) ? value.data.events.filter(isCodexBridgeTerminalEvent) : [],
     currentConnectionId: value.data.currentConnectionId,
   };
+}
+
+function readFinalAnswer(value: unknown): CodexBridgeFinalAnswerResult | null {
+  if (!isRecord(value) || value.ok !== true || !isRecord(value.data)) return null;
+  const data = value.data;
+  if (data.status === 'retrieved' && typeof data.text === 'string' && data.text.length <= 256 * 1024
+    && data.completeness === 'unconfirmed') {
+    return { status: 'retrieved', text: data.text, completeness: 'unconfirmed' };
+  }
+  if (data.status === 'no-final-answer' && data.completeness === 'unconfirmed') {
+    return { status: 'no-final-answer', completeness: 'unconfirmed' };
+  }
+  if (data.status === 'pending') return { status: 'pending' };
+  if (data.status === 'incomplete' && ['history-too-large', 'text-too-large', 'malformed-history', 'turn-not-found',
+    'multiple-matching-turns', 'multiple-final-answers'].includes(String(data.reason))
+    && data.completeness === 'unconfirmed') {
+    return { status: 'incomplete', reason: data.reason as Extract<CodexBridgeFinalAnswerResult, { status: 'incomplete' }>['reason'], completeness: 'unconfirmed' };
+  }
+  if (data.status === 'failed' && ['connection-changed', 'event-not-found', 'authentication-required', 'forbidden',
+    'endpoint-not-found', 'session-expired', 'http-error', 'disconnected', 'timeout', 'protocol-error',
+    'protocol-version-unsupported', 'readonly-tool-unavailable', 'readonly-probe-failed', 'permission-required',
+    'settings-unavailable', 'unknown-error'].includes(String(data.reason))) {
+    return { status: 'failed', reason: data.reason as Extract<CodexBridgeFinalAnswerResult, { status: 'failed' }>['reason'] };
+  }
+  return null;
 }
 
 function dateLabel(value: string | null): string {
@@ -69,10 +104,16 @@ function connectionLabel(connectionId: string): string {
 
 export function CodexBridgeWatchPanel({ selected, foregroundEnabled }: Props) {
   const [items, setItems] = useState<readonly CodexBridgeWatchSnapshot[]>([]);
+  const [events, setEvents] = useState<readonly CodexBridgeTerminalEvent[]>([]);
   const [currentConnectionId, setCurrentConnectionId] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState('');
   const [error, setError] = useState('');
+  const [selectedEventId, setSelectedEventId] = useState('');
+  const [answer, setAnswer] = useState<Readonly<{ eventId: string; result: CodexBridgeFinalAnswerResult }> | null>(null);
+  const [answerBusy, setAnswerBusy] = useState(false);
+  const [answerMessage, setAnswerMessage] = useState('');
   const listGeneration = useRef(0);
+  const answerGeneration = useRef(0);
 
   async function refreshList() {
     const generation = ++listGeneration.current;
@@ -82,6 +123,9 @@ export function CodexBridgeWatchPanel({ selected, foregroundEnabled }: Props) {
       const data = readWatchList(response);
       if (!data) return;
       setItems(data.items);
+      setEvents(data.events);
+      setSelectedEventId((current) => data.events.some((event) => event.eventId === current) ? current : '');
+      setAnswer((current) => current && data.events.some((event) => event.eventId === current.eventId) ? current : null);
       setCurrentConnectionId(data.currentConnectionId);
     } catch {
       if (generation === listGeneration.current) setError('監視一覧を読み取れません。');
@@ -89,9 +133,13 @@ export function CodexBridgeWatchPanel({ selected, foregroundEnabled }: Props) {
   }
 
   function acceptStoredItems(value: unknown) {
-    if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.items)) return;
+    if (!isRecord(value) || (value.version !== 1 && value.version !== 2) || !Array.isArray(value.items)) return;
     listGeneration.current += 1;
     setItems(value.items.filter(isWatchSnapshot));
+    const storedEvents = Array.isArray(value.events) ? value.events.filter(isCodexBridgeTerminalEvent) : [];
+    setEvents(storedEvents);
+    setSelectedEventId((current) => storedEvents.some((event) => event.eventId === current) ? current : '');
+    setAnswer((current) => current && storedEvents.some((event) => event.eventId === current.eventId) ? current : null);
   }
 
   useEffect(() => {
@@ -116,6 +164,9 @@ export function CodexBridgeWatchPanel({ selected, foregroundEnabled }: Props) {
           const data = readWatchList(response);
           if (data) {
             setItems(data.items);
+            setEvents(data.events);
+            setSelectedEventId((current) => data.events.some((event) => event.eventId === current) ? current : '');
+            setAnswer((current) => current && data.events.some((event) => event.eventId === current.eventId) ? current : null);
             setCurrentConnectionId(data.currentConnectionId);
           }
         })
@@ -175,8 +226,126 @@ export function CodexBridgeWatchPanel({ selected, foregroundEnabled }: Props) {
     }
   }
 
+  function selectEvent(eventId: string) {
+    answerGeneration.current += 1;
+    setSelectedEventId(eventId);
+    setAnswer(null);
+    setAnswerBusy(false);
+    setAnswerMessage('');
+  }
+
+  async function fetchSelectedAnswer() {
+    const event = events.find((candidate) => candidate.eventId === selectedEventId);
+    if (!event) return;
+    if (event.connectionId !== currentConnectionId) {
+      setAnswer({ eventId: event.eventId, result: { status: 'failed', reason: 'connection-changed' } });
+      setAnswerMessage('');
+      return;
+    }
+    const generation = ++answerGeneration.current;
+    setAnswerBusy(true);
+    setAnswer(null);
+    setAnswerMessage('');
+    try {
+      const response: unknown = await chrome.runtime.sendMessage({
+        type: CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER,
+        eventId: event.eventId,
+      });
+      if (generation !== answerGeneration.current || selectedEventId !== event.eventId) return;
+      const result = readFinalAnswer(response);
+      setAnswer({ eventId: event.eventId, result: result ?? { status: 'failed', reason: 'protocol-error' } });
+    } catch {
+      if (generation === answerGeneration.current && selectedEventId === event.eventId) {
+        setAnswer({ eventId: event.eventId, result: { status: 'failed', reason: 'unknown-error' } });
+      }
+    } finally {
+      if (generation === answerGeneration.current) setAnswerBusy(false);
+    }
+  }
+
+  async function copyAnswer(text: string) {
+    setAnswerMessage('');
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+      await navigator.clipboard.writeText(text);
+      setAnswerMessage('最終回答をコピーしました。');
+    } catch {
+      setAnswerMessage('コピーできませんでした。ブラウザのクリップボード権限を確認してください。');
+    }
+  }
+
+  function insertAnswer(text: string) {
+    setAnswerMessage('');
+    const environment = getBrowserEditorEnvironment();
+    const snapshot = captureSelectionForPaste(environment);
+    const result = insertAtCaret(text, environment, snapshot);
+    if (result.ok) {
+      setAnswerMessage('現在のChatGPT入力欄へ挿入しました。送信はしていません。');
+      return;
+    }
+    const labels: Record<string, string> = {
+      'ime-composing': 'IME変換中のため挿入しませんでした。',
+      'composer-changed': '入力欄が切り替わったため挿入しませんでした。',
+      'editor-not-found': 'ChatGPT入力欄が見つからないため挿入しませんでした。',
+      'editor-hidden': 'ChatGPT入力欄が表示されていないため挿入しませんでした。',
+      'editor-disabled': 'ChatGPT入力欄が編集できないため挿入しませんでした。',
+      'selection-invalid': '入力位置を確認できないため挿入しませんでした。',
+      'edit-rejected': 'ChatGPT入力欄が挿入を受け付けませんでした。',
+      'edit-unconfirmed': '挿入結果を確認できないため、再試行しませんでした。',
+      'unexpected-error': '挿入結果を確認できないため、再試行しませんでした。',
+      'complex-content': '複雑な入力欄を確認できないため挿入しませんでした。',
+    };
+    setAnswerMessage(labels[result.reason] ?? '入力欄へ挿入できませんでした。');
+  }
+
+  function eventStatusLabel(event: CodexBridgeTerminalEvent): string {
+    const state: Record<CodexBridgeTerminalEvent['notificationState'], string> = {
+      pending: '音声通知結果不明（再試行なし）', requested: '音声要求済み（再生結果不明、再試行なし）',
+      played: '音声再生成功', skipped: event.notificationReason === 'disabled' ? '音声通知無効' : '音声通知スキップ',
+      failed: '音声再生失敗',
+    };
+    return state[event.notificationState];
+  }
+
+  function eventKindLabel(status: CodexBridgeTerminalEvent['status']): string {
+    return status === 'completed' ? '完了' : status === 'failed' ? '失敗' : '中断';
+  }
+
+  function finalAnswerLabel(result: CodexBridgeFinalAnswerResult): string {
+    if (result.status === 'retrieved') return '本文を取得しました。完全性は未確認です。';
+    if (result.status === 'no-final-answer') return 'このturnのfinal_answerは見つかりませんでした。完全性は未確認です。';
+    if (result.status === 'pending') return 'turnが未完了のため、取得を保留しました。';
+    if (result.status === 'incomplete') {
+      const labels: Record<typeof result.reason, string> = {
+        'history-too-large': '履歴または本文が上限を超えたため、結果は不完全です。',
+        'text-too-large': '本文が上限を超えたため、無言で切り詰めず取得を止めました。',
+        'malformed-history': '履歴形式を確認できないため、最終回答を特定できません。',
+        'turn-not-found': '指定turnを履歴内で確認できません。履歴応答の切り詰め情報がないため不完全です。',
+        'multiple-matching-turns': '指定turnの候補が複数あり、回答を特定できません。',
+        'multiple-final-answers': '最終回答候補が複数あり、本文を選べません。',
+      };
+      return labels[result.reason];
+    }
+    const labels: Record<typeof result.reason, string> = {
+      'connection-changed': '接続先がイベント発生時から変わったため取得しませんでした。',
+      'event-not-found': '選択したイベントが台帳にありません。',
+      'authentication-required': '認証に失敗しました。', forbidden: 'Bridgeから拒否されました。',
+      'endpoint-not-found': 'MCP endpointが見つかりません。', 'session-expired': 'MCP sessionが失効しました。',
+      'http-error': 'BridgeからHTTPエラーが返りました。', disconnected: 'Bridgeに接続できません。',
+      timeout: 'Bridgeへの要求がタイムアウトしました。', 'protocol-error': 'Bridgeの応答形式を確認できません。',
+      'protocol-version-unsupported': 'MCP protocol versionに対応していません。',
+      'readonly-tool-unavailable': 'codex_threads読み取りtoolがありません。',
+      'readonly-probe-failed': 'codex_threadsの読み取りに失敗しました。',
+      'permission-required': '接続先へのアクセス権限がありません。',
+      'settings-unavailable': '接続設定を読み取れません。', 'unknown-error': '最終回答を取得できませんでした。',
+    };
+    return labels[result.reason];
+  }
+
   const selectedWatch = selected && items.find((item) => item.connectionId === currentConnectionId
     && item.targetId === selected.targetId && item.threadId === selected.threadId);
+  const selectedEvent = events.find((event) => event.eventId === selectedEventId) ?? null;
+  const displayedAnswer = answer && selectedEvent && answer.eventId === selectedEvent.eventId ? answer.result : null;
 
   return (
     <section className="codex-bridge-watch" aria-label="CodexBridgeスレッド監視">
@@ -218,6 +387,45 @@ export function CodexBridgeWatchPanel({ selected, foregroundEnabled }: Props) {
           </li>;
         })}
       </ul>}
+      <div className="codex-bridge-event-heading">
+        <h3>終了イベント</h3>
+        <span>{events.length} / 128</span>
+      </div>
+      {events.length === 0 && <p className="codex-bridge-empty">通知イベントはありません。</p>}
+      {events.length > 0 && <ul className="codex-bridge-event-list" aria-label="監視終了イベント一覧">
+        {events.map((event) => <li key={event.eventId} className="codex-bridge-event-item">
+          <button type="button" className="codex-bridge-event-select" aria-pressed={event.eventId === selectedEventId}
+            onClick={() => selectEvent(event.eventId)}>
+            <strong>{eventKindLabel(event.status)} · {event.targetId} / {event.threadId}</strong>
+            <small>turn: {event.turnId} · 検出: {dateLabel(event.detectedAt)}</small>
+            <small>{eventStatusLabel(event)}</small>
+            {event.notificationReason && <small>通知理由: {event.notificationReason}</small>}
+            {event.connectionId !== currentConnectionId && <small>イベント発生時と現在の接続先が異なります。</small>}
+          </button>
+        </li>)}
+      </ul>}
+      {selectedEvent && <div className="codex-bridge-final-answer">
+        <strong>選択イベント: {eventKindLabel(selectedEvent.status)} · {selectedEvent.turnId}</strong>
+        <button type="button" className="codex-bridge-button" onClick={() => { void fetchSelectedAnswer(); }}
+          disabled={answerBusy || selectedEvent.connectionId !== currentConnectionId}>
+          {answerBusy ? '最終回答を取得中…' : '最終回答を取得'}
+        </button>
+        {selectedEvent.connectionId !== currentConnectionId && <p className="codex-bridge-note">イベント発生時のBridge接続先と現在の接続先が一致しません。</p>}
+        {displayedAnswer && <>
+          <p className="codex-bridge-note" role="status">{finalAnswerLabel(displayedAnswer)}</p>
+          {displayedAnswer.status === 'retrieved' && <>
+            <p className="codex-bridge-note">Bridge応答には切詰め情報がないため、取得本文の完全性は確認できません。</p>
+            <div className="codex-bridge-answer-actions">
+              <button type="button" className="codex-bridge-button" onMouseDown={(event) => event.preventDefault()}
+                onClick={() => { void copyAnswer(displayedAnswer.text); }}>コピー</button>
+              <button type="button" className="codex-bridge-button" onMouseDown={(event) => event.preventDefault()}
+                onClick={() => insertAnswer(displayedAnswer.text)}>ChatGPT入力欄へ挿入</button>
+            </div>
+            <pre className="codex-bridge-answer-text">{displayedAnswer.text}</pre>
+          </>}
+        </>}
+        {answerMessage && <p className="codex-bridge-note" role="status">{answerMessage}</p>}
+      </div>}
     </section>
   );
 }

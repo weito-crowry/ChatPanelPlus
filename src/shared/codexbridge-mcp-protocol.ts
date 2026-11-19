@@ -28,6 +28,7 @@ export type CodexBridgeMcpDiagnosticCode =
   | 'protocol-version-unsupported'
   | 'readonly-tool-unavailable'
   | 'readonly-probe-failed'
+  | 'response-too-large'
   | 'storage-error'
   | 'unknown-error';
 

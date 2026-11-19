@@ -3,20 +3,20 @@ import {
   CODEX_BRIDGE_THREAD_MONITOR_FOREGROUND_MS,
   CODEX_BRIDGE_THREAD_MONITOR_MAX_WATCHES,
   CODEX_BRIDGE_THREAD_MONITOR_MINUTES,
-  CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY,
+  codexBridgeTerminalEventKey,
   codexBridgeWatchKey,
-  isCodexBridgeWatchFetchOutcome,
   isCodexBridgeWatchIdentifier,
+  type CodexBridgeNotificationReason,
+  type CodexBridgeNotificationState,
+  type CodexBridgeTerminalEvent,
+  type CodexBridgeFinalAnswerResult,
   type CodexBridgeWatchFetchOutcome,
   type CodexBridgeWatchSnapshot,
   type CodexBridgeWatchTurnChange,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import type { CodexBridgeThreadStatus } from '../shared/codexbridge-mcp-protocol.ts';
-
-type LocalStorageLike = Readonly<{
-  get(keys: string[]): Promise<Record<string, unknown>>;
-  set(items: Record<string, unknown>): Promise<void>;
-}>;
+import { detectCodexBridgeTerminalStatus } from './thread-monitor-events.ts';
+import { CodexBridgeThreadMonitorStorage, type LocalStorageLike } from './thread-monitor-storage.ts';
 
 type AlarmLike = Readonly<{
   get(name: string): Promise<unknown>;
@@ -27,7 +27,15 @@ type AlarmLike = Readonly<{
 export type CodexBridgeMonitorAccess = Readonly<{
   connectionId: string | null;
   readStatus?: (targetId: string, threadId: string) => Promise<CodexBridgeThreadStatus>;
+  readFinalAnswer?: (targetId: string, threadId: string, turnId: string) => Promise<CodexBridgeFinalAnswerResult>;
   failure?: CodexBridgeWatchFetchOutcome;
+}>;
+
+export type CodexBridgeNotificationPreparation =
+  | Readonly<{ state: 'skipped' | 'failed'; reason: CodexBridgeNotificationReason }>
+  | Readonly<{ state: 'ready'; play: () => Promise<Readonly<{ ok: true } | { ok: false; reason: CodexBridgeNotificationReason }>> }>;
+export type CodexBridgeNotificationHandler = Readonly<{
+  prepare: (event: CodexBridgeTerminalEvent) => Promise<CodexBridgeNotificationPreparation>;
 }>;
 
 type PollCadence = 'foreground' | 'background';
@@ -37,63 +45,13 @@ type MonitorOptions = Readonly<{
   maxPollsPerCycle?: number;
   maxConcurrentRequests?: number;
   gapThresholdMs?: number;
+  createEventId?: () => string;
+  notification?: CodexBridgeNotificationHandler;
 }>;
-
-type StoredValue = Readonly<{ version: 1; items: readonly CodexBridgeWatchSnapshot[] }>;
-type StorageMutation<T> = (items: CodexBridgeWatchSnapshot[]) => Readonly<{ items: CodexBridgeWatchSnapshot[]; result: T }>;
 
 const MAX_POLL_FAILURES = 8;
 const MAX_BACKOFF_MS = 5 * 60_000;
 const MAX_POLLS_PER_TARGET_PER_CYCLE = 3;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isStatus(value: unknown): value is CodexBridgeWatchSnapshot['lastTurnStatus'] {
-  return value === null || value === 'completed' || value === 'failed' || value === 'interrupted'
-    || value === 'in_progress' || value === 'unknown';
-}
-
-function isBaselineTurnKind(value: unknown): value is CodexBridgeWatchSnapshot['baselineTurnKind'] {
-  return value === 'turn' || value === 'none' || value === 'unknown';
-}
-
-function nullableText(value: unknown, maxLength = 512): value is string | null {
-  return value === null || (typeof value === 'string' && value.length <= maxLength
-    && !Array.from(value).some((character) => {
-      const code = character.codePointAt(0) ?? 0;
-      return code <= 0x1f || (code >= 0x7f && code <= 0x9f);
-    }));
-}
-
-function readSnapshot(value: unknown): CodexBridgeWatchSnapshot | null {
-  if (!isRecord(value)) return null;
-  const baselineTurnKind = value.baselineTurnKind === undefined
-    ? (value.baselineTurnId === null ? 'unknown' : 'turn')
-    : value.baselineTurnKind;
-  if (!isBaselineTurnKind(baselineTurnKind)
-    || (baselineTurnKind === 'turn') !== (typeof value.baselineTurnId === 'string')
-    || (baselineTurnKind === 'none' && value.baselineCaptured !== true)
-    || (value.baselineCaptured === false && baselineTurnKind !== 'unknown')
-    || typeof value.watchId !== 'string' || value.watchId.length > 96
-    || !isCodexBridgeWatchIdentifier(value.connectionId) || value.connectionId.length > 96
-    || !isCodexBridgeWatchIdentifier(value.targetId) || !isCodexBridgeWatchIdentifier(value.threadId)
-    || value.enabled !== true || typeof value.baselineCaptured !== 'boolean'
-    || !nullableText(value.baselineTurnId) || !isStatus(value.baselineTurnStatus)
-    || !nullableText(value.lastObservedTurnId) || !isStatus(value.lastTurnStatus)
-    || !nullableText(value.statusState, 80) || !nullableText(value.lastTurnEvidence, 80)
-    || !nullableText(value.currentExecutionState, 80)
-    || !nullableText(value.currentExecutionEvidence, 80) || !nullableText(value.currentExecutionTurnId)
-    || (typeof value.needsAttention !== 'boolean' && value.needsAttention !== null)
-    || !['baseline', 'same', 'advanced', 'gap', 'unknown'].includes(String(value.turnChange))
-    || !nullableText(value.observedAt, 40) || !nullableText(value.lastSuccessAt, 40)
-    || !isCodexBridgeWatchFetchOutcome(value.fetchOutcome)
-    || !Number.isSafeInteger(value.nextPollAt) || (value.nextPollAt as number) < 0
-    || !Number.isSafeInteger(value.failureCount) || (value.failureCount as number) < 0
-    || (value.failureCount as number) > MAX_POLL_FAILURES) return null;
-  return { ...value, baselineTurnKind } as unknown as CodexBridgeWatchSnapshot;
-}
 
 function mapError(error: unknown): CodexBridgeWatchFetchOutcome {
   if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
@@ -138,16 +96,17 @@ export class CodexBridgeThreadMonitor {
   private readonly maxPollsPerCycle: number;
   private readonly maxConcurrentRequests: number;
   private readonly gapThresholdMs: number;
-  private storageTail: Promise<void> = Promise.resolve();
   private alarmTail: Promise<void> = Promise.resolve();
   private readonly pollFlights = new Map<string, Promise<void>>();
   private readonly targetTails = new Map<string, Promise<void>>();
   private readonly requestWaiters: Array<() => void> = [];
   private activeRequests = 0;
   private foregroundUntil = 0;
-  private readonly storage: LocalStorageLike;
+  private readonly storage: CodexBridgeThreadMonitorStorage;
   private readonly alarms: AlarmLike;
   private readonly resolveAccess: () => Promise<CodexBridgeMonitorAccess>;
+  private readonly createEventId: () => string;
+  private readonly notification: CodexBridgeNotificationHandler | undefined;
 
   constructor(
     storage: LocalStorageLike,
@@ -155,19 +114,29 @@ export class CodexBridgeThreadMonitor {
     resolveAccess: () => Promise<CodexBridgeMonitorAccess>,
     options: MonitorOptions = {},
   ) {
-    this.storage = storage;
+    this.storage = new CodexBridgeThreadMonitorStorage(storage);
     this.alarms = alarms;
     this.resolveAccess = resolveAccess;
     this.now = options.now ?? Date.now;
     this.createWatchId = options.createWatchId ?? (() => globalThis.crypto?.randomUUID?.()
       ?? `${this.now()}-${Math.random().toString(36).slice(2, 12)}`);
+    this.createEventId = options.createEventId ?? this.createWatchId;
+    this.notification = options.notification;
     this.maxPollsPerCycle = options.maxPollsPerCycle ?? 12;
     this.maxConcurrentRequests = options.maxConcurrentRequests ?? 3;
     this.gapThresholdMs = options.gapThresholdMs ?? 90_000;
   }
 
   async list(): Promise<readonly CodexBridgeWatchSnapshot[]> {
-    return this.withStorage(() => this.readItems());
+    return this.storage.listItems();
+  }
+
+  async listEvents(): Promise<readonly CodexBridgeTerminalEvent[]> {
+    return [...await this.storage.listEvents()].sort((left, right) => right.detectedAt.localeCompare(left.detectedAt));
+  }
+
+  async readEvent(eventId: string): Promise<CodexBridgeTerminalEvent | null> {
+    return this.storage.readEvent(eventId);
   }
 
   async read(connectionId: string, targetId: string, threadId: string): Promise<CodexBridgeWatchSnapshot | null> {
@@ -199,13 +168,13 @@ export class CodexBridgeThreadMonitor {
       needsAttention: null, turnChange: 'unknown', observedAt: null, lastSuccessAt: null,
       fetchOutcome: 'unknown', nextPollAt: this.now(), failureCount: 0,
     };
-    const result = await this.mutate<Readonly<{ item: CodexBridgeWatchSnapshot | null; created: boolean }>>((items) => {
+    const result = await this.storage.mutate<Readonly<{ item: CodexBridgeWatchSnapshot | null; created: boolean }>>((items, events) => {
       const existing = items.find((item) => codexBridgeWatchKey(item.connectionId, item.targetId, item.threadId) === key);
-      if (existing) return { items, result: { item: existing, created: false } };
+      if (existing) return { items, events, result: { item: existing, created: false } };
       if (items.length >= CODEX_BRIDGE_THREAD_MONITOR_MAX_WATCHES) {
-        return { items, result: { item: null, created: false } };
+        return { items, events, result: { item: null, created: false } };
       }
-      return { items: [...items, initial], result: { item: initial, created: true } };
+      return { items: [...items, initial], events, result: { item: initial, created: true } };
     });
     if (!result.item) return { ok: false, reason: 'watch-limit' };
     await this.syncAlarm();
@@ -217,9 +186,9 @@ export class CodexBridgeThreadMonitor {
 
   async stopWatch(connectionId: string, targetId: string, threadId: string): Promise<boolean> {
     const key = codexBridgeWatchKey(connectionId, targetId, threadId);
-    const removed = await this.mutate((items) => {
+    const removed = await this.storage.mutate((items, events) => {
       const next = items.filter((item) => codexBridgeWatchKey(item.connectionId, item.targetId, item.threadId) !== key);
-      return { items: next, result: next.length !== items.length };
+      return { items: next, events, result: next.length !== items.length };
     });
     if (removed) await this.syncAlarm();
     return removed;
@@ -299,11 +268,11 @@ export class CodexBridgeThreadMonitor {
 
   private async saveSuccess(item: CodexBridgeWatchSnapshot, status: CodexBridgeThreadStatus, cadence: PollCadence, interval?: number): Promise<void> {
     const now = this.now();
-    await this.mutate((items) => {
+    const event = await this.storage.mutate((items, events) => {
       const index = items.findIndex((candidate) => candidate.watchId === item.watchId
         && codexBridgeWatchKey(candidate.connectionId, candidate.targetId, candidate.threadId)
           === codexBridgeWatchKey(item.connectionId, item.targetId, item.threadId));
-      if (index < 0) return { items, result: undefined };
+      if (index < 0) return { items, events, result: null };
       const previous = items[index]!;
       const currentTurnId = status.lastTurn?.turnId ?? null;
       let baselineCaptured = previous.baselineCaptured;
@@ -343,17 +312,32 @@ export class CodexBridgeThreadMonitor {
       };
       const next = [...items];
       next[index] = success;
-      return { items: next, result: undefined };
+      const terminalStatus = detectCodexBridgeTerminalStatus(previous, success, this.gapThresholdMs);
+      if (!terminalStatus) return { items: next, events, result: null };
+      const eventKey = codexBridgeTerminalEventKey(success.connectionId, success.targetId, success.threadId,
+        success.lastObservedTurnId!, terminalStatus);
+      if (events.some((record) => codexBridgeTerminalEventKey(record.connectionId, record.targetId,
+        record.threadId, record.turnId, record.status) === eventKey)) {
+        return { items: next, events, result: null };
+      }
+      const created: CodexBridgeTerminalEvent = {
+        eventId: this.createEventId(), watchId: success.watchId, connectionId: success.connectionId,
+        targetId: success.targetId, threadId: success.threadId, turnId: success.lastObservedTurnId!,
+        status: terminalStatus, detectedAt: timestamp(now) ?? new Date(now).toISOString(),
+        notificationState: 'pending', notificationReason: null,
+      };
+      return { items: next, events: [...events, created], result: created };
     });
+    if (event) await this.notifyForEvent(event);
   }
 
   private async saveFailure(item: CodexBridgeWatchSnapshot, outcome: CodexBridgeWatchFetchOutcome, cadence: PollCadence): Promise<void> {
     const now = this.now();
-    await this.mutate((items) => {
+    await this.storage.mutate((items, events) => {
       const index = items.findIndex((candidate) => candidate.watchId === item.watchId
         && codexBridgeWatchKey(candidate.connectionId, candidate.targetId, candidate.threadId)
           === codexBridgeWatchKey(item.connectionId, item.targetId, item.threadId));
-      if (index < 0) return { items, result: undefined };
+      if (index < 0) return { items, events, result: undefined };
       const previous = items[index]!;
       const failureCount = Math.min(MAX_POLL_FAILURES, previous.failureCount + 1);
       const backoff = Math.min(MAX_BACKOFF_MS, 30_000 * (2 ** Math.min(failureCount - 1, 4)));
@@ -362,37 +346,53 @@ export class CodexBridgeThreadMonitor {
         ...previous, observedAt: timestamp(now), fetchOutcome: outcome, failureCount,
         nextPollAt: now + Math.max(backoff, cadence === 'foreground' ? CODEX_BRIDGE_THREAD_MONITOR_FOREGROUND_MS : 30_000),
       };
-      return { items: next, result: undefined };
+      return { items: next, events, result: undefined };
     });
   }
 
-  private async readItems(): Promise<readonly CodexBridgeWatchSnapshot[]> {
-    const stored = await this.storage.get([CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY]);
-    const value = stored[CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY];
-    if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.items)) return [];
-    const items = value.items.map(readSnapshot).filter((item): item is CodexBridgeWatchSnapshot => item !== null);
-    const unique = new Map<string, CodexBridgeWatchSnapshot>();
-    for (const item of items.slice(0, CODEX_BRIDGE_THREAD_MONITOR_MAX_WATCHES)) {
-      const key = codexBridgeWatchKey(item.connectionId, item.targetId, item.threadId);
-      if (!unique.has(key)) unique.set(key, item);
+  private async notifyForEvent(event: CodexBridgeTerminalEvent): Promise<void> {
+    let preparation: CodexBridgeNotificationPreparation;
+    try {
+      preparation = this.notification
+        ? await this.notification.prepare(event)
+        : { state: 'failed', reason: 'settings-unavailable' };
+    } catch {
+      await this.updateNotification(event.eventId, 'failed', 'settings-unavailable');
+      return;
     }
-    return [...unique.values()];
+    if (preparation.state !== 'ready') {
+      await this.updateNotification(event.eventId, preparation.state, preparation.reason);
+      return;
+    }
+    const reserved = await this.updateNotification(event.eventId, 'requested', null, true);
+    if (!reserved) return;
+    try {
+      const result = await preparation.play();
+      await this.updateNotification(event.eventId, result.ok ? 'played' : 'failed', result.ok ? null : result.reason);
+    } catch {
+      await this.updateNotification(event.eventId, 'failed', 'playback-failed');
+    }
   }
 
-  private mutate<T>(mutation: StorageMutation<T>): Promise<T> {
-    return this.withStorage(async () => {
-      const current = [...await this.readItems()];
-      const changed = mutation(current);
-      const value: StoredValue = { version: 1, items: changed.items.slice(0, CODEX_BRIDGE_THREAD_MONITOR_MAX_WATCHES) };
-      await this.storage.set({ [CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY]: value });
-      return changed.result;
-    });
-  }
-
-  private withStorage<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.storageTail.then(operation, operation);
-    this.storageTail = result.then(() => undefined, () => undefined);
-    return result;
+  private async updateNotification(
+    eventId: string,
+    state: CodexBridgeNotificationState,
+    reason: CodexBridgeNotificationReason | null,
+    reservePending = false,
+  ): Promise<boolean> {
+    try {
+      return await this.storage.mutate((items, events) => {
+        const index = events.findIndex((event) => event.eventId === eventId);
+        if (index < 0 || (reservePending && events[index]!.notificationState !== 'pending')) {
+          return { items, events, result: false };
+        }
+        const next = [...events];
+        next[index] = { ...events[index]!, notificationState: state, notificationReason: reason };
+        return { items, events: next, result: true };
+      });
+    } catch {
+      return false;
+    }
   }
 
   private syncAlarm(items?: readonly CodexBridgeWatchSnapshot[]): Promise<void> {

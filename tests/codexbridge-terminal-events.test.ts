@@ -1,0 +1,255 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { CODEX_BRIDGE_THREAD_MONITOR_ALARM, CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY } from '../src/shared/codexbridge-thread-monitor-protocol.ts';
+import { CodexBridgeThreadMonitor, type CodexBridgeNotificationHandler } from '../src/background/thread-monitor.ts';
+import type { CodexBridgeLastTurn, CodexBridgeThreadStatus } from '../src/shared/codexbridge-mcp-protocol.ts';
+
+class MemoryStorage {
+  readonly values: Record<string, unknown> = {};
+  async get(keys: string[]): Promise<Record<string, unknown>> {
+    return Object.fromEntries(keys.filter((key) => key in this.values).map((key) => [key, structuredClone(this.values[key])]));
+  }
+  async set(items: Record<string, unknown>): Promise<void> { Object.assign(this.values, structuredClone(items)); }
+}
+
+class MemoryAlarms {
+  active = false;
+  async get(name: string): Promise<unknown> { return this.active && name === CODEX_BRIDGE_THREAD_MONITOR_ALARM ? { name } : undefined; }
+  create(): void { this.active = true; }
+  async clear(): Promise<boolean> { this.active = false; return true; }
+}
+
+function status(
+  turnId: string | null,
+  state: CodexBridgeLastTurn['status'] = null,
+  currentExecution: CodexBridgeThreadStatus['currentExecution'] = null,
+  evidence: string | null = 'live',
+  threadState: string | null = 'idle',
+): CodexBridgeThreadStatus {
+  return {
+    targetId: 'target-1', threadId: 'thread-1', state: threadState, currentExecution, needsAttention: false,
+    lastTurn: turnId === null ? null : {
+      turnId, status: state, category: null, evidence, reason: null, observedAt: null, needsAttention: false,
+    },
+  };
+}
+
+function harness(initial: CodexBridgeThreadStatus, notification?: CodexBridgeNotificationHandler, area = new MemoryStorage()) {
+  const storage = area;
+  const alarms = new MemoryAlarms();
+  let current = initial;
+  let failure: Error | null = null;
+  let now = Date.parse('2026-11-20T00:00:00.000Z');
+  let sequence = 0;
+  let calls = 0;
+  const monitor = new CodexBridgeThreadMonitor(storage, alarms, async () => ({
+    connectionId: 'connection-A',
+    async readStatus() { calls += 1; if (failure) throw failure; return current; },
+  }), {
+    now: () => now,
+    createWatchId: () => `id-${++sequence}`,
+    createEventId: () => `event-${++sequence}`,
+    notification,
+  });
+  return {
+    monitor, storage, alarms,
+    setStatus(value: CodexBridgeThreadStatus) { current = value; },
+    setFailure(value: Error | null) { failure = value; },
+    advance(milliseconds: number) { now += milliseconds; },
+    get calls() { return calls; },
+    now: () => now,
+  };
+}
+
+test('a completed baseline does not create an event or prepare audio', async () => {
+  let preparationCalls = 0;
+  const notification: CodexBridgeNotificationHandler = {
+    async prepare() {
+      preparationCalls += 1;
+      return { state: 'ready', async play() { return { ok: true }; } };
+    },
+  };
+  const h = harness(status('turn-a', 'completed'), notification);
+  const result = await h.monitor.startWatch('target-1', 'thread-1');
+  assert.equal(result.ok, true);
+  assert.equal((await h.monitor.listEvents()).length, 0);
+  assert.equal(preparationCalls, 0);
+  assert.ok(CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY in h.storage.values);
+});
+
+test('an actively observed baseline turn and a later new terminal turn notify once', async () => {
+  let notificationCalls = 0;
+  const storage = new MemoryStorage();
+  const notification: CodexBridgeNotificationHandler = {
+    async prepare() {
+      return { state: 'ready', async play() {
+        const saved = storage.values[CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY] as { events: Array<{ notificationState: string }> };
+        assert.equal(saved.events.at(-1)?.notificationState, 'requested');
+        notificationCalls += 1;
+        return { ok: true };
+      } };
+    },
+  };
+  const h = harness(status('turn-a', 'in_progress'), notification, storage);
+  const started = await h.monitor.startWatch('target-1', 'thread-1');
+  assert.equal(started.ok, true);
+  assert.equal((await h.monitor.listEvents()).length, 0);
+  h.setStatus(status('turn-a', 'completed'));
+  h.advance(30_000);
+  await Promise.all([h.monitor.refreshAlarm(), h.monitor.refreshForeground(), h.monitor.refreshForeground()]);
+  const events = await h.monitor.listEvents();
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.status, 'completed');
+  assert.equal(events[0]?.turnId, 'turn-a');
+  assert.equal(events[0]?.notificationState, 'played');
+  assert.equal(notificationCalls, 1);
+});
+
+test('a fresh worker restores the ledger without repeating its audio request', async () => {
+  let notificationCalls = 0;
+  const notification: CodexBridgeNotificationHandler = {
+    async prepare() { return { state: 'ready', async play() { notificationCalls += 1; return { ok: true }; } }; },
+  };
+  const h = harness(status('turn-a', 'in_progress'), notification);
+  await h.monitor.startWatch('target-1', 'thread-1');
+  h.setStatus(status('turn-a', 'completed'));
+  h.advance(30_000);
+  await h.monitor.refreshAlarm();
+  const restarted = new CodexBridgeThreadMonitor(h.storage, h.alarms, async () => ({
+    connectionId: 'connection-A', async readStatus() { return status('turn-a', 'completed'); },
+  }), { now: () => h.now() + 15_000, notification });
+  await restarted.restore();
+  assert.equal((await restarted.listEvents()).length, 1);
+  assert.equal(notificationCalls, 1);
+});
+
+test('disabled sound keeps the event visible and records that audio was skipped', async () => {
+  const notification: CodexBridgeNotificationHandler = {
+    async prepare() { return { state: 'skipped', reason: 'disabled' }; },
+  };
+  const h = harness(status('turn-a', 'in_progress'), notification);
+  await h.monitor.startWatch('target-1', 'thread-1');
+  h.setStatus(status('turn-a', 'completed'));
+  h.advance(30_000);
+  await h.monitor.refreshAlarm();
+  const event = (await h.monitor.listEvents())[0];
+  assert.equal(event?.status, 'completed');
+  assert.equal(event?.notificationState, 'skipped');
+  assert.equal(event?.notificationReason, 'disabled');
+});
+
+test('a persisted audio request survives worker interruption without automatic replay', async () => {
+  let releasePlay: ((result: { ok: false; reason: 'playback-failed' }) => void) | undefined;
+  let playStarted: (() => void) | undefined;
+  let replayAttempts = 0;
+  const started = new Promise<void>((resolve) => { playStarted = resolve; });
+  const storage = new MemoryStorage();
+  const notification: CodexBridgeNotificationHandler = {
+    async prepare() {
+      return { state: 'ready', play: async () => {
+        replayAttempts += 1;
+        playStarted?.();
+        return new Promise((resolve) => { releasePlay = resolve; });
+      } };
+    },
+  };
+  const h = harness(status('turn-a', 'in_progress'), notification, storage);
+  await h.monitor.startWatch('target-1', 'thread-1');
+  h.setStatus(status('turn-a', 'completed'));
+  h.advance(30_000);
+  const polling = h.monitor.refreshAlarm();
+  await started;
+  assert.equal((await h.monitor.listEvents())[0]?.notificationState, 'requested');
+
+  const restarted = new CodexBridgeThreadMonitor(h.storage, h.alarms, async () => ({
+    connectionId: 'connection-A', async readStatus() { return status('turn-a', 'completed'); },
+  }), { now: () => h.now() + 15_000, notification });
+  await restarted.restore();
+  assert.equal((await restarted.listEvents())[0]?.notificationState, 'requested');
+  assert.equal(replayAttempts, 1);
+  releasePlay?.({ ok: false, reason: 'playback-failed' });
+  await polling;
+  assert.equal((await restarted.listEvents())[0]?.notificationState, 'failed');
+  assert.equal(replayAttempts, 1);
+});
+
+test('new turns ending as failed or interrupted after a confirmed empty baseline are distinct events', async () => {
+  for (const terminal of ['failed', 'interrupted'] as const) {
+    const h = harness(status(null, null));
+    const started = await h.monitor.startWatch('target-1', 'thread-1');
+    assert.equal(started.ok, true);
+    h.setStatus(status(`turn-${terminal}`, terminal));
+    h.advance(30_000);
+    await h.monitor.refreshAlarm();
+    assert.equal((await h.monitor.listEvents())[0]?.status, terminal);
+  }
+});
+
+test('inferred, unknown, not_loaded, estimated, live-next-turn, authentication failure, and gaps never create a guessed event', async () => {
+  const uncertain: CodexBridgeThreadStatus[] = [
+    status('turn-a', 'completed', null, 'inferred'),
+    status('turn-a', 'completed', null, 'live', 'unknown'),
+    status('turn-a', 'completed', null, 'live', 'not_loaded'),
+    status('turn-a', 'completed', { turnId: 'turn-b', state: 'estimated_running', evidence: 'inferred', reason: null, observedAt: null, needsAttention: false }),
+    status('turn-a', 'completed', { turnId: 'turn-b', state: 'running', evidence: 'live', reason: null, observedAt: null, needsAttention: false }, 'live', 'running'),
+  ];
+  for (const next of uncertain) {
+    const h = harness(status('turn-a', 'in_progress'));
+    await h.monitor.startWatch('target-1', 'thread-1');
+    h.setStatus(next);
+    h.advance(30_000);
+    await h.monitor.refreshAlarm();
+    assert.equal((await h.monitor.listEvents()).length, 0);
+  }
+  const failedPoll = harness(status('turn-a', 'in_progress'));
+  await failedPoll.monitor.startWatch('target-1', 'thread-1');
+  failedPoll.setFailure(Object.assign(new Error('auth'), { code: 'authentication-required' }));
+  failedPoll.advance(30_000);
+  await failedPoll.monitor.refreshAlarm();
+  failedPoll.setStatus(status('turn-a', 'completed'));
+  failedPoll.setFailure(null);
+  failedPoll.advance(30_000);
+  await failedPoll.monitor.refreshAlarm();
+  assert.equal((await failedPoll.monitor.listEvents()).length, 0);
+
+  const gap = harness(status('turn-a', 'in_progress'));
+  await gap.monitor.startWatch('target-1', 'thread-1');
+  gap.setStatus(status('turn-a', 'completed'));
+  gap.advance(120_000);
+  await gap.monitor.refreshAlarm();
+  assert.equal((await gap.monitor.listEvents()).length, 0);
+});
+
+test('unwatch during a delayed status request ignores the old response and its event', async () => {
+  let resolveStatus: ((value: CodexBridgeThreadStatus) => void) | undefined;
+  let hold = false;
+  let now = Date.parse('2026-11-20T00:00:00.000Z');
+  const h = harness(status('turn-a', 'in_progress'));
+  const delayed = new CodexBridgeThreadMonitor(h.storage, h.alarms, async () => ({
+    connectionId: 'connection-A',
+    readStatus: async () => hold ? new Promise((resolve) => { resolveStatus = resolve; }) : status('turn-a', 'in_progress'),
+  }), { now: () => now });
+  await delayed.startWatch('target-1', 'thread-1');
+  hold = true;
+  now += 30_000;
+  const polling = delayed.refreshAlarm();
+  while (!resolveStatus) await new Promise((resolve) => setTimeout(resolve, 0));
+  await delayed.stopWatch('connection-A', 'target-1', 'thread-1');
+  resolveStatus(status('turn-a', 'completed'));
+  await polling;
+  assert.equal((await delayed.listEvents()).length, 0);
+});
+
+test('the event ledger stays bounded and pruning cannot re-notify the still-current terminal turn', async () => {
+  const h = harness(status(null, null));
+  await h.monitor.startWatch('target-1', 'thread-1');
+  for (let index = 0; index < 130; index += 1) {
+    h.setStatus(status(`turn-${index}`, 'completed'));
+    h.advance(30_000);
+    await h.monitor.refreshAlarm();
+  }
+  assert.equal((await h.monitor.listEvents()).length, 128);
+  h.advance(30_000);
+  await h.monitor.refreshAlarm();
+  assert.equal((await h.monitor.listEvents()).length, 128);
+});
