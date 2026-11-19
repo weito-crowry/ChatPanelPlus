@@ -64,13 +64,25 @@ export type CodexBridgeObservation = Readonly<{
   needsAttention: boolean | null;
 }>;
 
+export type CodexBridgeLastTurn = Readonly<{
+  turnId: string | null;
+  status: 'completed' | 'failed' | 'interrupted' | 'in_progress' | 'unknown' | null;
+  category: string | null;
+  evidence: string | null;
+  reason: string | null;
+  observedAt: string | null;
+  needsAttention: boolean | null;
+}>;
+
 export type CodexBridgeThread = Readonly<{
   targetId: string;
   id: string;
   title: string | null;
+  preview: string | null;
   cwd: string | null;
+  updatedAt: string | null;
   currentExecution: CodexBridgeObservation | null;
-  lastTurn: CodexBridgeObservation | null;
+  lastTurn: CodexBridgeLastTurn | null;
   needsAttention: boolean | null;
 }>;
 
@@ -84,7 +96,7 @@ export type CodexBridgeThreadStatus = Readonly<{
   threadId: string;
   state: string | null;
   currentExecution: CodexBridgeObservation | null;
-  lastTurn: CodexBridgeObservation | null;
+  lastTurn: CodexBridgeLastTurn | null;
   needsAttention: boolean | null;
 }>;
 

@@ -117,11 +117,15 @@ test('thread pages request bounded history-free data, deduplicate external rows 
     threads: [{
       id: 'thread-1', target_id: 'machine-1', name: 'Native', cwd: 'C:\\work',
       current_execution: { state: 'estimated_running', evidence: 'inferred', observed_at: '2026-11-20T01:00:00Z' },
-      last_turn: { state: 'not_loaded', evidence: 'unknown' },
+      last_turn: {
+        turn_id: '01a1f529-a890-7120-8925-27298b4e46dc', status: 'completed',
+        observed_at: '2026-11-19T19:37:59.464Z', reason: 'completed', category: 'success', evidence: 'live', needs_attention: false,
+      },
+      updatedAt: 1_795_117_079_464,
     }],
     external_threads: [
       { id: 'thread-1', target_id: 'machine-1', name: 'Duplicate', current_execution: { state: 'unknown' } },
-      { id: 'thread-2', target_id: 'machine-1', name: 'External', needs_attention: true },
+      { id: 'thread-2', target_id: 'machine-1', preview: 'External preview', updated_at: 1_795_117_079.464, needs_attention: true },
     ],
     next_cursor: 'cursor-2',
   };
@@ -132,11 +136,17 @@ test('thread pages request bounded history-free data, deduplicate external rows 
   const firstData = firstPage.data as CodexBridgeThreadPage;
   assert.equal(firstData.threads.length, 2);
   assert.deepEqual(firstData.threads[0], {
-    targetId: 'machine-1', id: 'thread-1', title: 'Native', cwd: 'C:\\work',
-    currentExecution: { state: 'estimated_running', evidence: 'inferred', reason: null, observedAt: '2026-11-20T01:00:00Z', needsAttention: null },
-    lastTurn: { state: 'not_loaded', evidence: 'unknown', reason: null, observedAt: null, needsAttention: null },
+    targetId: 'machine-1', id: 'thread-1', title: 'Native', preview: null, cwd: 'C:\\work', updatedAt: '2026-11-19T19:37:59.464Z',
+    currentExecution: { state: 'estimated_running', evidence: 'inferred', reason: null, observedAt: '2026-11-20T01:00:00.000Z', needsAttention: null },
+    lastTurn: {
+      turnId: '01a1f529-a890-7120-8925-27298b4e46dc', status: 'completed', category: 'success', evidence: 'live',
+      reason: 'completed', observedAt: '2026-11-19T19:37:59.464Z', needsAttention: false,
+    },
     needsAttention: null,
   });
+  assert.equal(firstData.threads[1]?.title, null);
+  assert.equal(firstData.threads[1]?.preview, 'External preview');
+  assert.equal(firstData.threads[1]?.updatedAt, '2026-11-19T19:37:59.464Z');
   assert.equal(firstData.threads[1]?.needsAttention, true);
   assert.equal(firstData.nextCursor, 'cursor-2');
   const call = first.requests.find(({ payload }) => payload.method === 'tools/call')?.payload;
@@ -161,7 +171,10 @@ test('empty pages are valid and selected status stays bound to its target/thread
   const statusClient = createMock({ status: {
     state: 'not_loaded',
     current_execution: { state: 'unknown', evidence: 'inferred', reason: 'execution_unconfirmed' },
-    last_turn: { state: 'not_loaded', needs_attention: false },
+    last_turn: {
+      turn_id: '01a1f529-a890-7120-8925-27298b4e46dc', status: 'completed', observed_at: '2026-11-19T19:37:59.464Z',
+      reason: 'completed', category: 'success', evidence: 'live', needs_attention: false,
+    },
     needs_attention: false,
   } });
   const status = await statusClient.handler({
@@ -172,11 +185,43 @@ test('empty pages are valid and selected status stays bound to its target/thread
   assert.deepEqual(status, { ok: true, data: {
     targetId: 'machine-remote', threadId: 'machine-remote::remote-thread', state: 'not_loaded',
     currentExecution: { state: 'unknown', evidence: 'inferred', reason: 'execution_unconfirmed', observedAt: null, needsAttention: null },
-    lastTurn: { state: 'not_loaded', evidence: null, reason: null, observedAt: null, needsAttention: false },
+    lastTurn: {
+      turnId: '01a1f529-a890-7120-8925-27298b4e46dc', status: 'completed', category: 'success', evidence: 'live',
+      reason: 'completed', observedAt: '2026-11-19T19:37:59.464Z', needsAttention: false,
+    },
     needsAttention: false,
   } });
   const call = statusClient.requests.find(({ payload }) => payload.method === 'tools/call')?.payload;
   assert.deepEqual((call?.params as { name: string; arguments: unknown }).arguments, { thread_id: 'machine-remote::remote-thread' });
+});
+
+test('last_turn status is distinct from current_execution and missing or invalid values remain unknown', async () => {
+  const mock = createMock({ threads: { threads: [
+    { id: 'completed', current_execution: { state: 'in_progress' }, last_turn: { status: 'completed', category: 'success' } },
+    { id: 'failed', last_turn: { status: 'failed', needs_attention: true } },
+    { id: 'interrupted', last_turn: { status: 'interrupted', reason: 'user_stop' } },
+    { id: 'unknown', last_turn: { status: 'future-status' } },
+    { id: 'missing-status', last_turn: { turn_id: 'turn-without-status' } },
+    { id: 'missing-last-turn' },
+    { id: 'invalid-time', updatedAt: 'not-a-timestamp', last_turn: { status: 'unknown', observed_at: 'invalid' } },
+    { id: 'invalid-number-time', updated_at: 1e20 },
+  ], external_threads: [], next_cursor: null } });
+  const response = await mock.handler({ type: CODEX_BRIDGE_MCP_GET_THREADS, targetId: 'machine-1' }, trustedSender);
+  assert.equal(response?.ok, true);
+  if (!response?.ok) return;
+  const page = response.data as CodexBridgeThreadPage;
+  const byId = new Map(page.threads.map((thread) => [thread.id, thread]));
+  assert.equal(byId.get('completed')?.currentExecution?.state, 'in_progress');
+  assert.equal(byId.get('completed')?.lastTurn?.status, 'completed');
+  assert.equal(byId.get('failed')?.lastTurn?.status, 'failed');
+  assert.equal(byId.get('interrupted')?.lastTurn?.status, 'interrupted');
+  assert.equal(byId.get('unknown')?.lastTurn?.status, 'unknown');
+  assert.equal(byId.get('missing-status')?.lastTurn?.status, null);
+  assert.equal(byId.get('missing-status')?.lastTurn?.turnId, 'turn-without-status');
+  assert.equal(byId.get('missing-last-turn')?.lastTurn, null);
+  assert.equal(byId.get('invalid-time')?.updatedAt, null);
+  assert.equal(byId.get('invalid-time')?.lastTurn?.observedAt, null);
+  assert.equal(byId.get('invalid-number-time')?.updatedAt, null);
 });
 
 test('malformed tool data and tool errors are explicit; target listing also accepts MCP SSE text results', async () => {

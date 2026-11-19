@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   CODEX_BRIDGE_MCP_GET_STATUS,
   CODEX_BRIDGE_MCP_GET_TARGETS,
   CODEX_BRIDGE_MCP_GET_THREADS,
   type CodexBridgeObservation,
+  type CodexBridgeLastTurn,
   type CodexBridgeReadFailureReason,
   type CodexBridgeReadResponse,
   type CodexBridgeTarget,
@@ -11,6 +12,7 @@ import {
   type CodexBridgeThreadPage,
   type CodexBridgeThreadStatus,
 } from '../shared/codexbridge-mcp-protocol.ts';
+import { CodexBridgeRequestTracker, mergeCodexBridgeThreads } from './codexbridge-request-tracker.ts';
 
 type ConnectionState = 'loading' | 'connected' | 'error';
 
@@ -43,12 +45,6 @@ function errorLabel(reason: unknown): string {
     : 'Bridgeから不正な応答が返りました。';
 }
 
-function mergeThreads(current: readonly CodexBridgeThread[], incoming: readonly CodexBridgeThread[]): CodexBridgeThread[] {
-  const merged = new Map(current.map((thread) => [`${thread.targetId}\u0000${thread.id}`, thread]));
-  for (const thread of incoming) merged.set(`${thread.targetId}\u0000${thread.id}`, thread);
-  return [...merged.values()];
-}
-
 function attentionLabel(value: boolean | null | undefined): string {
   return value === true ? '要対応' : value === false ? '不要' : '不明';
 }
@@ -66,6 +62,21 @@ function observationLabel(value: CodexBridgeObservation | null | undefined): str
   const state = stateLabel(value.state);
   const evidence = value.evidence === 'inferred' ? '推定' : value.evidence === 'live' ? 'ライブ観測' : value.evidence;
   return [state, evidence, value.reason, value.observedAt].filter(Boolean).join(' · ');
+}
+
+function lastTurnLabel(value: CodexBridgeLastTurn | null | undefined): string {
+  if (!value) return '不明（未取得）';
+  const status = value.status === 'completed' ? '完了' : value.status === 'failed' ? '失敗'
+    : value.status === 'interrupted' ? '中断' : value.status === 'in_progress' ? '進行中'
+      : value.status === 'unknown' ? '不明' : '不明（status未取得）';
+  return [status, value.category, value.evidence === 'inferred' ? '推定' : value.evidence === 'live' ? 'ライブ観測' : value.evidence,
+    value.reason, value.observedAt].filter(Boolean).join(' · ');
+}
+
+function dateLabel(value: string | null | undefined): string {
+  if (!value) return '不明';
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString('ja-JP') : '不明';
 }
 
 function isReadResponse<T>(value: unknown): value is CodexBridgeReadResponse<T> {
@@ -87,38 +98,75 @@ export function CodexBridgeList() {
   const [status, setStatus] = useState<CodexBridgeThreadStatus | null>(null);
   const [statusBusy, setStatusBusy] = useState(false);
   const [statusError, setStatusError] = useState('');
+  const selectedRef = useRef<CodexBridgeThread | null>(null);
+  const targetIdRef = useRef('');
+  const targetListGeneration = useRef(0);
+  const requestTracker = useRef<CodexBridgeRequestTracker | null>(null);
+  if (!requestTracker.current) requestTracker.current = new CodexBridgeRequestTracker();
+
+  function updateSelected(thread: CodexBridgeThread | null) {
+    selectedRef.current = thread;
+    setSelected(thread);
+  }
+
+  function invalidateThreadData() {
+    requestTracker.current?.invalidateThreads();
+    requestTracker.current?.invalidateStatus();
+    setThreads([]);
+    setNextCursor(null);
+    setThreadsLoaded(false);
+    setThreadsBusy(false);
+    setStatus(null);
+    setStatusBusy(false);
+    setThreadsError('');
+    setStatusError('');
+    setSelectedMissing(Boolean(selectedRef.current));
+  }
 
   async function refreshTargets() {
+    const generation = ++targetListGeneration.current;
     setConnection('loading');
     setConnectionMessage('対象マシンを確認しています。');
     try {
       const response: unknown = await chrome.runtime.sendMessage({ type: CODEX_BRIDGE_MCP_GET_TARGETS });
+      if (generation !== targetListGeneration.current) return;
       if (!isReadResponse<readonly CodexBridgeTarget[]>(response) || !response.ok || !Array.isArray(response.data)) {
         setConnection('error');
         setConnectionMessage(isReadResponse(response) && !response.ok
           ? errorLabel(response.reason)
           : 'Bridgeから不正な応答が返りました。');
+        invalidateThreadData();
         return;
       }
       const availableTargets = response.data;
-      const nextTargetId = availableTargets.some((target) => target.id === targetId)
-        ? targetId
+      const activeTargetId = targetIdRef.current;
+      const nextTargetId = availableTargets.some((target) => target.id === activeTargetId)
+        ? activeTargetId
         : availableTargets[0]?.id ?? '';
       setTargets(availableTargets);
       setConnection('connected');
       setConnectionMessage('Bridgeへ接続しています。');
-      if (nextTargetId !== targetId) {
+      if (nextTargetId !== activeTargetId) {
+        targetIdRef.current = nextTargetId;
+        requestTracker.current?.selectTarget(nextTargetId);
         setTargetId(nextTargetId);
         setThreads([]);
         setNextCursor(null);
         setThreadsLoaded(false);
-        setSelected(null);
+        setThreadsBusy(false);
+        setThreadsError('');
+        updateSelected(null);
         setSelectedMissing(false);
         setStatus(null);
+        setStatusBusy(false);
+        setStatusError('');
       }
     } catch {
-      setConnection('error');
-      setConnectionMessage('Bridgeへ接続できません。');
+      if (generation === targetListGeneration.current) {
+        setConnection('error');
+        setConnectionMessage('Bridgeへ接続できません。');
+        invalidateThreadData();
+      }
     }
   }
 
@@ -128,14 +176,27 @@ export function CodexBridgeList() {
 
   async function loadThreads(loadMore: boolean) {
     if (!targetId || threadsBusy || (loadMore && !nextCursor)) return;
+    const requestedTargetId = targetIdRef.current;
+    const requestedCursor = loadMore ? nextCursor : null;
+    const request = requestTracker.current!.beginThreads(requestedTargetId, requestedCursor);
+    if (!requestTracker.current!.isCurrentThreads(request)) return;
     setThreadsBusy(true);
     setThreadsError('');
+    if (!loadMore) {
+      setThreads([]);
+      setNextCursor(null);
+      setThreadsLoaded(false);
+      setSelectedMissing(Boolean(selectedRef.current));
+      setStatus(null);
+      setStatusError('');
+    }
     try {
       const response: unknown = await chrome.runtime.sendMessage({
         type: CODEX_BRIDGE_MCP_GET_THREADS,
-        targetId,
-        ...(loadMore && nextCursor ? { cursor: nextCursor } : {}),
+        targetId: requestedTargetId,
+        ...(requestedCursor ? { cursor: requestedCursor } : {}),
       });
+      if (!requestTracker.current!.isCurrentThreads(request)) return;
       if (!isReadResponse<CodexBridgeThreadPage>(response) || !response.ok
         || !isRecord(response.data) || !Array.isArray(response.data.threads)
         || !(response.data.nextCursor === null || typeof response.data.nextCursor === 'string')) {
@@ -144,39 +205,45 @@ export function CodexBridgeList() {
           : 'Bridgeから不正な応答が返りました。');
         return;
       }
-      const updated = loadMore ? mergeThreads(threads, response.data.threads) : [...response.data.threads];
+      if (!requestTracker.current!.setNextCursor(request, response.data.nextCursor)) return;
+      const updated = loadMore ? mergeCodexBridgeThreads(threads, response.data.threads) : [...response.data.threads];
       setThreads(updated);
       setNextCursor(response.data.nextCursor);
       setThreadsLoaded(true);
-      if (selected) {
-        const found = updated.find((thread) => thread.targetId === selected.targetId && thread.id === selected.id);
+      const selectedNow = selectedRef.current;
+      if (selectedNow) {
+        const found = updated.find((thread) => thread.targetId === selectedNow.targetId && thread.id === selectedNow.id);
         if (found) {
-          setSelected(found);
+          updateSelected(found);
           setSelectedMissing(false);
         } else if (!loadMore) {
           setSelectedMissing(true);
         }
       }
     } catch {
-      setThreadsError('Bridgeへ接続できません。');
+      if (requestTracker.current!.isCurrentThreads(request)) setThreadsError('Bridgeへ接続できません。');
     } finally {
-      setThreadsBusy(false);
+      if (requestTracker.current!.isLatestThreads(request)) setThreadsBusy(false);
     }
   }
 
   async function checkSelectedStatus() {
     if (!selected || statusBusy) return;
+    const requested = selected;
+    const request = requestTracker.current!.beginStatus(requested.targetId, requested.id);
     setStatusBusy(true);
     setStatusError('');
+    setStatus(null);
     try {
       const response: unknown = await chrome.runtime.sendMessage({
         type: CODEX_BRIDGE_MCP_GET_STATUS,
-        targetId: selected.targetId,
-        threadId: selected.id,
+        targetId: requested.targetId,
+        threadId: requested.id,
       });
+      if (!requestTracker.current!.isCurrentStatus(request)) return;
       if (!isReadResponse<CodexBridgeThreadStatus>(response) || !response.ok
-        || !isRecord(response.data) || response.data.targetId !== selected.targetId
-        || response.data.threadId !== selected.id) {
+        || !isRecord(response.data) || response.data.targetId !== requested.targetId
+        || response.data.threadId !== requested.id) {
         setStatusError(isReadResponse(response) && !response.ok
           ? errorLabel(response.reason)
           : 'Bridgeから不正な応答が返りました。');
@@ -184,13 +251,15 @@ export function CodexBridgeList() {
       }
       setStatus(response.data);
     } catch {
-      setStatusError('Bridgeへ接続できません。');
+      if (requestTracker.current!.isCurrentStatus(request)) setStatusError('Bridgeへ接続できません。');
     } finally {
-      setStatusBusy(false);
+      if (requestTracker.current!.isCurrentStatus(request)) setStatusBusy(false);
     }
   }
 
   const selectedStatus = selected && status?.targetId === selected.targetId && status.threadId === selected.id ? status : null;
+  const selectedTarget = selected ? targets.find((target) => target.id === selected.targetId) : null;
+  const selectedListRow = selected && threadsLoaded && !selectedMissing ? selected : null;
 
   return (
     <section className="codex-bridge" aria-label="CodexBridge一覧">
@@ -201,20 +270,23 @@ export function CodexBridgeList() {
         </button>
       </div>
       <p className={`codex-bridge-connection is-${connection}`} role="status">接続状態: {connectionMessage}</p>
-      {connection === 'error' && <p className="codex-bridge-error">{connectionMessage}</p>}
       {targets.length > 0 && (
         <label className="codex-bridge-target">
           対象マシン
           <select value={targetId} onChange={(event) => {
             const value = event.currentTarget.value;
+            targetIdRef.current = value;
+            requestTracker.current?.selectTarget(value);
             setTargetId(value);
             setThreads([]);
             setNextCursor(null);
             setThreadsLoaded(false);
+            setThreadsBusy(false);
             setThreadsError('');
-            setSelected(null);
+            updateSelected(null);
             setSelectedMissing(false);
             setStatus(null);
+            setStatusBusy(false);
             setStatusError('');
           }}>
             {targets.map((target) => (
@@ -248,13 +320,16 @@ export function CodexBridgeList() {
                 return (
                   <li key={`${thread.targetId}:${thread.id}`}>
                     <button type="button" className={`codex-bridge-thread${isSelected ? ' is-selected' : ''}`} onClick={() => {
-                      setSelected(thread);
+                      requestTracker.current?.selectThread(thread.targetId, thread.id);
+                      updateSelected(thread);
                       setSelectedMissing(false);
                       setStatus(null);
+                      setStatusBusy(false);
                       setStatusError('');
                     }}>
-                      <span>{thread.title ?? thread.id}</span>
-                      <small>{thread.currentExecution ? observationLabel(thread.currentExecution) : '実行状態: 不明'}</small>
+                      <span>{thread.title ?? thread.preview ?? thread.id}</span>
+                      <small>current_execution: {observationLabel(thread.currentExecution)}</small>
+                      <small>last_turn: {lastTurnLabel(thread.lastTurn)} · needs_attention: {attentionLabel(thread.needsAttention)}</small>
                     </button>
                   </li>
                 );
@@ -263,9 +338,18 @@ export function CodexBridgeList() {
           )}
           {selected && (
             <div className="codex-bridge-selected">
-              <strong>{selected.title ?? selected.id}</strong>
+              <strong>{selected.title ?? selected.preview ?? selected.id}</strong>
               <code>{selected.id}</code>
-              {selectedMissing && <p className="codex-bridge-note">選択中のthreadは現在の一覧ページにありません。完了状態ではなく、状態は未確認です。</p>}
+              <p className="codex-bridge-note">対象マシン: {selectedTarget?.name ?? '不明'} ({selected.targetId})</p>
+              <p className="codex-bridge-note">cwd: {selectedListRow?.cwd ?? '不明'}</p>
+              <p className="codex-bridge-note">最終更新: {dateLabel(selectedListRow?.updatedAt)}</p>
+              {selectedMissing && <p className="codex-bridge-note">
+                {threadsError || connection === 'error' || (threadsBusy && !threadsLoaded)
+                  ? 'thread一覧の更新を確認できていません。状態は未確認です。'
+                  : threadsLoaded
+                    ? '選択中のthreadは現在の一覧ページにありません。完了状態ではなく、状態は未確認です。'
+                    : 'thread一覧は未読込です。状態は未確認です。'}
+              </p>}
               <button type="button" className="codex-bridge-button" onClick={() => { void checkSelectedStatus(); }} disabled={statusBusy}>
                 {statusBusy ? '確認中…' : '選択threadの状態を手動確認'}
               </button>
@@ -273,12 +357,14 @@ export function CodexBridgeList() {
               <dl className="codex-bridge-status">
                 <dt>応答状態</dt>
                 <dd>{stateLabel(selectedStatus?.state)}</dd>
-                <dt>current_execution</dt>
-                <dd>{observationLabel(selectedStatus?.currentExecution ?? selected.currentExecution)}</dd>
-                <dt>last_turn</dt>
-                <dd>{observationLabel(selectedStatus?.lastTurn ?? selected.lastTurn)}</dd>
+                <dt>current_execution{selectedStatus ? '（手動確認）' : '（一覧取得時）'}</dt>
+                <dd>{observationLabel(selectedStatus ? selectedStatus.currentExecution : selectedListRow?.currentExecution)}</dd>
+                <dt>last_turn{selectedStatus ? '（手動確認）' : '（一覧取得時）'}</dt>
+                <dd>{lastTurnLabel(selectedStatus ? selectedStatus.lastTurn : selectedListRow?.lastTurn)}</dd>
+                <dt>last_turn.turn_id</dt>
+                <dd>{(selectedStatus ? selectedStatus.lastTurn : selectedListRow?.lastTurn)?.turnId ?? '不明'}</dd>
                 <dt>needs_attention</dt>
-                <dd>{attentionLabel(selectedStatus?.needsAttention ?? selected.needsAttention)}</dd>
+                <dd>{attentionLabel(selectedStatus ? selectedStatus.needsAttention : selectedListRow?.needsAttention)}</dd>
               </dl>
             </div>
           )}

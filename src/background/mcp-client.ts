@@ -2,6 +2,7 @@ import {
   CODEX_BRIDGE_MCP_PROTOCOL_VERSION,
   CODEX_BRIDGE_MCP_READ_ONLY_PROBE,
   isSupportedCodexBridgeMcpProtocolVersion,
+  type CodexBridgeLastTurn,
   type CodexBridgeObservation,
   type CodexBridgeTarget,
   type CodexBridgeThread,
@@ -46,6 +47,21 @@ function identifier(value: unknown): string | null {
   return value;
 }
 
+function readTimestamp(value: unknown): string | null {
+  let timestamp: number;
+  if (typeof value === 'string') {
+    timestamp = Date.parse(value);
+  } else if (typeof value === 'number' && Number.isFinite(value)) {
+    // Bridge numeric timestamps use Unix seconds below 10^11 and milliseconds above it.
+    timestamp = value > 100_000_000_000 ? value : value * 1000;
+  } else {
+    return null;
+  }
+  if (!Number.isFinite(timestamp)) return null;
+  const date = new Date(timestamp);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
 function readToolPayload(value: unknown): Record<string, unknown> {
   if (!isRecord(value) || value.isError === true) throw new McpTransportError('readonly-probe-failed');
   const structured = value.structuredContent ?? value.structured_content;
@@ -71,7 +87,27 @@ function readObservation(value: unknown): CodexBridgeObservation | null {
     state: boundedText(value.state, 80),
     evidence: boundedText(value.evidence, 80),
     reason: boundedText(value.reason, 160),
-    observedAt: boundedText(value.observed_at, 80),
+    observedAt: readTimestamp(value.observed_at),
+    needsAttention: typeof value.needs_attention === 'boolean' ? value.needs_attention : null,
+  };
+}
+
+function readLastTurn(value: unknown): CodexBridgeLastTurn | null {
+  if (value === undefined || value === null) return null;
+  if (!isRecord(value)) throw new McpTransportError('protocol-error');
+  const turnId = value.turn_id === undefined || value.turn_id === null ? null : identifier(value.turn_id);
+  if (value.turn_id !== undefined && value.turn_id !== null && !turnId) throw new McpTransportError('protocol-error');
+  const statuses = ['completed', 'failed', 'interrupted', 'in_progress', 'unknown'] as const;
+  const status = typeof value.status === 'string'
+    ? statuses.includes(value.status as typeof statuses[number]) ? value.status as typeof statuses[number] : 'unknown'
+    : null;
+  return {
+    turnId,
+    status,
+    category: boundedText(value.category, 80),
+    evidence: boundedText(value.evidence, 80),
+    reason: boundedText(value.reason, 160),
+    observedAt: readTimestamp(value.observed_at),
     needsAttention: typeof value.needs_attention === 'boolean' ? value.needs_attention : null,
   };
 }
@@ -107,10 +143,12 @@ function readThreads(value: unknown, targetId: string): CodexBridgeThreadPage {
     const thread: CodexBridgeThread = {
       targetId,
       id,
-      title: boundedText(item.name ?? item.title, 240),
+      title: boundedText(item.name, 240) ?? boundedText(item.title, 240),
+      preview: boundedText(item.preview, 240),
       cwd: boundedText(item.cwd, 240),
+      updatedAt: readTimestamp(item.updatedAt) ?? readTimestamp(item.updated_at),
       currentExecution: readObservation(item.current_execution),
-      lastTurn: readObservation(item.last_turn),
+      lastTurn: readLastTurn(item.last_turn),
       needsAttention: typeof item.needs_attention === 'boolean' ? item.needs_attention : null,
     };
     const key = `${targetId}\u0000${id}`;
@@ -133,7 +171,7 @@ function readStatus(value: unknown, targetId: string, threadId: string): CodexBr
     threadId,
     state: boundedText(payload.state, 80),
     currentExecution: readObservation(payload.current_execution),
-    lastTurn: readObservation(payload.last_turn),
+    lastTurn: readLastTurn(payload.last_turn),
     needsAttention: typeof payload.needs_attention === 'boolean' ? payload.needs_attention : null,
   };
 }
