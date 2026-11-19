@@ -11,6 +11,7 @@ import {
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertLocalAssetReferences, assertLocalOffscreenReferences } from './deployment-assets.mjs';
+import { validateManifestPermissions } from './manifest-permissions.mjs';
 
 const projectDirectory = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), '..'));
 const parentDirectory = realpathSync(resolve(projectDirectory, '..'));
@@ -80,16 +81,7 @@ function validateBuild(files) {
     || manifest.options_ui?.page !== 'index.html') {
     throw new Error('dist manifest does not reference the expected extension components.');
   }
-  const allowedPermissions = new Set(['clipboardRead', 'storage', 'offscreen']);
-  if (!Array.isArray(manifest.permissions)
-    || manifest.permissions.length !== allowedPermissions.size
-    || [...allowedPermissions].some((permission) => !manifest.permissions.includes(permission))
-    || manifest.permissions.some((permission) => !allowedPermissions.has(permission))) {
-    throw new Error('dist manifest must request only clipboardRead, storage, and offscreen permissions.');
-  }
-  for (const field of ['host_permissions', 'optional_host_permissions']) {
-    if (field in manifest) throw new Error(`dist manifest must not request ${field}.`);
-  }
+  validateManifestPermissions(manifest);
 
   const html = readFileSync(resolve(distDirectory, 'index.html'), 'utf8');
   assertLocalAssetReferences(html, files);
