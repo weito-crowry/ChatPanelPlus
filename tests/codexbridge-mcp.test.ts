@@ -85,7 +85,12 @@ test('JSON Streamable HTTP negotiates session and protocol headers and calls onl
     if (method === 'notifications/initialized') return new Response(null, { status: 202 });
     if (method === 'tools/list') {
       return jsonRpcResponse(id as number, {
-        tools: [{ name: 'codex_targets' }, { name: 'codex_start' }, { name: 'codex_continue' }],
+        tools: [
+          { name: 'codex_targets' },
+          { name: 'codex_threads' },
+          { name: 'codex_status' },
+          { name: 'codex_wait' },
+        ],
       });
     }
     if (method === 'tools/call') return jsonRpcResponse(id as number, { content: [{ type: 'text', text: 'private result' }] });
@@ -98,7 +103,7 @@ test('JSON Streamable HTTP negotiates session and protocol headers and calls onl
   assert.deepEqual(result, {
     ok: true,
     protocolVersion: '2025-03-26',
-    toolCount: 3,
+    toolCount: 4,
     readOnlyProbe: 'codex_targets',
   });
   assert.deepEqual(requests.map(({ payload }) => payload.method), [
