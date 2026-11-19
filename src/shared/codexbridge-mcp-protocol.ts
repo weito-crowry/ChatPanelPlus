@@ -1,4 +1,7 @@
 export const CODEX_BRIDGE_MCP_TEST_MESSAGE = 'CODEX_BRIDGE_MCP_TEST' as const;
+export const CODEX_BRIDGE_MCP_GET_TARGETS = 'CODEX_BRIDGE_MCP_GET_TARGETS' as const;
+export const CODEX_BRIDGE_MCP_GET_THREADS = 'CODEX_BRIDGE_MCP_GET_THREADS' as const;
+export const CODEX_BRIDGE_MCP_GET_STATUS = 'CODEX_BRIDGE_MCP_GET_STATUS' as const;
 export const CODEX_BRIDGE_MCP_TOKEN_SESSION_KEY = 'chatPanelPlus.codexBridgeMcpToken';
 export const CODEX_BRIDGE_MCP_DEFAULT_URL = 'http://127.0.0.1:18000/mcp';
 export const CODEX_BRIDGE_MCP_PROTOCOL_VERSION = '2025-03-26';
@@ -41,6 +44,61 @@ export type CodexBridgeMcpTestResponse =
       readOnlyProbe: typeof CODEX_BRIDGE_MCP_READ_ONLY_PROBE;
     }>
   | Readonly<{ ok: false; reason: CodexBridgeMcpDiagnosticCode }>;
+
+export type CodexBridgeReadFailureReason = CodexBridgeMcpDiagnosticCode | 'settings-unavailable';
+export type CodexBridgeReadResponse<T> = Readonly<{ ok: true; data: T }>
+  | Readonly<{ ok: false; reason: CodexBridgeReadFailureReason }>;
+
+export type CodexBridgeTarget = Readonly<{
+  id: string;
+  name: string;
+  kind: string | null;
+  available: boolean | null;
+}>;
+
+export type CodexBridgeObservation = Readonly<{
+  state: string | null;
+  evidence: string | null;
+  reason: string | null;
+  observedAt: string | null;
+  needsAttention: boolean | null;
+}>;
+
+export type CodexBridgeThread = Readonly<{
+  targetId: string;
+  id: string;
+  title: string | null;
+  cwd: string | null;
+  currentExecution: CodexBridgeObservation | null;
+  lastTurn: CodexBridgeObservation | null;
+  needsAttention: boolean | null;
+}>;
+
+export type CodexBridgeThreadPage = Readonly<{
+  threads: readonly CodexBridgeThread[];
+  nextCursor: string | null;
+}>;
+
+export type CodexBridgeThreadStatus = Readonly<{
+  targetId: string;
+  threadId: string;
+  state: string | null;
+  currentExecution: CodexBridgeObservation | null;
+  lastTurn: CodexBridgeObservation | null;
+  needsAttention: boolean | null;
+}>;
+
+export type CodexBridgeTargetsMessage = Readonly<{ type: typeof CODEX_BRIDGE_MCP_GET_TARGETS }>;
+export type CodexBridgeThreadsMessage = Readonly<{
+  type: typeof CODEX_BRIDGE_MCP_GET_THREADS;
+  targetId: string;
+  cursor?: string;
+}>;
+export type CodexBridgeStatusMessage = Readonly<{
+  type: typeof CODEX_BRIDGE_MCP_GET_STATUS;
+  targetId: string;
+  threadId: string;
+}>;
 
 export type ParsedMcpEndpoint = Readonly<{ url: string; originPattern: string }>;
 

@@ -8,8 +8,14 @@ import { createChromeSoundAssetRepository } from './shared/answer-completion-sou
 import { createChromeAnswerCompletionOutputDeviceRepository } from './shared/answer-completion-output-device.ts';
 import { ANSWER_COMPLETION_SOUND_PREVIEW, ANSWER_COMPLETION_SOUND_ROUTE } from './shared/answer-completion-output-device-protocol.ts';
 import { CODEX_WORK_MODE_GET, CODEX_WORK_MODE_SET } from './shared/codex-work-mode-protocol.ts';
-import { CODEX_BRIDGE_MCP_TEST_MESSAGE } from './shared/codexbridge-mcp-protocol.ts';
+import {
+  CODEX_BRIDGE_MCP_GET_STATUS,
+  CODEX_BRIDGE_MCP_GET_TARGETS,
+  CODEX_BRIDGE_MCP_GET_THREADS,
+  CODEX_BRIDGE_MCP_TEST_MESSAGE,
+} from './shared/codexbridge-mcp-protocol.ts';
 import { createCodexBridgeMcpTestHandler } from './background/codexbridge-mcp.ts';
+import { createDefaultCodexBridgePanelHandler } from './background/codexbridge-panel.ts';
 
 type OpenOptionsMessage = Readonly<{ type: 'OPEN_OPTIONS' }>;
 
@@ -27,6 +33,13 @@ function isCodexBridgeMcpTestMessage(message: unknown): boolean {
     && message.type === CODEX_BRIDGE_MCP_TEST_MESSAGE;
 }
 
+function isCodexBridgePanelMessage(message: unknown): boolean {
+  return typeof message === 'object' && message !== null && 'type' in message
+    && (message.type === CODEX_BRIDGE_MCP_GET_TARGETS
+      || message.type === CODEX_BRIDGE_MCP_GET_THREADS
+      || message.type === CODEX_BRIDGE_MCP_GET_STATUS);
+}
+
 const handleCodexWorkModeMessage = createCodexWorkModeMessageHandler(
   chrome.storage.session,
   chrome.runtime.id,
@@ -38,6 +51,7 @@ const handleCodexBridgeMcpTest = createCodexBridgeMcpTestHandler({
   extensionId: chrome.runtime.id,
   optionsPageUrl: chrome.runtime.getURL('index.html'),
 });
+const handleCodexBridgePanel = createDefaultCodexBridgePanelHandler(chrome.runtime.id);
 
 const outputDeviceRepository = createChromeAnswerCompletionOutputDeviceRepository();
 const soundAssetRepository = createChromeSoundAssetRepository();
@@ -65,6 +79,12 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   if (isCodexBridgeMcpTestMessage(message)) {
     void handleCodexBridgeMcpTest(message, sender).then((response) => {
       sendResponse(response ?? { ok: false, reason: 'unknown-error' });
+    }).catch(() => sendResponse({ ok: false, reason: 'unknown-error' }));
+    return true;
+  }
+  if (isCodexBridgePanelMessage(message)) {
+    void handleCodexBridgePanel(message, sender).then((response) => {
+      sendResponse(response ?? { ok: false, reason: 'protocol-error' });
     }).catch(() => sendResponse({ ok: false, reason: 'unknown-error' }));
     return true;
   }
