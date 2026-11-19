@@ -1,6 +1,8 @@
 import {
   CODEX_BRIDGE_MCP_PROTOCOL_VERSION,
   CODEX_BRIDGE_MCP_READ_ONLY_PROBE,
+  isSupportedCodexBridgeMcpProtocolVersion,
+  type CodexBridgeMcpProtocolVersion,
 } from '../shared/codexbridge-mcp-protocol.ts';
 import { McpTransportError, StreamableHttpMcpTransport } from './mcp-transport.ts';
 
@@ -30,7 +32,7 @@ function isSessionExpired(error: unknown): boolean {
 
 export class CodexBridgeMcpClient {
   private readonly transport: StreamableHttpMcpTransport;
-  private negotiatedProtocolVersion: string | null = null;
+  private negotiatedProtocolVersion: CodexBridgeMcpProtocolVersion | null = null;
 
   constructor(endpoint: string, token: string, options: { fetchImpl?: typeof fetch; timeoutMs?: number } = {}) {
     this.transport = new StreamableHttpMcpTransport(endpoint, token, options);
@@ -55,8 +57,9 @@ export class CodexBridgeMcpClient {
       await this.callTool(CODEX_BRIDGE_MCP_READ_ONLY_PROBE, {});
     }
 
+    if (!this.negotiatedProtocolVersion) throw new McpTransportError('protocol-error');
     return {
-      protocolVersion: this.negotiatedProtocolVersion ?? CODEX_BRIDGE_MCP_PROTOCOL_VERSION,
+      protocolVersion: this.negotiatedProtocolVersion,
       toolCount: tools.length,
     };
   }
@@ -79,7 +82,7 @@ export class CodexBridgeMcpClient {
       clientInfo: { name: 'ChatPanelPlus', version: '0.1.5' },
     });
     if (typeof result.protocolVersion !== 'string') throw new McpTransportError('protocol-error');
-    if (result.protocolVersion !== CODEX_BRIDGE_MCP_PROTOCOL_VERSION) {
+    if (!isSupportedCodexBridgeMcpProtocolVersion(result.protocolVersion)) {
       throw new McpTransportError('protocol-version-unsupported');
     }
     this.negotiatedProtocolVersion = result.protocolVersion;

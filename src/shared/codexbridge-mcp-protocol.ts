@@ -2,7 +2,14 @@ export const CODEX_BRIDGE_MCP_TEST_MESSAGE = 'CODEX_BRIDGE_MCP_TEST' as const;
 export const CODEX_BRIDGE_MCP_TOKEN_SESSION_KEY = 'chatPanelPlus.codexBridgeMcpToken';
 export const CODEX_BRIDGE_MCP_DEFAULT_URL = 'http://127.0.0.1:18000/mcp';
 export const CODEX_BRIDGE_MCP_PROTOCOL_VERSION = '2025-03-26';
+export const CODEX_BRIDGE_MCP_SUPPORTED_PROTOCOL_VERSIONS = ['2025-03-26', '2025-06-18'] as const;
 export const CODEX_BRIDGE_MCP_READ_ONLY_PROBE = 'codex_targets';
+
+export type CodexBridgeMcpProtocolVersion = typeof CODEX_BRIDGE_MCP_SUPPORTED_PROTOCOL_VERSIONS[number];
+
+export function isSupportedCodexBridgeMcpProtocolVersion(value: string): value is CodexBridgeMcpProtocolVersion {
+  return CODEX_BRIDGE_MCP_SUPPORTED_PROTOCOL_VERSIONS.includes(value as CodexBridgeMcpProtocolVersion);
+}
 
 export type CodexBridgeMcpDiagnosticCode =
   | 'invalid-endpoint'

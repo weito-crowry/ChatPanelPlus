@@ -103,6 +103,7 @@ test('JSON Streamable HTTP negotiates session and protocol headers and calls onl
   assert.deepEqual(requests.map(({ payload }) => payload.method), [
     'initialize', 'notifications/initialized', 'tools/list', 'tools/call',
   ]);
+  assert.equal((requests[0]?.payload.params as { protocolVersion?: string }).protocolVersion, '2025-03-26');
   assert.equal(requests[0]?.headers.get('mcp-session-id'), null);
   assert.equal(requests[0]?.headers.get('mcp-protocol-version'), null);
   for (const request of requests.slice(1)) {
@@ -115,6 +116,64 @@ test('JSON Streamable HTTP negotiates session and protocol headers and calls onl
   assert.deepEqual(toolCall?.params, { name: 'codex_targets', arguments: {} });
   assert.equal(JSON.stringify(result).includes('mcp-test-secret'), false);
   assert.equal(JSON.stringify(result).includes('private result'), false);
+});
+
+test('2025-06-18 is accepted and becomes the protocol header for all later requests', async () => {
+  const requests: RecordedRequest[] = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const request = recordRequest(input, init);
+    requests.push(request);
+    const { id, method } = request.payload;
+    if (method === 'initialize') return jsonRpcResponse(id as number, { protocolVersion: '2025-06-18' }, 'session-2025-06-18');
+    if (method === 'notifications/initialized') return new Response(null, { status: 202 });
+    if (method === 'tools/list') return jsonRpcResponse(id as number, { tools: [{ name: 'codex_targets' }] });
+    if (method === 'tools/call') return jsonRpcResponse(id as number, { content: [], isError: false });
+    return new Response(null, { status: 400 });
+  };
+  const { handler } = createHandler(fetchImpl);
+
+  const result = await handler(testMessage, trustedSender);
+
+  assert.deepEqual(result, {
+    ok: true,
+    protocolVersion: '2025-06-18',
+    toolCount: 1,
+    readOnlyProbe: 'codex_targets',
+  });
+  assert.equal((requests[0]?.payload.params as { protocolVersion?: string }).protocolVersion, '2025-03-26');
+  assert.deepEqual(requests.map(({ payload }) => payload.method), [
+    'initialize', 'notifications/initialized', 'tools/list', 'tools/call',
+  ]);
+  for (const request of requests.slice(1)) {
+    assert.equal(request.headers.get('mcp-session-id'), 'session-2025-06-18');
+    assert.equal(request.headers.get('mcp-protocol-version'), '2025-06-18');
+  }
+  assert.deepEqual((requests.at(-1)?.payload.params as { name?: string }).name, 'codex_targets');
+});
+
+test('unknown and malformed negotiated protocol versions are rejected before initialized or tool requests', async () => {
+  const cases: readonly Readonly<{ protocolVersion: unknown; reason: string }>[] = [
+    { protocolVersion: '2025-11-25', reason: 'protocol-version-unsupported' },
+    { protocolVersion: 'unknown-version', reason: 'protocol-version-unsupported' },
+    { protocolVersion: 2025, reason: 'protocol-error' },
+    { protocolVersion: null, reason: 'protocol-error' },
+    { protocolVersion: {}, reason: 'protocol-error' },
+  ];
+  for (const { protocolVersion, reason } of cases) {
+    const requests: RecordedRequest[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const request = recordRequest(input, init);
+      requests.push(request);
+      if (request.payload.method === 'initialize') {
+        return jsonRpcResponse(request.payload.id as number, { protocolVersion }, 'session-unaccepted');
+      }
+      return new Response(null, { status: 500 });
+    };
+    const { handler } = createHandler(fetchImpl);
+
+    assert.deepEqual(await handler(testMessage, trustedSender), { ok: false, reason });
+    assert.deepEqual(requests.map(({ payload }) => payload.method), ['initialize']);
+  }
 });
 
 test('SSE responses work and a 404 session expiry reinitializes before retrying the read-only probe', async () => {
