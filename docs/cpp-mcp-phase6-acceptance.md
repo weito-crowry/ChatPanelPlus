@@ -315,3 +315,7 @@ pnpm build、pnpm deploy:chrome、scripts/deploy-chrome.mjsは使用していな
 | NOT_RUN | Build/実機 | `pnpm test`、build、deploy、Chrome操作、extension reload、Host Permission/LNA prompt、Options→Service Worker runtime messaging、MCP live test、Storage read/write、Phase 4は未実施。 |
 
 このcommitはsource実装のレビュー用であり、現在Chromeがロードするdistへ未反映。Chrome実機でのpermission UIとOptions→background listener経路は未検証のまま。ChatGPTのGitHubレビュー後、Chrome側確認と安全なisolated build/deployは別工程で行う。CodexBridge sourceは変更していない。
+
+### 2026-11-21 ESLint rollback sibling ignore follow-up
+
+前記のrepository全体lint失敗を受け、`eslint.config.mjs`のignoreへrepo直下の`dist.cpp6-rollback-*/**`だけを追加した。保全済みrollback bundleはESLint対象外となり、source directoryのignore範囲は広げていない。再実行した`pnpm run lint`、`pnpm run typecheck`、`git diff --check`はPASS。build/deploy、Chrome操作、Storage操作は実施していない。
