@@ -107,7 +107,9 @@ Phase 2Aは読み取り専用調査、既存Phase 1 backupの検証、Git外の�
 
 実機の秘密値、認証値、拡張ID、thread/turn ID、会話本文、機器のローカル実パスやprivate IPはこの文書に記録していない。Git外backupのmanifestと`phase2a-local-operations.txt`だけにローカル復元情報を保存した。
 
-## CPP-6 Phase 2B 認証設定・安全な手動再起動準備 (2026-11-20)
+## CPP-6 Phase 2B 認証設定・安全な手動再起動準備（再起動前の記録、2026-11-20）
+
+この節はユーザー手動再起動前の準備時点を残した履歴である。再起動後の受入報告とCodexの後日read-only確認は、末尾の別節に日付を分けて記録する。
 
 Phase 2Bでは認証設定とユーザー手動起動の準備だけを実施した。稼働中Bridge/Console/Tunnelの停止・再起動、Chrome操作、実MCP requestは行っていない。設定ファイルの更新は次回起動用であり、稼働中listenerへの反映・認証成功を示さない。
 
@@ -135,3 +137,45 @@ Phase 2Bでは認証設定とユーザー手動起動の準備だけを実施し
 - LAN公開は今回不要で、Firewall変更もない。HTTP BearerをLAN利用する場合は平文となる。
 
 具体的なOrigin、token、DPAPI blob名、backup path/hash/ACL SDDL、thread/turn識別子、会話本文、ユーザーのローカル実行pathはGit外のPhase 2B運用メモと検証manifestにだけ保存した。
+
+## CPP-6 Phase 2B bootstrap修正・再起動後受入（2026-11-20）
+
+この追記は上記の再起動前記録と区別する。`USER/MUSE_REPORTED_PASS`はユーザーから共有された検証結果で、Codexが独立に送ったhealth/MCP/ChatGPT requestではない。Codexの独立read-only観測はTunnel process/listener/configの存在関係だけを示す。
+
+### 正式bootstrap修正と隔離検証
+
+| 状態 | 項目 | 根拠・結果 |
+| --- | --- | --- |
+| USER_CONFIRMED | 根本原因 | 正式bootstrapの対象port絞り込み付き`Get-NetTCPConnection -State Listen -LocalPort 18000,18001,55402 -ErrorAction Stop`は、3 portがすべて空いている正常状態でCIMの該当なしエラーになり得た。トップレベルcatchが段階と理由を隠していた。ユーザー/Museの診断とコード確認を突合した。 |
+| PASS | 正式ファイルの修正 | Git外のPhase 2B運用領域にある`phase2b-bootstrap-console.ps1`だけを修正。`Get-NetTCPConnection -ErrorAction Stop`で接続を取得し、メモリ内で`State=Listen`かつ18000/18001/55402のlistenerを判定する。占有時はport番号を示し、OS/CIM取得失敗は別の段階・理由で拒否する。DPAPI CurrentUser読込、credential preflight、同一PowerShell processへのCPP token/config引継ぎを維持し、失敗時は元のprocess環境と作業directoryを復元する。例外原文と秘密値は出さない。診断・ユーザー手直しコピーには触れていない。 |
+| PASS | 隔離回帰テスト | Git外のuser-only PowerShell test helperで6ケースを実行。空きportは成功、18000/18001/55402各1件のlistenerは個別portを示して拒否、模擬OS/CIM取得失敗は理由を分けて拒否、環境設定後の模擬location失敗では環境とdirectoryを復元。成功/失敗出力に64文字token形式の値や模擬例外詳細がないことを確認した。基準版では6ケースが期待どおり失敗し、修正後は6ケースすべてPASS。 |
+| PASS | 構文・ACL・backup | 正式bootstrapとtest helperのPowerShell parser検査はPASS。正式ファイルは変更前SHA-256/ACLを確認後に上書き禁止のuser-only backupを作成し、変更前sourceとbackupのhash一致を確認。変更後も正式ファイルのACLはcurrent Windows userだけのprotected rule。実パス、backup名、hash、ACL詳細はGit外Phase 2B運用メモに保存した。 |
+| PASS | 実サービス非干渉 | 回帰は隔離子PowerShellと偽listener/CIM commandで実施。CodexはBridge/Console/Tunnelを停止・再起動せず、listenerを変更せず、通常Consoleを起動せず、Chrome/Firewall/config/credentialも変更していない。 |
+
+### Codexのread-only Tunnel観測
+
+| 状態 | 観測項目 | 結果と限界 |
+| --- | --- | --- |
+| PASS | process管理 | `codex-bridge-console.exe`が存在し、`tunnel-client.exe`はそのprocess treeの子孫。現在のTunnel processはConsole管理下にあることをprocess ancestryで確認した。process IDやraw command lineは記録していない。 |
+| PASS | listenerと宛先設定 | Tunnelの現在のloopback listenerは動的port `60789`で、以前の観測port `55402`とは異なる。選択中profileのservice宛先portは`18000`。Bridge/UI listener `18000`/`18001`も同Console process tree内にある。Tunnel profile参照はprocess command lineと一致することを値を出さず確認した。 |
+| NOT_VERIFIED | ChatGPT経由のTunnel疎通 | local Tunnel process、listener、profile宛先の存在はChatGPTからTunnel経由で接続できた証明ではない。Tunnel経由のMCP round-trip/full-route復旧は未確認。 |
+
+### ユーザー/Museからの再起動後受入報告
+
+| 状態 | 項目 | 報告された結果 |
+| --- | --- | --- |
+| USER/MUSE_REPORTED_PASS | 再起動ゲート | ユーザーが全Codex turn完了を確認し、FX作業完了とUI APIで全threads idleをreadbackした後に操作したと報告。旧Bridge停止と通常のConsole手動起動はユーザー自身が実施。Codexは稼働サービスに操作を行っていない。 |
+| USER/MUSE_REPORTED_PASS | UI health | `18001/healthz`はHTTP 200、`{status:ok}`。UI APIは`bridge=ready`、`app_server=ready`。 |
+| USER/MUSE_REPORTED_PASS | CPP MCP initialize/catalog | initializeはHTTP 200、server `CodexBridge`、protocol `2025-03-26`。`tools/list`はexactly 4件: `codex_targets`、`codex_threads`、`codex_status`、`codex_wait`。 |
+| USER/MUSE_REPORTED_PASS | CPP write拒否 | 空引数の`codex_start`は`Tool is not authorized...`で拒否されたと報告。`codex_continue`拒否や全read callは未確認。 |
+| USER/MUSE_REPORTED_PASS | 従来の無token loopback | tokenなしloopbackの従来経路では`tools/list`が71件と報告された。 |
+| USER/MUSE_REPORTED_PASS | ChatGPT側target read | ChatGPT側のCodexBridge `codex_targets`読取りが成功し、`local Main PC`の`available=true`を返したと報告。TransportがTunnel経由であることは証明されない。 |
+
+Phase 2認証本体は上表のとおりユーザー/Muse報告ベースでPASS。bootstrapの空きport不具合修正と隔離回帰もPASS。一方、Tunnelを通った実接続は未確定であり、この記録をCodex独立の実機確認と扱わない。
+
+### Phase 2B後の未確認項目とPhase 3前提
+
+- Tunnel `55402`または現在の動的listenerを通る実MCP接続、ChatGPT側full-route復旧、CPP全read calls、および`codex_continue`拒否は未確認。
+- Chrome Optionsからの接続/Host Permission、監視、通知音、最終回答表示・コピー・挿入、既存拡張storageの復元性は未確認。
+- **Phase 3開始前に、Chromeが実際にロードしている`dist`と拡張storageのbackupが必須。** `deploy:chrome`の固定候補先だけではロード元を示さない。実ロード元とstorageを安全に退避・照合してから、別途Phase 3を開始する。
+- この作業ではPhase 3/4、Chrome deploy/reload、`pnpm build`、`deploy:chrome`、実Codex turnは行っていない。
