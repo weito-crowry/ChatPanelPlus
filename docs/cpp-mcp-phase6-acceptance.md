@@ -316,6 +316,22 @@ pnpm build、pnpm deploy:chrome、scripts/deploy-chrome.mjsは使用していな
 
 このcommitはsource実装のレビュー用であり、現在Chromeがロードするdistへ未反映。Chrome実機でのpermission UIとOptions→background listener経路は未検証のまま。ChatGPTのGitHubレビュー後、Chrome側確認と安全なisolated build/deployは別工程で行う。CodexBridge sourceは変更していない。
 
+## CPP-6 Phase 3C-D1 isolated build and same-path file deployment (2026-11-21)
+
+レビュー済みのPhase 3C-LNA診断変更を、production distへ直接buildせずGit外のcurrent-user-only stagingで4つのVite構成から隔離buildした。source/testの変更はなく、この受入記録だけを更新する。
+
+| 状態 | 項目 | 実測結果 |
+| --- | --- | --- |
+| PASS | 検証 | `pnpm run lint`、`pnpm run typecheck`、直接実行したTypeScript tests 440/440、Options static tests 5/5がPASS。禁止対象の`pnpm test`、通常build/deploy scriptは実行していない。 |
+| PASS | Git外隔離build | 4構成すべてのeffective outDirを絶対staging pathと照合してからbuildした。成果物は11ファイル/783320 bytes、tree SHA-256 `968140c9939374851e506cdac95a2df74e3a425aed21d8a4d76de118b907cf0d`。manifestはsourceとbyte一致、version 0.1.5、permissions/optional host patternsとHTML/manifest参照が一致・解決し、全stage objectはreparseなし・protected current-user-only ACL。 |
+| PASS | 同一登録パスへの配備 | Chromeの登録pathを今回UIから再読出しせず、既存のユーザー確認記録に基づく従来distパスを維持した。検証済み兄弟directoryを作成後、旧active distをrollback siblingへrenameし、準備済み成果物を同じdist位置へrenameした。新active distは11ファイル/783320 bytes、tree SHA-256 `968140c9939374851e506cdac95a2df74e3a425aed21d8a4d76de118b907cf0d`でstageとfile hash/size/mtime一致。 |
+| PASS | 新rollbackと既存backup | 今回のrollback siblingは11ファイル/773569 bytes、tree SHA-256 `1d5f31e2cda9d80327ee25225ae8b27a139ef8e29c4a27fec4f42f1f9601e93a`で置換前active distのfile hash/size/mtimeおよびACL/owner fingerprintと一致。以前のrollback siblingとPhase 3A dist backupは11ファイルの保存済みmanifest記録に一致。Storage backupは661547 bytes、記録済みSHAとprotected ACLを再確認し、JSON内容は読んでいない。 |
+| PASS | scope保全 | active distと今回のrollbackにreparse pointはなく、active distの全objectはprotected current-user-only ACL。以前のrollback、Phase 3A dist/Storage backupは保持。CodexBridge tracked sourceおよび既存untracked領域を変更していない。 |
+| USER_ACTION_REQUIRED | Chrome側受入 | Chrome Detailsで登録path/versionを目視照合し、拡張を手動Reloadする。続けて既存ChatGPT tabを再読込し、Optionsを開き直して保存済み設定とcustom tab/button表示を確認する。Optionsの明示操作からローカルprobeと接続確認を行い、必要な権限要求はChrome UIで本人が判断する。 |
+| NOT_RUN | 実機・後続段階 | Chrome Detailsの再照合、拡張reload、Options/MCP live test、Host Permission/LNA prompt、Storage API操作、Phase 4は未実施。token、session、Chrome profileは読んでいない。 |
+
+新しいOptions診断文はService Workerから接続確認応答を受け取れない場合にworker起動・listener登録・Options contextを確認するよう案内する。今回のfile deployだけでは以前報告されたruntime messaging失敗の修正や、Chromeで新成果物が有効になったことを証明しない。ChatGPTのGitHubレビューおよびユーザー手動reload後の実機結果を待つ。CodexBridgeと設定Storageは変更していない。
+
 ### 2026-11-21 ESLint rollback sibling ignore follow-up
 
 前記のrepository全体lint失敗を受け、`eslint.config.mjs`のignoreへrepo直下の`dist.cpp6-rollback-*/**`だけを追加した。保全済みrollback bundleはESLint対象外となり、source directoryのignore範囲は広げていない。再実行した`pnpm run lint`、`pnpm run typecheck`、`git diff --check`はPASS。build/deploy、Chrome操作、Storage操作は実施していない。
