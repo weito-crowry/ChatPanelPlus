@@ -1,6 +1,6 @@
 # CPP-6 受入準備マトリクス
 
-この文書はコードと自動検証の証拠、およびWindowsメインPCでの実機確認手順を記録する。実機確認はまだ実行していないため、CPP-6の実機最終受入を示すものではない。
+この文書はコードと自動検証の証拠、およびWindowsメインPCでの実機確認手順を記録する。2026-11-20にPhase 1の配備前読み取り専用確認と安全退避を実施した。Chrome実機機能試験は未完了であり、CPP-6の実機最終受入を示すものではない。
 
 ## 対象SHAと変更
 
@@ -35,7 +35,7 @@ CodexBridgeでは、CPP tokenの`tools/list`と`tools/call`を同じ4件に制�
 
 ## WindowsメインPC Chrome実機チェック
 
-以下はすべて`NOT_RUN`。Chrome既存profile/タブ、拡張のreload/deploy、稼働中Bridge、production token/設定を変更していない。別途GitHubレビューとユーザー承認の後、既存設定を確認して実施する。実施時はPASS/FAILと日時だけを記録し、token、extension利用者情報、thread/turn ID、会話本文、clipboard本文は記録しない。
+以下のChrome実機機能チェックはすべて`NOT_RUN`。Chrome既存profile/タブ、拡張のreload/deploy、稼働中Bridge、production token/設定を変更していない。Phase 1の環境確認結果は文書末尾に記録する。Phase 2以降は段階ごとに結果を確認してから別ターンで実施する。実施時はPASS/FAILと日時だけを記録し、token、extension利用者情報、thread/turn ID、会話本文、clipboard本文は記録しない。
 
 | 状態 | チェックと手順 | 期待値 |
 | --- | --- | --- |
@@ -52,3 +52,25 @@ CodexBridgeでは、CPP tokenの`tools/list`と`tools/call`を同じ4件に制�
 | NOT_RUN | **原状復帰**: 作成したtest watchだけをUIから解除。Options URLを試験前値へ戻す。試験用に新規入力したsession tokenだけをUIの「保存tokenを削除」で消し、試験前tokenがあれば安全な保管元から復元する。試験で初めて追加したhost permissionだけをChromeの拡張Detailsから外す。 | 試験前のURL/token/host permissionと既存watchを維持し、test watchが残らない。全storage消去、既存token削除、拡張reload、Bridge再起動は行わない。 |
 
 実機試験の日時・PASS/FAILだけを記録する。token、個人情報、thread/turn識別子、会話本文、回答本文はこの文書やログへ保存しない。
+
+## CPP-6 Phase 1 配備前確認・安全退避 (2026-11-20)
+
+Phase 1の評価:
+
+| 状態 | 項目 | 実施根拠 |
+| --- | --- | --- |
+| PASS | Repository identity | CodexBridgeは`codex/cpp-mcp-phase6-allowlist`、開始HEAD/upstream/originが`aec79411465bef065cd41b0e60ce74cdb47b5c41`で一致。追跡ファイルに差分なし。既存未追跡領域を変更せず保護した。ChatPanelPlusは`codex/cpp-mcp-phase6-acceptance`、開始HEAD/upstream/originが`5d27dc057dadb21a1d84a267dedb6669b981a1b8`で一致し、開始時statusはclean。 |
+| PASS | Bridge process/config readback | 実行中`codex_bridge`プロセスが`127.0.0.1:18000` (MCP)と`127.0.0.1:18001` (Console UI)をlisten。Bridge実行環境の`CODEX_BRIDGE_CONFIG`が明示され、選択されたcheckout設定の値はhost `127.0.0.1`、port `18000`、`lan_enabled=false` (省略時の既定値)、`allowed_hosts=[]`、`allowed_origins=[]`。認証値は表示せず、環境変数の有無のみでCONTROL tokenあり、MCP tokenなし、CPP専用tokenなしを確認。 |
+| PASS | Console/Tunnel ownership | Consoleは`uv`からWindows Terminal配下のPowerShell経由で起動。MCP listenerは現在のConsole process tree外で、起動元の親processは既に終了していたため元の起動主体は未確定。Console process tree内のTunnel clientは`127.0.0.1:55402`をlisten。停止・再起動は行っていない。 |
+| PASS | Secret-safe backup | 有効設定2ファイルをGit外の一意なDドライブbackupへコピー。source/backupのSHA256、サイズ、時刻とコピー中のsource不変を確認。backup directoryは現在のWindows userだけを許可し、各fileも同じACLを継承。実パス・file一覧・hashはGit外の`phase1-backup-manifest.json`に保存した。復元は未実施。 |
+| USER_CONFIRMATION_REQUIRED | Chrome extension registration | 既存Chrome profileのPreferencesを読み取り専用で開こうとしたがアクセス拒否となった。既存Chrome画面にExtensions/Optionsページは見当たらず、既存tabは変更していない。登録extension ID、実フォルダ、installed version、host permission grant、Options endpoint URLは未確認。`deploy-chrome.mjs`の固定候補先との一致も未確認。 |
+| USER_CONFIRMATION_REQUIRED | Chrome monitor storage export | `chrome.storage.local`の監視状態を読む既存extension contextを確認できなかったためexportなし。Chrome LevelDB、session token、profile fileのcopy/解析は行っていない。 |
+| NOT_VERIFIED | Other Codex turns | この調査のPowerShellは現在のCodex process treeに属することを確認。別の`codex.exe` process群も稼働していたが、process一覧だけではturnごとの実行中/完了を識別できなかった。Bridge再起動前に他のCodex turnsが完了したことを再確認する。 |
+| NOT_RUN | Phase 2–4 | token生成・登録、LAN/Firewall設定、Bridge再起動、Chrome配備/reload、MCP実機試験、新規/中断Codex turnは実施していない。 |
+
+Phase 2へ進む際の確認事項:
+
+- CPP専用tokenは`CODEX_BRIDGE_CPP_MCP_TOKEN`環境変数としてBridge processへ渡す設計。現在のMCP listener環境では未設定。token値をこの文書やログへ記録しない。
+- LAN設定は現在の選択設定の`bridge.host`、`bridge.port`、`bridge.lan_enabled`、`bridge.allowed_hosts`、`bridge.allowed_origins`または対応する環境変数が対象。現在はloopbackのみ。LAN公開時はWindows Defender Firewallの受信規則も変更対象になる。今回変更なし。
+- 稼働中MCP listenerは現在のConsole process tree外で起動主体が未確定。既存のConsole lifecycle操作がこのlistenerを再起動する根拠は取れていないため、再起動方法は起動元を確認してから選ぶ。他の稼働中Codex turnsの完了を確認してから操作する。
+- 次のChrome確認はユーザーが既存profileの`chrome://extensions` DetailsでID/version/実フォルダ/権限を目視し、既存Options画面からendpoint URLを読み取る。tokenや会話・turn IDを共有しない。現在値の保存や変更、permission付与、reloadは不要。
