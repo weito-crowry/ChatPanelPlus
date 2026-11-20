@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { DEFAULT_BUTTONS, DEFAULT_TABS, resolveDefaultUI } from '../src/shared/default-ui.ts';
+import { CUSTOM_BUTTON_IDS, CUSTOM_TAB_ID, customTabSettings } from './fixtures/custom-tabs.ts';
 
 const promptSpec = await readFile(new URL('../docs/design/03-prompt-actions.md', import.meta.url), 'utf8');
 const textBlocks = [...promptSpec.matchAll(/~~~text\r?\n([\s\S]*?)~~~/g)].map((match) => match[1].replaceAll('\r\n', '\n'));
@@ -117,4 +118,18 @@ test('falls back to the leftmost visible tab when the selected default tab is hi
     tabOverrides: { directive: { visible: false }, control: { visible: false } },
   });
   assert.equal(ui.selectedTabId, 'wall');
+});
+
+test('resolves custom tab metadata, order, visibility, and its independent button group', () => {
+  const settings = customTabSettings();
+  const ui = resolveDefaultUI(settings);
+  assert.deepEqual(ui.tabs.slice(0, 3).map(({ id }) => id), ['directive', CUSTOM_TAB_ID, 'wall']);
+  const tab = ui.tabs.find(({ id }) => id === CUSTOM_TAB_ID);
+  assert.equal(tab?.label, 'Synthetic tab');
+  assert.equal(tab?.visible, true);
+  assert.equal(ui.selectedTabId, CUSTOM_TAB_ID);
+  assert.deepEqual(tab?.buttonIds, CUSTOM_BUTTON_IDS.slice(0, 7));
+  assert.deepEqual(ui.buttons.filter(({ groupId }) => groupId === CUSTOM_TAB_ID).map(({ id }) => id), CUSTOM_BUTTON_IDS.slice(0, 7));
+  assert.equal(ui.buttons.find(({ id }) => id === CUSTOM_BUTTON_IDS[0])?.label, 'Synthetic 1');
+  assert.equal(ui.tabs.find(({ id }) => id === 'directive')?.visible, false);
 });

@@ -7,6 +7,8 @@ import {
   type ButtonId,
   type CustomButtonDefinition,
   type CustomButtonId,
+  type CustomTabDefinition,
+  type CustomTabId,
   type TabId,
 } from '../../src/shared/default-ui.ts';
 import { DEFAULT_SETTINGS, type ExtensionSettings } from '../../src/shared/settings.ts';
@@ -21,7 +23,9 @@ export type LayoutPreview = Readonly<{
 
 export type CustomButtonOperation = 'insert' | ButtonAction;
 
-const GROUP_IDS: readonly ButtonGroupId[] = ['always', ...DEFAULT_TABS.map(({ id }) => id)];
+function groupsFor(settings: ExtensionSettings): readonly ButtonGroupId[] {
+  return ['always', ...resolveDefaultUI(settings).tabs.map(({ id }) => id)];
+}
 
 function normalizedButtonOrder(settings: ExtensionSettings, group: ButtonGroupId): ButtonId[] {
   return resolveDefaultUI(settings).buttons
@@ -127,6 +131,24 @@ export function updateCustomButton(
   };
 }
 
+export function updateCustomTabLabel(settings: ExtensionSettings, id: CustomTabId, label: string): ExtensionSettings {
+  const definition = settings.customTabs?.[id];
+  if (!definition) return settings;
+  return { ...settings, customTabs: { ...settings.customTabs, [id]: { ...definition, label } } };
+}
+
+export function updateTabVisibility(settings: ExtensionSettings, id: TabId, visible: boolean): ExtensionSettings {
+  if (id.startsWith('custom-tab-')) {
+    const definition = settings.customTabs?.[id as CustomTabId];
+    if (!definition) return settings;
+    return { ...settings, customTabs: { ...settings.customTabs, [id]: { ...definition, visible } } };
+  }
+  return {
+    ...settings,
+    tabOverrides: { ...(settings.tabOverrides ?? {}), [id]: { ...(settings.tabOverrides?.[id] ?? {}), visible } },
+  };
+}
+
 export function changeCustomButtonOperation(
   settings: ExtensionSettings,
   id: CustomButtonId,
@@ -164,8 +186,10 @@ export function deleteCustomButton(settings: ExtensionSettings, id: CustomButton
 
 export function resetSettingsPreservingCustomButtons(settings: ExtensionSettings): ExtensionSettings {
   const customButtons = settings.customButtons ?? {};
+  const customTabs = settings.customTabs ?? {};
   const currentOrder = resolveDefaultUI(settings).buttons;
-  const buttonOrder = Object.fromEntries(GROUP_IDS.map((group) => [
+  const groups = groupsFor(settings);
+  const buttonOrder = Object.fromEntries(groups.map((group) => [
     group,
     [
       ...DEFAULT_BUTTONS.filter((button) => button.groupId === group).map(({ id }) => id),
@@ -176,6 +200,8 @@ export function resetSettingsPreservingCustomButtons(settings: ExtensionSettings
     ...DEFAULT_SETTINGS,
     ...(settings.codexBridgeMcpUrl === undefined ? {} : { codexBridgeMcpUrl: settings.codexBridgeMcpUrl }),
     ...(Object.keys(customButtons).length ? { customButtons } : {}),
+    ...(Object.keys(customTabs).length ? { customTabs } : {}),
+    tabOrder: [...DEFAULT_TABS.map(({ id }) => id), ...resolveDefaultUI(settings).tabs.filter(({ id }) => id.startsWith('custom-tab-')).map(({ id }) => id)],
     buttonOrder,
   };
 }
@@ -187,19 +213,30 @@ export function mergeImportedSettings(
   const withMcpUrl = imported.codexBridgeMcpUrl !== undefined || current.codexBridgeMcpUrl === undefined
     ? imported
     : { ...imported, codexBridgeMcpUrl: current.codexBridgeMcpUrl };
-  if (Object.prototype.hasOwnProperty.call(imported, 'customButtons')) return withMcpUrl;
-  const customButtons = current.customButtons;
-  if (!customButtons || Object.keys(customButtons).length === 0) return withMcpUrl;
-  const importedUI = resolveDefaultUI(imported);
+  const importedHasButtons = Object.prototype.hasOwnProperty.call(imported, 'customButtons');
+  const importedHasTabs = Object.prototype.hasOwnProperty.call(imported, 'customTabs');
+  const customButtons = importedHasButtons ? imported.customButtons : current.customButtons;
+  const customTabs: Record<string, CustomTabDefinition> = {
+    ...(importedHasTabs ? imported.customTabs ?? {} : current.customTabs ?? {}),
+  };
+  for (const button of Object.values(customButtons ?? {})) {
+    if (!button.groupId.startsWith('custom-tab-') || button.groupId in customTabs) continue;
+    const existing = current.customTabs?.[button.groupId as CustomTabId];
+    if (existing) customTabs[button.groupId] = existing;
+  }
+  const withCustomTabs = Object.keys(customTabs).length ? { ...withMcpUrl, customTabs } : withMcpUrl;
+  if (importedHasButtons) return withCustomTabs;
+  if (!customButtons || Object.keys(customButtons).length === 0) return withCustomTabs;
+  const importedUI = resolveDefaultUI(withCustomTabs);
   const currentUI = resolveDefaultUI(current);
-  const buttonOrder = Object.fromEntries(GROUP_IDS.map((group) => [
+  const buttonOrder = Object.fromEntries(groupsFor(withCustomTabs).map((group) => [
     group,
     [
       ...importedUI.buttons.filter((button) => button.groupId === group && !button.id.startsWith('custom-')).map(({ id }) => id),
       ...currentUI.buttons.filter((button) => button.groupId === group && button.id.startsWith('custom-')).map(({ id }) => id),
     ],
   ]));
-  return { ...withMcpUrl, customButtons, buttonOrder };
+  return { ...withCustomTabs, customButtons, buttonOrder };
 }
 
 export function getCustomButtonImportDeletions(
@@ -211,6 +248,22 @@ export function getCustomButtonImportDeletions(
   return resolveDefaultUI(current).buttons
     .filter((button) => button.id.startsWith('custom-') && !retained.has(button.id))
     .map(({ id }) => id as CustomButtonId);
+}
+
+export function getCustomTabImportDeletions(
+  current: ExtensionSettings,
+  imported: ExtensionSettings,
+): CustomTabId[] {
+  if (!Object.prototype.hasOwnProperty.call(imported, 'customTabs')) return [];
+  const importedTabs = new Set(Object.keys(imported.customTabs ?? {}));
+  const retainedButtons = Object.prototype.hasOwnProperty.call(imported, 'customButtons')
+    ? imported.customButtons ?? {}
+    : current.customButtons ?? {};
+  const referencedTabs = new Set<string>(Object.values(retainedButtons)
+    .map(({ groupId }) => groupId)
+    .filter((id) => id.startsWith('custom-tab-')));
+  return Object.keys(current.customTabs ?? {})
+    .filter((id) => !importedTabs.has(id) && !referencedTabs.has(id)) as CustomTabId[];
 }
 
 export function reorderTabBefore(

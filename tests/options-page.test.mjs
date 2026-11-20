@@ -8,6 +8,7 @@ const pagePath = resolve(fileURLToPath(new URL('../options/src/OptionsPage.tsx',
 const soundSettingsPath = resolve(fileURLToPath(new URL('../options/src/AnswerCompletionSoundSettings.tsx', import.meta.url)));
 const mcpSettingsPath = resolve(fileURLToPath(new URL('../options/src/McpConnectionSettings.tsx', import.meta.url)));
 const creatorPath = resolve(fileURLToPath(new URL('../options/src/CustomButtonCreator.tsx', import.meta.url)));
+const tabControlsPath = resolve(fileURLToPath(new URL('../options/src/OptionsTabControls.tsx', import.meta.url)));
 
 test('Optionsに表示切替・上下並べ替え・ドラフト保存・確認付きimport/reset・exportがある', async () => {
   const [source, soundSettings] = await Promise.all([readFile(pagePath, 'utf8'), readFile(soundSettingsPath, 'utf8')]);
@@ -32,6 +33,25 @@ test('カスタムボタン作成・操作変更・削除確認・旧JSON保持�
     assert.ok(creator.includes(operation), `CustomButtonCreator missing ${operation}`);
   }
   assert.ok(creator.includes('取り消す'), 'CustomButtonCreator needs a form cancel action');
+});
+
+test('Optionsのcustom tab編集は保存済みIDの表示切替・ラベル・順序・button groupを使う', async () => {
+  const [page, state, creator, controls] = await Promise.all([
+    readFile(pagePath, 'utf8'),
+    readFile(resolve(fileURLToPath(new URL('../options/src/options-state.ts', import.meta.url))), 'utf8'),
+    readFile(creatorPath, 'utf8'),
+    readFile(tabControlsPath, 'utf8'),
+  ]);
+  assert.ok(controls.includes("tab.id.startsWith('custom-tab-')"));
+  assert.ok(controls.includes('onLabelChange(tab.id as CustomTabId'));
+  assert.ok(page.includes('updateTabVisibility'));
+  assert.ok(page.includes('CustomButtonCreator groupId={group.id}'));
+  assert.ok(page.includes('OptionsTabControls'));
+  assert.ok(page.includes('deletedCustomTabCount'));
+  assert.ok(state.includes('function updateCustomTabLabel'));
+  assert.ok(state.includes('function updateTabVisibility'));
+  assert.ok(creator.includes('const common = { groupId, label, color, visible: true }'));
+  assert.ok(!page.includes('このカスタムタブを削除') && !controls.includes('このカスタムタブを削除'), 'custom tab deletion UI must remain out of scope');
 });
 
 test('MCP接続確認はホスト権限を明示要求し、tokenをsession storageに閉じ込める', async () => {

@@ -49,15 +49,24 @@ function pathValue(settings: ExtensionSettings, path: readonly string[]): unknow
   return value;
 }
 
-function settingPaths(): string[][] {
+function settingPaths(settings: readonly ExtensionSettings[]): string[][] {
   const paths: string[][] = [];
   for (const button of DEFAULT_BUTTONS) {
     for (const field of ['visible', 'label', 'color', ...(button.kind === 'insert' ? ['text'] : [])]) {
       paths.push(['buttonOverrides', button.id, field]);
     }
   }
+  const customTabIds = [...new Set(settings.flatMap((item) => Object.keys(item.customTabs ?? {})))];
   for (const tab of DEFAULT_TABS) paths.push(['tabOverrides', tab.id, 'visible']);
-  const groups: ButtonGroupId[] = ['always', ...DEFAULT_TABS.map(({ id }) => id)];
+  for (const id of customTabIds) {
+    paths.push(['customTabs', id]);
+    paths.push(['tabOverrides', id, 'visible']);
+  }
+  const groups: ButtonGroupId[] = [
+    'always',
+    ...DEFAULT_TABS.map(({ id }) => id),
+    ...customTabIds.map((id) => id as ButtonGroupId),
+  ];
   for (const group of groups) paths.push(['buttonOrder', group]);
   paths.push(['tabOrder']);
   paths.push(['answerCompletionSoundEnabled']);
@@ -76,7 +85,7 @@ function customButtonPaths(base: ExtensionSettings, draft: ExtensionSettings): s
 }
 
 function patchesBetween(base: ExtensionSettings, draft: ExtensionSettings): Patch[] {
-  return [...settingPaths(), ...customButtonPaths(base, draft)].flatMap((path) => {
+  return [...settingPaths([base, draft]), ...customButtonPaths(base, draft)].flatMap((path) => {
     const before = pathValue(base, path);
     const after = pathValue(draft, path);
     return same(before, after) ? [] : [{ path, before, after }];
@@ -84,7 +93,7 @@ function patchesBetween(base: ExtensionSettings, draft: ExtensionSettings): Patc
 }
 
 function replacementPatches(base: ExtensionSettings, draft: ExtensionSettings): Patch[] {
-  return [...settingPaths(), ...customButtonPaths(base, draft)].map((path) => ({
+  return [...settingPaths([base, draft]), ...customButtonPaths(base, draft)].map((path) => ({
     path,
     before: pathValue(base, path),
     after: pathValue(draft, path),
@@ -123,9 +132,10 @@ function readViewState(value: unknown): StoredViewState | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const state = value as Record<string, unknown>;
   if (typeof state.minimized !== 'boolean') return null;
-  const knownTabs = new Set(DEFAULT_TABS.map(({ id }) => id));
+  const knownTabs = new Set<string>(DEFAULT_TABS.map(({ id }) => id));
   const selected = state.selectedTabId;
-  if (selected !== null && (typeof selected !== 'string' || !knownTabs.has(selected as TabId))) return null;
+  if (selected !== null && (typeof selected !== 'string'
+    || (!knownTabs.has(selected) && !/^custom-tab-[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(selected)))) return null;
   return { selectedTabId: selected as TabId | null, minimized: state.minimized };
 }
 
@@ -207,10 +217,11 @@ export class SettingsRepository {
         if (patch.path[0] === 'customButtons') return !same(current, patch.before);
         if (patch.path[0] === 'buttonOrder') {
           const groupId = patch.path[1] ?? '';
-          const customOrder = [base, draft, latest.settings]
+          const customOrder = groupId.startsWith('custom-tab-') || [base, draft, latest.settings]
             .some((settings) => hasCustomButtonInGroup(settings, groupId));
           if (customOrder) return !same(current, patch.before);
         }
+        if (patch.path[0] === 'customTabs') return !same(current, patch.before);
         return !same(current, patch.before) && !same(current, patch.after);
       });
       if (conflicts.length) {

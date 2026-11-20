@@ -9,6 +9,7 @@ import {
   reorderTabBefore,
 } from '../options/src/options-state.ts';
 import { DEFAULT_SETTINGS, parseSettingsJson, serializeSettings } from '../src/shared/settings.ts';
+import { CUSTOM_TAB_ID, customTabSettings } from './fixtures/custom-tabs.ts';
 
 test('tab sections immediately follow the unsaved draft order and keep hidden tabs', () => {
   const initial = {
@@ -79,4 +80,18 @@ test('layout preview reflects draft order, labels, colors, and visible items onl
   assert.deepEqual(preview.tabs.map(({ id }) => id), ['wall', 'control', 'binary', 'quad']);
   assert.deepEqual(preview.tabs[0]?.buttons.map(({ id }) => id), ['wall-sum-btn', 'wall-start-btn', 'wall-resume-btn']);
   assert.deepEqual(preview.tabs[0]?.buttons[0], { id: 'wall-sum-btn', label: '要点', color: '#abc' });
+});
+
+test('custom tab appears in edit groups, reorder controls, preview, and custom-button group', () => {
+  const settings = customTabSettings();
+  assert.ok(getOptionsGroups(settings).some(({ id, label }) => id === CUSTOM_TAB_ID && label === 'Synthetic tab'));
+  const moved = moveTabOrder(settings, CUSTOM_TAB_ID, -1);
+  assert.equal(moved.tabOrder?.[0], CUSTOM_TAB_ID);
+  const preview = getLayoutPreview(moved);
+  const tab = preview.tabs.find(({ id }) => id === CUSTOM_TAB_ID);
+  assert.equal(tab?.label, 'Synthetic tab');
+  assert.equal(tab?.buttons.length, 7);
+  const saved = parseSettingsJson(serializeSettings(moved));
+  assert.equal(saved.ok, true);
+  if (saved.ok) assert.equal(getOptionsGroups(saved.settings).some(({ id }) => id === CUSTOM_TAB_ID), true);
 });

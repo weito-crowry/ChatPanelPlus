@@ -8,6 +8,7 @@ import {
   validateExtensionSettings,
 } from '../src/shared/settings.ts';
 import { DEFAULT_BUTTONS } from '../src/shared/default-ui.ts';
+import { CUSTOM_BUTTON_IDS, CUSTOM_TAB_ID, customTabSettings } from './fixtures/custom-tabs.ts';
 
 test('the default settings use the current schema version', () => {
   assert.deepEqual(DEFAULT_SETTINGS, { schemaVersion: 1, answerCompletionSoundVolumePercent: 60 });
@@ -89,4 +90,38 @@ test('回答完了音の音量は旧設定を保ちつつ整数0〜100だけを�
   const parsed = parseSettingsJson(serializeSettings({ schemaVersion: 1, answerCompletionSoundVolumePercent: 37 }));
   assert.equal(parsed.ok, true);
   if (parsed.ok) assert.equal(parsed.settings.answerCompletionSoundVolumePercent, 37);
+});
+
+test('schema 1 accepts legacy settings and round-trips custom tabs with their button groups', () => {
+  assert.equal(validateExtensionSettings({ schemaVersion: 1 }).ok, true);
+  const settings = customTabSettings();
+  const parsed = parseSettingsJson(serializeSettings(settings));
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.deepEqual(parsed.settings.customTabs, settings.customTabs);
+  assert.deepEqual(parsed.settings.customButtons, settings.customButtons);
+  assert.deepEqual(parsed.settings.buttonOrder?.[CUSTOM_TAB_ID], CUSTOM_BUTTON_IDS.slice(0, 7));
+  assert.ok(parsed.settings.tabOrder?.includes(CUSTOM_TAB_ID));
+});
+
+test('custom tabs reject malformed definitions and dangling custom references', () => {
+  const settings = customTabSettings();
+  const invalid: unknown[] = [
+    { ...settings, customTabs: { 'custom-tab-not-a-uuid': { label: 'Synthetic', visible: true } } },
+    { ...settings, customTabs: { [CUSTOM_TAB_ID]: { label: 1, visible: true } } },
+    { ...settings, customTabs: { [CUSTOM_TAB_ID]: { label: 'Synthetic', visible: 'yes' } } },
+    { ...settings, customButtons: { ...settings.customButtons, [CUSTOM_BUTTON_IDS[0]!]: { ...settings.customButtons![CUSTOM_BUTTON_IDS[0] as keyof typeof settings.customButtons]!, groupId: 'custom-tab-123e4567-e89b-42d3-a456-426614174099' } } },
+    { ...settings, customTabs: {}, customButtons: settings.customButtons },
+    { ...settings, buttonOrder: { ...settings.buttonOrder, 'custom-tab-123e4567-e89b-42d3-a456-426614174099': [CUSTOM_BUTTON_IDS[0]!] } },
+    { ...settings, buttonOrder: { ...settings.buttonOrder, [CUSTOM_TAB_ID]: [...settings.buttonOrder![CUSTOM_TAB_ID]!, 'custom-123e4567-e89b-42d3-a456-426614174099'] } },
+    { ...settings, tabOrder: [CUSTOM_TAB_ID, 'custom-tab-123e4567-e89b-42d3-a456-426614174099'] },
+    { ...settings, tabOrder: [CUSTOM_TAB_ID, CUSTOM_TAB_ID] },
+    { ...settings, tabOverrides: { 'custom-tab-123e4567-e89b-42d3-a456-426614174099': { visible: false } } },
+    { ...settings, customTabs: { constructor: { label: 'Synthetic', visible: true } } },
+  ];
+  for (const value of invalid) {
+    const result = validateExtensionSettings(value);
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.reason, 'invalid-settings');
+  }
 });

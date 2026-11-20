@@ -247,3 +247,21 @@ Phase 2認証本体は上表のとおりユーザー/Muse報告ベースでPASS�
 ## Phase 3A exit status and Phase 3B gate
 
 Phase 3AのWindows Storage export確認と独立private backup、dist退避維持確認、Options警告の互換性原因分類は完了。Phase 3A GitHub reviewはこのcommit後に行う。Phase 3B/CはBLOCKEDのまま：customTabs互換性の設計・実装修正を別turnでレビューし、Chrome上の既存拡張identity、保存済みMCP URL、実Host Permissionをread-onlyで確認すること。Chrome reloadは将来もユーザー担当。build/deploy/reload、Phase 4、Storage復元や設定変更はNOT_RUN。
+
+## CPP-6 Phase 3A.5 custom-tab compatibility source fix / isolation acceptance (2026-11-20)
+
+この段階ではschemaVersion 1の保存済みcustom tab構造を読み込み・表示・基本編集できるsource互換性を追加した。Chrome実機への配備と既存Storageの操作は行っていない。custom tab作成/削除UI、設定移行、Storage復元は対象外。
+
+| 状態 | 項目 | 実測結果 |
+| --- | --- | --- |
+| PASS | Settings schema互換性 | UUIDv4形式のcustom tab IDと`label`/`visible`を型・validatorへ追加。関連custom button group、button order、tab order、tab overrideを検証し、未知custom referenceと不正custom tab definitionを`invalid-settings`で拒否する。schemaVersionは1のまま。custom tabの追加metadataは検証後も保持し、customTabsのないlegacy設定と既定UIを維持する。 |
+| PASS | Resolver・Panel view | resolverがtab order、custom label/visible、custom group内button orderを反映する。Panelはcustom tabと所属buttonを描画モデルへ含め、selected tabを保持する。非表示・削除済み・未読の選択値は先頭の可視tabへfallbackする。標準button ID/動作は既存テストで維持を確認した。 |
+| PASS | Options編集・import/reset | custom tabの表示切替、label編集、tab並べ替え、所属buttonの追加・編集・並べ替えを可能にした。tab visibilityの正本は`customTabs[id].visible`。タブ作成・削除UIは追加していない。既定値resetとlegacy importはcustomTabsと依存customButtons/orderを保持する。明示importで削除するcustom tabsはcountを表示し、削除前確認を行う。 |
+| PASS | Repository競合保護 | loadはread-only。custom tab IDごとの変更とcustom group button orderをpatch/conflict対象へ追加し、同一tab更新・stale削除・stale custom-group orderを競合拒否する。別standard fieldの更新はmergeし、sound/MCP URLだけの変更とknown-field replaceでもcustom tab/button/orderを保持する。valid custom tab IDのview stateを受け入れ、実在しない選択はPanel側でfallbackする。 |
+| PASS | 合成回帰・静的検証 | 合成custom tab 1件、custom button 10件（custom group 7件）を使ったvalidator/round-trip、resolver、Panel、Options reset/import/edit、repository read-only/競合、不正ID/定義/dangling referenceのテストを追加。TypeScript unit tests 430/430、Options static tests 4/4をPASS。実Storage値、実ID、ユーザーのラベル・本文をfixtureや出力に含めていない。 |
+| PASS | 隔離build | 4つのVite configをCLIのabsolute `outDir` overrideでGit外の新規一時directoryへ順番にbuild。Options configの`emptyOutDir`はその一時directoryだけを対象にし、他configは同directoryへ追加した。全11成果物、773569 bytes、reparse pointなし、current-user-only ACL。build出力はChromeロード元distへ配備していない。 |
+| PASS | 既存distとbackup不変 | Phase 3A manifestに対しsource/backup各11/11ファイルのbyte/SHA一致、source mtime 11/11一致をbuild前後で確認。各tree SHA-256は`12b0d27651de216f3bb63f2a339e237264ca659d178d449dcbe05ac416777263`のまま。合計767143 bytes。 |
+| NOT_RUN | Chrome実機確認 | Options表示、保存、reload、Host Permission、MCP接続をChromeで確認していない。既存Storageを読み書き・修復・移行・復元していない。 |
+| BLOCKED | Phase 3B/C | このcommitのChatGPT GitHub review完了後、既存拡張identity、保存済みOptions URLと実Host Permissionのread-only照合、Phase 3A dist/Storage backupの維持確認を満たすまで開始しない。Chromeへのdeploy/reloadとPhase 4試験は未着手。 |
+
+最終検証は`pnpm run typecheck` PASS、`pnpm run lint` PASS（source size check 171 files）、`node --experimental-strip-types --test`のTypeScript unit tests 430/430 PASS、Options static tests 4/4 PASS、隔離Vite build 4/4 PASS。`pnpm test`、通常build/deploy command、Chrome操作、本番Storage writeは実行していない。

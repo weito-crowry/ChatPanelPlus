@@ -5,13 +5,18 @@ import {
   createCustomButton,
   deleteCustomButton,
   getCustomButtonImportDeletions,
+  getCustomTabImportDeletions,
   mergeImportedSettings,
+  reorderButtonBefore,
   resetSettingsPreservingCustomButtons,
   updateCustomButton,
+  updateCustomTabLabel,
+  updateTabVisibility,
 } from '../options/src/options-state.ts';
 import { resolveDefaultUI } from '../src/shared/default-ui.ts';
 import type { CustomButtonId } from '../src/shared/default-ui.ts';
 import { DEFAULT_SETTINGS, parseSettingsJson, serializeSettings } from '../src/shared/settings.ts';
+import { CUSTOM_BUTTON_IDS, CUSTOM_TAB_ID, customTabSettings } from './fixtures/custom-tabs.ts';
 
 const firstId = 'custom-123e4567-e89b-42d3-a456-426614174020';
 const secondId = 'custom-123e4567-e89b-42d3-a456-426614174021';
@@ -111,4 +116,39 @@ test('旧JSONは保存済みカスタムを保持し、明示されたJSONだけ
   const explicitImport = { schemaVersion: 1 as const, customButtons: { [firstId]: first } };
   assert.deepEqual(getCustomButtonImportDeletions(current, explicitImport), [secondId]);
   assert.deepEqual(getCustomButtonImportDeletions(current, { schemaVersion: 1, customButtons: {} }), [firstId, secondId]);
+});
+
+test('custom tabのlabel・visible・button編集はgroupと将来metadataを保持する', () => {
+  const settings = customTabSettings();
+  const renamed = updateCustomTabLabel(settings, CUSTOM_TAB_ID, 'Renamed synthetic tab');
+  assert.equal(renamed.customTabs?.[CUSTOM_TAB_ID]?.label, 'Renamed synthetic tab');
+  assert.deepEqual(renamed.customTabs?.[CUSTOM_TAB_ID]?.futureField, { retained: true });
+  const hidden = updateTabVisibility(renamed, CUSTOM_TAB_ID, false);
+  assert.equal(hidden.customTabs?.[CUSTOM_TAB_ID]?.visible, false);
+  assert.equal(hidden.tabOverrides?.[CUSTOM_TAB_ID]?.visible, false);
+  const reordered = reorderButtonBefore(hidden, CUSTOM_TAB_ID, CUSTOM_BUTTON_IDS[1] as never, CUSTOM_BUTTON_IDS[0] as never);
+  assert.deepEqual(reordered.buttonOrder?.[CUSTOM_TAB_ID]?.slice(0, 2), [CUSTOM_BUTTON_IDS[1], CUSTOM_BUTTON_IDS[0]]);
+  const added = createCustomButton(hidden, 'custom-123e4567-e89b-42d3-a456-426614174099', {
+    groupId: CUSTOM_TAB_ID, label: 'Synthetic new button', color: '#123456', visible: true, kind: 'insert', text: '',
+  });
+  assert.equal(added.customButtons?.['custom-123e4567-e89b-42d3-a456-426614174099' as `custom-${string}`]?.groupId, CUSTOM_TAB_ID);
+  assert.ok(added.buttonOrder?.[CUSTOM_TAB_ID]?.includes('custom-123e4567-e89b-42d3-a456-426614174099'));
+});
+
+test('resetとlegacy importはcustom tab依存を保ち、明示置換の削除を識別する', () => {
+  const settings = customTabSettings();
+  const reset = resetSettingsPreservingCustomButtons(settings);
+  assert.deepEqual(reset.customTabs, settings.customTabs);
+  assert.equal(reset.customButtons?.[CUSTOM_BUTTON_IDS[0]! as `custom-${string}`]?.groupId, CUSTOM_TAB_ID);
+  assert.equal(reset.buttonOrder?.[CUSTOM_TAB_ID]?.length, 7);
+  assert.ok(reset.tabOrder?.includes(CUSTOM_TAB_ID));
+
+  const legacyImport = { schemaVersion: 1 as const, answerCompletionSoundEnabled: true };
+  const merged = mergeImportedSettings(legacyImport, settings);
+  assert.deepEqual(merged.customTabs, settings.customTabs);
+  assert.deepEqual(merged.customButtons, settings.customButtons);
+  assert.equal(serializeSettings(merged).includes('custom-tab-'), true);
+
+  const explicitRemoval = { schemaVersion: 1 as const, customTabs: {}, customButtons: {} };
+  assert.deepEqual(getCustomTabImportDeletions(settings, explicitRemoval), [CUSTOM_TAB_ID]);
 });
