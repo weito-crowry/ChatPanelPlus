@@ -106,3 +106,32 @@ Phase 2Aは読み取り専用調査、既存Phase 1 backupの検証、Git外の�
 - 変更直前に影響する設定ごとの新規user-only backupを作成しhash/size/time/ACLを確認する。rollback時は変更後の状態も別backupし、復元元manifestと宛先を照合して該当fileだけ戻し、ACL/hashとloopback/Tunnel healthを検証する。サービスownerと全turn完了を確定する前に復元後の再起動をしない。
 
 実機の秘密値、認証値、拡張ID、thread/turn ID、会話本文、機器のローカル実パスやprivate IPはこの文書に記録していない。Git外backupのmanifestと`phase2a-local-operations.txt`だけにローカル復元情報を保存した。
+
+## CPP-6 Phase 2B 認証設定・安全な手動再起動準備 (2026-11-20)
+
+Phase 2Bでは認証設定とユーザー手動起動の準備だけを実施した。稼働中Bridge/Console/Tunnelの停止・再起動、Chrome操作、実MCP requestは行っていない。設定ファイルの更新は次回起動用であり、稼働中listenerへの反映・認証成功を示さない。
+
+| 状態 | 項目 | 根拠・結果 |
+| --- | --- | --- |
+| PASS | Chrome登録情報の確認 | ユーザーがChrome UIで登録済みunpacked拡張のversion `0.1.5`、読み込み元がChatPanelPlusの`dist`、Options endpointがloopback MCPであると確認。具体的な拡張ID・URL・ローカル絶対pathはGitへ記録していない。`deploy:chrome`の固定宛先は実際の読み込み元と異なる。 |
+| PASS | 次回起動用Origin設定 | 実効設定の`bridge.allowed_origins`に、ユーザー確認済み拡張Originを追加した。既存項目は保持。`host=127.0.0.1`、port `18000`、`lan_enabled=false`、空の`allowed_hosts`を維持し、Tunnel/Workflow/UI/Firewall設定は変更していない。 |
+| PASS | Secure backup・ACL | 設定変更前にGit外の新規一意なPhase 2B backupを作成。baseline hash/size/time、source不変、元configのACL情報を記録し、退避元とbackupを照合。config候補とsecret-bearing filesを含む運用領域はcurrent Windows userだけのACL。既存Phase 1 backupは上書きしていない。 |
+| PASS | CPP tokenの保存準備 | 32 bytesの暗号学的乱数から64文字の形式を作り、DPAPI `CurrentUser`で暗号化してGit外に保存。復号round-trip、形式、利用可能なfull MCP tokenとのdistinctnessを値を表示せず確認。平文token、値、hashはGit/ログへ記録していない。 |
+| PASS | BridgeConfig・Host互換性 | 同一directoryの候補を隔離Python processでTOML parse/BridgeConfig loadし、loopback・port・LAN無効・Origin・CPP token形式を確認。空の`allowed_hosts`は維持され、loopback用Host既定値がtransport設定に入ることも確認。これは起動serverの認証/health試験ではない。 |
+| PASS | Consoleへの環境引継ぎ | 既存sourceを静的確認。Console launcherはsystem environmentを取得してchildへ設定し、managed config pathを明示する。CPP tokenはmanaged-config override keysから除外され、BridgeConfigはprocess environmentから読む。user PowerShellからの実起動・環境受領は未確認。 |
+| PASS | ユーザー用手順・helper | Git外に、user-only ACLのDPAPI token generator、同一PowerShell sessionへ値を表示せずprocess環境を設定するbootstrap、明示clipboard handoff、port/process ownerのread-only preflight、全turn完了ゲートとrollback手順を作成。PowerShell parserで全helperの構文を確認。bootstrapはsecretをpersistent User/System environmentに保存せず、port/Console/Tunnel credential参照が未解決なら起動せず停止する。 |
+| BLOCKED | 全Codex turn完了・再起動 | 現在の調査turnは稼働中で、既存Bridge listenerはそのprocess ancestry上にある。全target/threadのpage走査、各threadの`codex_status`確認、外部Codex Desktop/ChatGPT turnの目視確認は未実施。全turn完了とは判定していない。 |
+| USER_ACTION_REQUIRED | 手動停止・起動 | turnゲート通過後、ユーザーがConsole/Tunnel/Bridge関係とlistener PID/path/start timeを再照合し、port解放を確認してから同一PowerShellでbootstrapと`uv run codex-bridge-console`を実施する。Codexから停止・再起動は行っていない。 |
+| NOT_RUN | live認証・再起動後確認 | ユーザーPowerShellへのtoken注入、Bridge起動、`18001/healthz`、CPP `tools/list`、read-only tool call、401/deny動作、Tunnel/ChatGPT full route復旧は未試験。後続ターンでのみ確認する。 |
+| USER_ACTION_REQUIRED | Phase 3–4 | 登録済み`dist`の安全バックアップを別途行うまでdeploy/reloadしない。Host Permission付与、Optionsへのtoken登録、実機機能試験、新規/中断Codex turnは未実施。 |
+
+### ユーザー手動手順の要点
+
+- 起動元はユーザーの通常PowerShell。Codexが既に開いているshellや稼働中Consoleへ環境変数を後付けできない。Git外bootstrapをそのPowerShellでdot-sourceし、その同じshellから起動する。CPP tokenはprocess environmentだけでBridge childへ継承される。
+- 停止前に全turn確認を完了し、`codex_targets`の対象を固定、各targetの`codex_threads(limit=100)`を`next_cursor=null`まで逐次走査し、全threadの`codex_status`でcurrent executionとlast turnの証拠を確認する。cursor cycle、重複、page失敗/上限、途中のtarget/thread変動、running/inferred/unknown/needs-input状態、外部turn不明はBLOCKEDとする。外部Codex Desktop/ChatGPTもユーザーが確認する。current turn終了前にall-clearを宣言しない。
+- listener PIDは`Get-NetTCPConnection`と`Win32_Process`の実行path/creation timeで毎回再照合する。Consoleが現在のlistenerを所有する根拠はなく、Consoleを閉じてもexternal listenerが残る可能性がある。穏当なConsole stopはConsoleが対象Bridgeを所有しcontrol可能な場合だけ使う。制御できないlistenerの強制停止は、全turn完了とPID/path/timeの直前再照合後に限るユーザー操作であり、in-flight requestや子processへ影響し得る。
+- 旧Bridge停止後に18000/18001、旧Console/Tunnel整理後に55402のlistenがすべて解消したことを確認する。残存portがあれば新Consoleを起動しない。Console/Tunnelを閉じると既存ChatGPT MCP routeは一時切断する。復旧は未保証。
+- 再起動後、loopbackのUI health status、MCP initialize、CPP `tools/list`のexact 4件（`codex_targets`、`codex_threads`、`codex_status`、`codex_wait`）を確認する。all-turn gate中は`codex_wait`を呼ばない。read-only 3 toolだけで状態を確認し、Phase 4でのstart/continue拒否検査には実target/promptを渡さない。既存Tunnel/ChatGPT full routeの再接続も別途確認する。
+- LAN公開は今回不要で、Firewall変更もない。HTTP BearerをLAN利用する場合は平文となる。
+
+具体的なOrigin、token、DPAPI blob名、backup path/hash/ACL SDDL、thread/turn識別子、会話本文、ユーザーのローカル実行pathはGit外のPhase 2B運用メモと検証manifestにだけ保存した。
