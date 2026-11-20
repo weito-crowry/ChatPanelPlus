@@ -348,3 +348,20 @@ pnpm build、pnpm deploy:chrome、scripts/deploy-chrome.mjsは使用していな
 | NOT_RUN | 配備・Chrome受入 | production dist、rollback siblings、Phase 3A backup、Chrome profile/Storage/tokenにはアクセスも変更もしていない。build、deploy、Chrome reload、Options操作、MCP live testは未実施。修正版がChrome上で有効になったことはまだ確認していない。 |
 
 今回の変更対象は`src/background/mcp-transport.ts`、`tests/codexbridge-final-answer.test.ts`、本記録のみ。Host Permission、Loopback/Local Network Access、CORS、Bridge、Service Worker listener/UIの変更はない。ユーザーが別工程でChromeを手動reloadした後に、OptionsからMCP接続を実機確認する。
+
+## CPP-6 Phase 3C-FETCHFIX-D1 background-only deployment (2026-11-21)
+
+レビュー済みnative `fetch` receiver修正を、隔離Vite buildで`background.js`だけ生成して既存distへ反映した。Chromeの登録先パスは維持し、ディレクトリrenameによって旧active distをrollback siblingとして保持した。ソース・テスト変更はなく、本項目だけを追加した。Chrome reload、Options、Storage API、MCP live testは実施していない。
+
+| 状態 | 項目 | 実測結果 |
+| --- | --- | --- |
+| PASS | sourceと隔離build | sourceはレビュー済みcommit `3b2b959ed6f7c70100662c3d2d7bb27e50670a3b`。`vite.config.background.ts`だけをGit外の絶対outDirへbuildし、出力の`background.js` 68,797 bytes / SHA-256 `265807c691f210994513d0cb4108f94507f9de2110eead378e938a437ca1a401`に`globalThis.fetch`呼出しを確認した。ViteのpublicDirコピーも生成されたが配備には使っていない。 |
+| PASS | 合成staging | predeploy distの他10ファイルは内容・相対path・mtimeを維持し、background.jsだけを更新。11ファイル / 783,345 bytes、tree SHA-256 `319be78fbe8d05e8823021d2124ecf2d99d4b7717e705f916e9e3446673a3f4f`。manifestはpredeployとbyte一致、version 0.1.5、参照先解決、reparse pointなし、current-user-only ACLを確認した。 |
+| PASS | 同一登録パスへのファイル配備 | 新active distは11ファイル / 783,345 bytesで隔離stagingと一致し、tree SHA-256は`319be78fbe8d05e8823021d2124ecf2d99d4b7717e705f916e9e3446673a3f4f`。manifest version 0.1.5。配備は同一volumeのディレクトリrenameで行い、Chrome UIや拡張コンテキストは操作していない。 |
+| PASS | 新rollback保持 | 配備直前のactive distを新rollback siblingとして保持。11ファイル / 783,320 bytes、tree SHA-256 `968140c9939374851e506cdac95a2df74e3a425aed21d8a4d76de118b907cf0d`。相対path、size、SHA-256、mtimeとACL fingerprintがrename前のactive distに一致した。 |
+| PASS | 既存rollback・Phase 3A backup | 先行rollback世代（11ファイル / 773,569 bytes、recorded tree SHA-256 `1d5f31e2cda9d80327ee25225ae8b27a139ef8e29c4a27fec4f1f9601e93a`）は保持。さらに古い世代はPhase 3Aの11ファイル記録とACL fingerprintに一致。Phase 3A dist backupも11ファイル / 767,143 bytesでfile manifestに一致し、recorded tree SHA-256 `12b0d27651de216f3bb63f2a339e237264ca659d178d449dcbe05ac416777263`を維持した。 |
+| PASS | Storage backup保全 | Git外の既存Storage backupは661,547 bytesと記録済みSHA-256およびcurrent-user-only ACLが一致。検証はバックアップファイルのmetadata/hashだけで、JSON内容・Chrome profile・tokenは読み出していない。 |
+| NOT_RUN | Chrome reload・実機受入 | 拡張reload、既存ChatGPT tabのCtrl+R、Options再表示、Host Permission/LNA UI、ローカルprobe、MCP接続確認は未実施。ファイル配備の成功はChromeが新コードを読み込んだことを示さない。 |
+| USER_ACTION_REQUIRED | 次のChrome確認 | ChatGPTのGitHubレビュー後、ユーザーがChrome Detailsで登録pathを確認し、拡張を手動reloadする。既存ChatGPT tabを再読み込みしてからOptionsを開き直し、設定・custom tab/button表示、権限表示、ローカルprobeと接続確認の結果を確認する。 |
+
+この段階のbuild/deployで`pnpm test`、通常build/deploy script、Chrome操作、Chrome Storage変更、Bridge変更は行っていない。unit tests 441/441、Options static tests 5/5、typecheck、lintはレビュー済みsource commitでの結果であり、このfile-only deployment turnでは再実行していない。詳細なパス、file inventory、mtime、ACL fingerprint、Storage backup hash、復旧手順はGit外のuser-only運用記録に保存した。
