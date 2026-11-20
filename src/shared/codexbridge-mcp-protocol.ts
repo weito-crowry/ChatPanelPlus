@@ -7,6 +7,82 @@ export const CODEX_BRIDGE_MCP_DEFAULT_URL = 'http://127.0.0.1:18000/mcp';
 export const CODEX_BRIDGE_MCP_PROTOCOL_VERSION = '2025-03-26';
 export const CODEX_BRIDGE_MCP_SUPPORTED_PROTOCOL_VERSIONS = ['2025-03-26', '2025-06-18'] as const;
 export const CODEX_BRIDGE_MCP_READ_ONLY_PROBE = 'codex_targets';
+export const CODEX_BRIDGE_MCP_SAFE_ERROR_NAMES = [
+  'AbortError', 'NetworkError', 'NotAllowedError', 'SecurityError', 'TypeError',
+] as const;
+
+export type CodexBridgeMcpSafeErrorName = typeof CODEX_BRIDGE_MCP_SAFE_ERROR_NAMES[number];
+export type CodexBridgeMcpTargetAddressSpace = 'loopback' | 'local';
+export type CodexBridgeMcpNetworkTarget = CodexBridgeMcpTargetAddressSpace | 'external' | 'unknown';
+
+export type CodexBridgeMcpDiagnosticStage =
+  | 'request'
+  | 'http-response'
+  | 'response-stream'
+  | 'protocol'
+  | 'timeout';
+
+export function safeCodexBridgeMcpErrorName(value: unknown): CodexBridgeMcpSafeErrorName | undefined {
+  try {
+    if (typeof value !== 'object' || value === null || !('name' in value)) return undefined;
+    const name = value.name;
+    return typeof name === 'string' && CODEX_BRIDGE_MCP_SAFE_ERROR_NAMES.includes(name as CodexBridgeMcpSafeErrorName)
+      ? name as CodexBridgeMcpSafeErrorName
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseIpv4(hostname: string): readonly [number, number, number, number] | null {
+  const parts = hostname.split('.');
+  if (parts.length !== 4 || !parts.every((part) => /^\d{1,3}$/.test(part))) return null;
+  const octets = parts.map(Number);
+  if (!octets.every((part) => part >= 0 && part <= 255)) return null;
+  return octets as unknown as readonly [number, number, number, number];
+}
+
+function classifyLocalHostname(hostnameValue: string): CodexBridgeMcpTargetAddressSpace | null {
+  const hostname = hostnameValue.replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
+  if (hostname === 'localhost' || hostname === '::1') return 'loopback';
+
+  const ipv4 = parseIpv4(hostname);
+  if (ipv4) {
+    const [first, second] = ipv4;
+    if (first === 127) return 'loopback';
+    if (first === 10 || (first === 172 && second >= 16 && second <= 31)
+      || (first === 192 && second === 168) || (first === 169 && second === 254)) return 'local';
+    return null;
+  }
+
+  if (hostname.endsWith('.local')) return 'local';
+  if (hostname.includes(':')) {
+    const firstHextet = Number.parseInt(hostname.split(':', 1)[0] || '0', 16);
+    if (!Number.isFinite(firstHextet)) return null;
+    if ((firstHextet >= 0xfc00 && firstHextet <= 0xfdff)
+      || (firstHextet >= 0xfe80 && firstHextet <= 0xfebf)) return 'local';
+    if ((firstHextet & 0xe000) === 0x2000) return null;
+  }
+  return null;
+}
+
+export function classifyCodexBridgeMcpNetworkTarget(value: string): CodexBridgeMcpNetworkTarget {
+  let endpoint: URL;
+  try {
+    endpoint = new URL(value);
+  } catch {
+    return 'unknown';
+  }
+  if (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') return 'unknown';
+  const localTarget = classifyLocalHostname(endpoint.hostname);
+  if (localTarget) return localTarget;
+  if (parseIpv4(endpoint.hostname.replace(/^\[|\]$/g, ''))) return 'external';
+  if (endpoint.hostname.includes(':')) {
+    const firstHextet = Number.parseInt(endpoint.hostname.replace(/^\[|\]$/g, '').split(':', 1)[0] || '0', 16);
+    if (Number.isFinite(firstHextet) && (firstHextet & 0xe000) === 0x2000) return 'external';
+  }
+  return 'unknown';
+}
 
 export type CodexBridgeMcpProtocolVersion = typeof CODEX_BRIDGE_MCP_SUPPORTED_PROTOCOL_VERSIONS[number];
 
@@ -44,7 +120,13 @@ export type CodexBridgeMcpTestResponse =
       toolCount: number;
       readOnlyProbe: typeof CODEX_BRIDGE_MCP_READ_ONLY_PROBE;
     }>
-  | Readonly<{ ok: false; reason: CodexBridgeMcpDiagnosticCode }>;
+  | Readonly<{
+      ok: false;
+      reason: CodexBridgeMcpDiagnosticCode;
+      stage?: CodexBridgeMcpDiagnosticStage;
+      httpStatus?: number;
+      errorName?: CodexBridgeMcpSafeErrorName;
+    }>;
 
 export type CodexBridgeReadFailureReason = CodexBridgeMcpDiagnosticCode | 'settings-unavailable';
 export type CodexBridgeReadResponse<T> = Readonly<{ ok: true; data: T }>

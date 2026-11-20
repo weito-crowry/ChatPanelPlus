@@ -59,11 +59,43 @@ test('MCP接続確認はホスト権限を明示要求し、tokenをsession stor
   assert.ok(page.includes('McpConnectionSettings'));
   for (const behavior of [
     'type="url"', 'type="password"', 'chrome.storage.session.set',
-    'chrome.storage.session.remove', 'chrome.permissions.request({ origins: [parsed.originPattern] })',
+    'chrome.storage.session.remove', 'chrome.permissions.request(permissions)',
     'CODEX_BRIDGE_MCP_TEST_MESSAGE', '接続確認', 'codex_targets',
   ]) assert.ok(connection.includes(behavior), `MCP connection settings missing ${behavior}`);
   assert.ok(!connection.includes('chrome.storage.local'));
   assert.ok(!connection.includes('console.'));
   assert.ok(connection.includes('endpoint: parsed.url'));
   assert.ok(!connection.includes('endpoint: token'));
+});
+
+test('MCP Optionsはホスト権限とLNAを分けて表示し、明示クリック時だけローカルprobeを送る', async () => {
+  const [connection, networkAccess, protocol] = await Promise.all([
+    readFile(mcpSettingsPath, 'utf8'),
+    readFile(resolve(fileURLToPath(new URL('../options/src/mcp-network-access.ts', import.meta.url))), 'utf8'),
+    readFile(resolve(fileURLToPath(new URL('../src/shared/codexbridge-mcp-protocol.ts', import.meta.url))), 'utf8'),
+  ]);
+  assert.ok(connection.includes('chrome.permissions.contains'));
+  assert.ok(connection.includes('navigator.permissions.query'));
+  assert.ok(connection.includes('Chromeのサイト設定で許可を変更してください'));
+  assert.ok(connection.includes('API非対応または状態を確認できません'));
+  assert.ok(connection.includes('HTTP応答の読み取り中に通信が中断しました'));
+  assert.ok(connection.includes('Service Workerから接続確認応答を受け取れませんでした'));
+  assert.ok(connection.includes('listener登録、Optionsの拡張context'));
+  assert.ok(connection.includes('原因はこの結果だけでは特定できません'));
+  assert.ok(!connection.includes('サーバーの起動状態を確認してください'));
+  assert.ok(networkAccess.includes('loopback-network'));
+  assert.ok(networkAccess.includes('local-network'));
+  assert.ok(connection.includes('ローカル接続を確認'));
+  assert.ok(connection.includes('probeVerifiedEndpoint !== parsed.url'));
+  assert.ok(connection.includes('MCP要求はまだ送信していません'));
+  assert.ok(connection.includes('probeMcpLocalNetwork'));
+  assert.ok(connection.includes('(permissions) => chrome.permissions.request(permissions)'));
+  assert.ok(networkAccess.includes("'/__cpp_lna_probe__'"));
+  assert.ok(networkAccess.includes("credentials: 'omit'"));
+  assert.ok(networkAccess.includes("cache: 'no-store'"));
+  assert.ok(networkAccess.includes("mode: 'cors'"));
+  assert.ok(!connection.includes('console.'));
+  assert.ok(!connection.includes('navigator.permissions.request'));
+  assert.ok(!connection.includes('chrome.permissions.request') || connection.includes('onClick={() => void testConnection()}'));
+  assert.ok(!protocol.includes('local-network-access'));
 });

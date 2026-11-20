@@ -1,3 +1,10 @@
+import {
+  classifyCodexBridgeMcpNetworkTarget,
+  safeCodexBridgeMcpErrorName,
+  type CodexBridgeMcpDiagnosticStage,
+  type CodexBridgeMcpSafeErrorName,
+} from '../shared/codexbridge-mcp-protocol.ts';
+
 export type McpFailureCode =
   | 'authentication-required'
   | 'forbidden'
@@ -14,11 +21,24 @@ export type McpFailureCode =
 
 export class McpTransportError extends Error {
   readonly code: McpFailureCode;
+  readonly stage?: CodexBridgeMcpDiagnosticStage;
+  readonly httpStatus?: number;
+  readonly errorName?: CodexBridgeMcpSafeErrorName;
 
-  constructor(code: McpFailureCode) {
+  constructor(
+    code: McpFailureCode,
+    diagnostics: Readonly<{
+      stage?: CodexBridgeMcpDiagnosticStage;
+      httpStatus?: number;
+      errorName?: CodexBridgeMcpSafeErrorName;
+    }> = {},
+  ) {
     super(code);
     this.name = 'McpTransportError';
     this.code = code;
+    this.stage = diagnostics.stage;
+    this.httpStatus = diagnostics.httpStatus;
+    this.errorName = diagnostics.errorName;
   }
 }
 type JsonRpcEnvelope = Readonly<Record<string, unknown>>;
@@ -100,24 +120,32 @@ export class StreamableHttpMcpTransport {
 
       let response: Response;
       try {
-        response = await this.fetchImpl(this.endpoint, {
+        const addressSpace = classifyCodexBridgeMcpNetworkTarget(this.endpoint);
+        const init: RequestInit & { targetAddressSpace?: 'loopback' | 'local' } = {
           method: 'POST',
           headers,
           body: JSON.stringify(payload),
           credentials: 'omit',
           cache: 'no-store',
           signal: controller.signal,
+          ...(addressSpace === 'loopback' || addressSpace === 'local' ? { targetAddressSpace: addressSpace } : {}),
+        };
+        response = await this.fetchImpl(this.endpoint, init);
+      } catch (error) {
+        const errorName = safeCodexBridgeMcpErrorName(error);
+        throw new McpTransportError('disconnected', {
+          stage: 'request',
+          ...(errorName ? { errorName } : {}),
         });
-      } catch {
-        throw new McpTransportError('disconnected');
       }
 
-      if (response.status === 401) throw new McpTransportError('authentication-required');
-      if (response.status === 403) throw new McpTransportError('forbidden');
+      const httpDiagnostics = { stage: 'http-response' as const, httpStatus: response.status };
+      if (response.status === 401) throw new McpTransportError('authentication-required', httpDiagnostics);
+      if (response.status === 403) throw new McpTransportError('forbidden', httpDiagnostics);
       if (response.status === 404) {
-        throw new McpTransportError(this.sessionId ? 'session-expired' : 'endpoint-not-found');
+        throw new McpTransportError(this.sessionId ? 'session-expired' : 'endpoint-not-found', httpDiagnostics);
       }
-      if (!response.ok) throw new McpTransportError('http-error');
+      if (!response.ok) throw new McpTransportError('http-error', httpDiagnostics);
       if (expectedId === null) return undefined;
 
       const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
@@ -135,15 +163,19 @@ export class StreamableHttpMcpTransport {
       timeoutHandle = setTimeout(() => {
         timedOut = true;
         controller.abort();
-        reject(new McpTransportError('timeout'));
+        reject(new McpTransportError('timeout', { stage: 'timeout' }));
       }, this.timeoutMs);
     });
     try {
       return await Promise.race([work, timeout]);
     } catch (error) {
-      if (timedOut) throw new McpTransportError('timeout');
+      if (timedOut) throw new McpTransportError('timeout', { stage: 'timeout' });
       if (error instanceof McpTransportError) throw error;
-      throw new McpTransportError('disconnected');
+      const errorName = safeCodexBridgeMcpErrorName(error);
+      throw new McpTransportError('disconnected', {
+        stage: 'request',
+        ...(errorName ? { errorName } : {}),
+      });
     } finally {
       if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
     }
@@ -172,7 +204,11 @@ export class StreamableHttpMcpTransport {
       text += decoder.decode();
     } catch (error) {
       if (error instanceof McpTransportError) throw error;
-      throw new McpTransportError('protocol-error');
+      const errorName = safeCodexBridgeMcpErrorName(error);
+      throw new McpTransportError('disconnected', {
+        stage: 'response-stream',
+        ...(errorName ? { errorName } : {}),
+      });
     } finally {
       void reader.cancel().catch(() => {});
     }
@@ -215,7 +251,11 @@ export class StreamableHttpMcpTransport {
       return consumeFrame(buffer);
     } catch (error) {
       if (error instanceof McpTransportError) throw error;
-      throw new McpTransportError('disconnected');
+      const errorName = safeCodexBridgeMcpErrorName(error);
+      throw new McpTransportError('disconnected', {
+        stage: 'response-stream',
+        ...(errorName ? { errorName } : {}),
+      });
     } finally {
       void reader.cancel().catch(() => {});
     }

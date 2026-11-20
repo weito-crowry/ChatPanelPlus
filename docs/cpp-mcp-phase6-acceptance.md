@@ -297,3 +297,21 @@ Phase 3AのWindows Storage export確認と独立private backup、dist退避維�
 | NOT_RUN | Chrome/MCP/後続試験 | Chrome reload、Options設定保存、permission request、MCP接続、Storage変更/復元、Phase 3C、Phase 4は未実施。tokenにはアクセスしていない。 |
 
 pnpm build、pnpm deploy:chrome、scripts/deploy-chrome.mjsは使用していない。Chrome UIやprofileは操作・読出ししていない。ファイル置換の成功だけではChrome側のreload成功やMCP接続を示さない。Phase 3Cはユーザーreload後のOptions確認とHost Permission許可を経て、別途受入を行う。
+
+## CPP-6 Phase 3C-LNA diagnostics source implementation / isolated acceptance (2026-11-21)
+
+この段階ではOptionsの権限表示・明示的ローカルHTTP確認と、MCP接続診断の失敗分類を実装した。コード・テスト・この記録だけを変更し、Chrome、Bridge、Storage、登録済みdist、rollback、private backupには触れていない。
+
+| 状態 | 項目 | 実測結果 |
+| --- | --- | --- |
+| PASS | Host PermissionとLNA表示 | Optionsは`chrome.permissions.contains`で接続先originのHost Permissionをread-only表示する。`loopback-network`と`local-network`のgranular stateは別表示し、API非対応/拒否時に画面を落とさない。許可要求は接続確認ボタンからのみ行う。LNAに対する`request()`は追加していない。 |
+| PASS | Optionsからの初回ローカル確認 | loopback/private targetではChrome Host Permissionが確認されるまでHTTPを送らず、Options内の明示ボタンからだけcredentialなしGET `/__cpp_lna_probe__`を送る。bodyは読まずstatusだけを使い、404を含むHTTP応答を到達として記録する。成功したendpointに限り、続くMCP試験を許可する。LNA queryが`prompt`のままでもprobe応答を得た場合は止めない。 |
+| PASS | address space分類 | 127/8・localhost・IPv6 loopbackは`loopback`、RFC1918/link-local/IPv6 ULA・link-local・`.local`は`local`とし、対象外には`targetAddressSpace`を付けない。DNSで実IPを判定できないHTTP/HTTPS hostnameは`unknown`として誤った権限分類や事前probeを行わない。 |
+| PASS | MCP診断分類 | 既存transport reason (`disconnected`等)は維持し、接続確認応答にrequest/HTTP response/response-stream/protocol/timeout stage、HTTP status、allowlist error nameを必要時だけ付与する。fetch拒否とHTTP後のreader失敗を分離し、401/403/404/500、protocol/version、timeout、response-sizeを扱う。生message/stack/URL/token/bodyは応答へ含めない。 |
+| PASS | Optionsの日本語説明 | fetch拒否は「サーバー停止」と断定せず、接続先・権限・CORS・Service Worker Network/Consoleの確認を案内する。Service Workerとのruntime messaging自体が失敗した場合は、起動・listener登録・Options context確認を別に案内する。 |
+| USER_REPORTED | Chrome実機の追加診断 | ユーザーはHost Permission=trueでもOptionsからのruntime messageが`Receiving end does not exist`相当で直ちに失敗し、その操作に対応するService Worker `/mcp` requestが0件だったと報告。Service Worker DevToolsからの手動GET/POSTはHTTP応答、手動MCP initializeはHTTP 200 SSEと先頭chunk受信に成功したとの報告がある。これはOptions→background message経路の問題を示唆するが、listener未登録、worker起動失敗、Options context不一致のどれかは確定していない。Chrome上のlistener登録確認はChatGPT側の別レビューに委ねる。 |
+| PASS | 合成テスト・静的検査 | TypeScript unit tests 440/440、Options static tests 5/5、`pnpm run typecheck`、source size check、変更対象ファイルのESLintをPASS。合成例でLNA target分類、permission granted/prompt/denied/unsupported、Host Permission granted/denied/rejected、HTTP 404 probe、fetch/stream failure、HTTP status、timeout、protocol/size、raw error非出力、monitorのlegacy `disconnected` code維持を確認した。 |
+| FAIL | repository全体lint | `pnpm run lint`のsource size checkはPASSしたが、`eslint .`がrepository siblingに保持された既存rollback成果物も再帰走査し、Chrome用bundleに多数の環境global lint errorを報告して終了した。変更対象ファイルへ限定したESLintはPASS。rollback成果物は編集・削除していない。 |
+| NOT_RUN | Build/実機 | `pnpm test`、build、deploy、Chrome操作、extension reload、Host Permission/LNA prompt、Options→Service Worker runtime messaging、MCP live test、Storage read/write、Phase 4は未実施。 |
+
+このcommitはsource実装のレビュー用であり、現在Chromeがロードするdistへ未反映。Chrome実機でのpermission UIとOptions→background listener経路は未検証のまま。ChatGPTのGitHubレビュー後、Chrome側確認と安全なisolated build/deployは別工程で行う。CodexBridge sourceは変更していない。

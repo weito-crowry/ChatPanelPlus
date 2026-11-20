@@ -2,6 +2,7 @@ import {
   CODEX_BRIDGE_MCP_TEST_MESSAGE,
   CODEX_BRIDGE_MCP_TOKEN_SESSION_KEY,
   parseCodexBridgeMcpEndpoint,
+  type CodexBridgeMcpDiagnosticCode,
   type CodexBridgeMcpTestMessage,
   type CodexBridgeMcpTestResponse,
 } from '../shared/codexbridge-mcp-protocol.ts';
@@ -36,19 +37,33 @@ function isTestMessage(value: unknown): value is CodexBridgeMcpTestMessage {
 
 function responseForError(error: unknown): CodexBridgeMcpTestResponse {
   if (error instanceof McpTransportError) {
+    let reason: CodexBridgeMcpDiagnosticCode;
     switch (error.code) {
-      case 'authentication-required': return { ok: false, reason: 'authentication-required' };
-      case 'forbidden': return { ok: false, reason: 'forbidden' };
-      case 'endpoint-not-found': return { ok: false, reason: 'endpoint-not-found' };
-      case 'session-expired': return { ok: false, reason: 'session-expired' };
-      case 'http-error': return { ok: false, reason: 'http-error' };
-      case 'disconnected': return { ok: false, reason: 'disconnected' };
-      case 'timeout': return { ok: false, reason: 'timeout' };
-      case 'protocol-error': return { ok: false, reason: 'protocol-error' };
-      case 'protocol-version-unsupported': return { ok: false, reason: 'protocol-version-unsupported' };
-      case 'readonly-tool-unavailable': return { ok: false, reason: 'readonly-tool-unavailable' };
-      case 'readonly-probe-failed': return { ok: false, reason: 'readonly-probe-failed' };
+      case 'authentication-required': reason = 'authentication-required'; break;
+      case 'forbidden': reason = 'forbidden'; break;
+      case 'endpoint-not-found': reason = 'endpoint-not-found'; break;
+      case 'session-expired': reason = 'session-expired'; break;
+      case 'http-error': reason = 'http-error'; break;
+      case 'disconnected': reason = 'disconnected'; break;
+      case 'timeout': reason = 'timeout'; break;
+      case 'protocol-error': reason = 'protocol-error'; break;
+      case 'protocol-version-unsupported': reason = 'protocol-version-unsupported'; break;
+      case 'readonly-tool-unavailable': reason = 'readonly-tool-unavailable'; break;
+      case 'readonly-probe-failed': reason = 'readonly-probe-failed'; break;
+      case 'response-too-large': reason = 'response-too-large'; break;
     }
+    const stage = error.stage
+      ?? (error.code === 'timeout' ? 'timeout'
+        : error.code === 'protocol-error' || error.code === 'protocol-version-unsupported'
+          || error.code === 'readonly-tool-unavailable' || error.code === 'readonly-probe-failed'
+          || error.code === 'response-too-large' ? 'protocol' : undefined);
+    return {
+      ok: false,
+      reason,
+      ...(stage ? { stage } : {}),
+      ...(error.httpStatus ? { httpStatus: error.httpStatus } : {}),
+      ...(error.errorName ? { errorName: error.errorName } : {}),
+    };
   }
   return { ok: false, reason: 'unknown-error' };
 }
