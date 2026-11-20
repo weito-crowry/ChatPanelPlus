@@ -104,3 +104,31 @@ test('MCP JSON responses above the transport byte bound fail explicitly', async 
   await assert.rejects(transport.request('read', {}), (error: unknown) =>
     error instanceof McpTransportError && error.code === 'response-too-large');
 });
+
+test('default fetch is invoked with the global receiver', { concurrency: false }, async () => {
+  const originalFetch = globalThis.fetch;
+  const receiverCheckingFetch = function (
+    this: unknown,
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> {
+    if (this !== globalThis) throw new TypeError('Illegal invocation');
+    assert.equal(String(input), 'https://bridge.example.test/mcp');
+    assert.equal(init?.method, 'POST');
+    return Promise.resolve(new Response(JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      result: { protocolVersion: '2025-03-26' },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+  };
+
+  globalThis.fetch = receiverCheckingFetch as typeof fetch;
+  try {
+    const transport = new StreamableHttpMcpTransport('https://bridge.example.test/mcp', '');
+    assert.deepEqual(await transport.request<{ protocolVersion: string }>('initialize', {}), {
+      protocolVersion: '2025-03-26',
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

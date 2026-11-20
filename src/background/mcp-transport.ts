@@ -82,7 +82,7 @@ export class StreamableHttpMcpTransport {
   constructor(endpoint: string, token: string, options: { fetchImpl?: FetchLike; timeoutMs?: number } = {}) {
     this.endpoint = endpoint;
     this.token = token;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.fetchImpl = options.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
     this.timeoutMs = options.timeoutMs ?? 10_000;
   }
 

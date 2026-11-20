@@ -335,3 +335,16 @@ pnpm build、pnpm deploy:chrome、scripts/deploy-chrome.mjsは使用していな
 ### 2026-11-21 ESLint rollback sibling ignore follow-up
 
 前記のrepository全体lint失敗を受け、`eslint.config.mjs`のignoreへrepo直下の`dist.cpp6-rollback-*/**`だけを追加した。保全済みrollback bundleはESLint対象外となり、source directoryのignore範囲は広げていない。再実行した`pnpm run lint`、`pnpm run typecheck`、`git diff --check`はPASS。build/deploy、Chrome操作、Storage操作は実施していない。
+
+## CPP-6 Phase 3C-FETCHFIX native fetch receiver correction (2026-11-21)
+
+ユーザーのChrome実機比較で、`request: (...args) => fetch(...args)`はHTTP応答へ到達し、`request: fetch`は`WorkerGlobalScope`の`Illegal invocation`になったと報告された。手動GET/POSTもHTTP応答へ到達し、失敗した接続確認時はService Worker NetworkにMCP要求が出ていなかった。この観測と既存transport呼出しを照合し、native fetchのreceiver不一致をroot causeと判定した。
+
+| 状態 | 項目 | 実測結果 |
+| --- | --- | --- |
+| PASS | 最小修正 | `StreamableHttpMcpTransport`のdefault fetchを`(input, init) => globalThis.fetch(input, init)`で呼ぶよう変更した。`options.fetchImpl`のDI経路、request body/header、abort/timeout、LNA targetAddressSpace、session、SSE、protocolは変更していない。 |
+| PASS | 回帰RED-GREEN | receiverを確認し不一致時に`Illegal invocation`を投げるsynthetic fetchを使ったテストを追加。旧実装では接続拒否相当の`McpTransportError('disconnected')`で失敗し、修正後はHTTP 200 JSON-RPC結果を返して成功した。global fetchは`try/finally`で復元し、当該testを`concurrency: false`で実行した。 |
+| PASS | 検証 | `pnpm run lint`（source size 174 files含む）、`pnpm run typecheck`、直接実行したTypeScript tests 441/441、Options static tests 5/5、`git diff --check`がPASS。既存のDI fetch経路を使う単体テストも全体suite内でPASS。 |
+| NOT_RUN | 配備・Chrome受入 | production dist、rollback siblings、Phase 3A backup、Chrome profile/Storage/tokenにはアクセスも変更もしていない。build、deploy、Chrome reload、Options操作、MCP live testは未実施。修正版がChrome上で有効になったことはまだ確認していない。 |
+
+今回の変更対象は`src/background/mcp-transport.ts`、`tests/codexbridge-final-answer.test.ts`、本記録のみ。Host Permission、Loopback/Local Network Access、CORS、Bridge、Service Worker listener/UIの変更はない。ユーザーが別工程でChromeを手動reloadした後に、OptionsからMCP接続を実機確認する。
