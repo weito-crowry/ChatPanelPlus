@@ -190,7 +190,7 @@ Phase 2認証本体は上表のとおりユーザー/Muse報告ベースでPASS�
 | PASS | 登録distの静的確認 | ユーザーがChrome Detailsで確認した登録元はrepo内dist、versionは0.1.5。ディスク上distのmanifestもMV3/version 0.1.5でsource manifestとbyte一致。主要6ファイル、manifest参照のcontent script、Options page、service workerを確認。permissionsは`clipboardRead`/`storage`/`offscreen`/`alarms`、optional host patternはHTTP/HTTPS全体。固定`deploy:chrome`先は登録元distと別フォルダ。 |
 | PASS | dist非破壊backup | 通常ファイル11件・767,143 bytesを相対pathとmtimeを保ってGit外へコピー。source-before/source-after/backupのfile inventory・size・SHA-256 tree hashが一致し、copy中のsource不変を確認。source/backupに再解析pointはなく、外部先への再帰なし。backup rootはDACL継承を切り、現在Windows userのみを許可し、全directory/file ACLを確認。具体path/hashはGit外のuser-only運用メモに保存。restoreは未実施。 |
 | NOT_VERIFIED | Chrome identity / 設定 | Chromeの生ID、実profile、Optionsに保存されたURL、Host Permissionの実許可状態はこの段階では独立readbackしていない。ID/version/source/loopback endpointはユーザー提示情報。endpointはmanifestのoptional HTTP patternに含まれるが、許可済みとは確認していない。 |
-| USER_ACTION_REQUIRED | chrome.storage.local export | 旧helperの実行はユーザー報告でnot_saved/Error。画面の設定検証警告とは別に原因を調査し、raw storageの取得・保存は未完了。Storage値・件数を取得したとは扱わない。 |
+| USER_ACTION_REQUIRED | Storage export Console報告 | ユーザーは修正版helperのsaved/verification flags、keyCount=7、bytes=661547、SHA提示を報告。これはユーザー報告であり、ディスク上のartifact検証ではない。 |
 | PASS | Git外helperの隔離回帰 | 修正版helperの構文検査と17件のNode mockテストはPASS。synthetic storageのみを使用し、実Chrome実行は未実施。 |
 | NOT_RUN | 復元 / 変更 | dist復元、storageへの`set`、`clear`、extension reload/permission変更は実施していない。復元手順はGit外運用メモに記録し、本番storage書込みは別途明示承認後に限る。 |
 | BLOCKED | Phase 3B/C開始 | storage exportを同一profile/extension contextから取得し、拡張ID・JSON構造・key count・byte数・SHA-256・user-only ACLを確認するまで開始不可。Options URLと実Host Permissionもread-only照合が必要。Phase 3AのGitHub review完了前にも次工程へ進まない。 |
@@ -205,3 +205,20 @@ Phase 2認証本体は上表のとおりユーザー/Muse報告ベースでPASS�
 - **隔離検証:** Git外Node mock harnessのsyntax checksと17テストがPASS。正常保存、取消、picker非対応/拒否、origin mismatch、storage read/serialization/create/write/close/readback failure、collision、byte/hash不一致、段階別安全診断、機微値console出力なし、production storage mutationなしを確認した。これは実Chromeの結果ではない。
 - **次のユーザー操作 / USER_ACTION_REQUIRED:** Options設定を保存・初期化・reset・変更しない。失敗したPickerで選んだpathは保全し、再利用/削除/上書きしない。同じ既存profileのOptionsページConsoleへGit外の更新helperをpasteする。旧一時buttonが残っている場合はOptions tabを閉じて同じprofileからOptions pageを新しく開く（extension reloadやsettings変更は不要）。初期context確認がstorage未読を示すのを見てからbuttonを一度押し、Phase3A専用private backup folderを選ぶ。helperが生成する新規JSONに対するstatus=saved、extensionIdMatch=true、schemaVerified=true、exactBytesVerified=trueが揃った場合のみ成功報告とする。値は貼らず、失敗時はfailureStage/errorCode/errorName/storageReadAttempted/storageRead/fileState等の非機微診断だけを共有する。Codexがその後にJSON構造・extension整合・件数/byte/hash/ACLをローカルで検証する。
 - **BLOCKED:** Storage export取得後のローカル検証、Chrome上の既存extension ID/profile/Options URL/Host Permissionのread-only照合、およびPhase3A GitHub reviewが完了するまでPhase3B/Cを開始しない。Phase3B/C build/deploy/reloadとPhase4実機試験はNOT_RUN。Storage復元や本番反映は未実施で、別途明示承認が必要。
+
+## CPP-6 Phase 3A Storage export follow-up (2026-11-20)
+
+| 状態 | 項目 | 実測結果 |
+| --- | --- | --- |
+| USER_ACTION_REQUIRED | Storage export Console報告 | ユーザーは同じ既存Chrome profileのOptions Consoleで、status=saved、extensionIdMatch/schemaVerified/exactBytesVerified/storageReadAttempted/storageRead=true、keyCount=7、bytes=661547とSHA-256を含む結果が出たと報告した。CodexのChrome UI操作結果ではない。 |
+| NOT_VERIFIED | 保存ファイルの独立検証 | 運用メモが指定するPhase 3A正規backup領域とその配下を、提示された完全一致filenameでread-only検索したが候補はなかった。reparse pointを辿らず、検出もなし。別の保存先を選んだ可能性は残るが、その場所は不明。JSONのbyte数/hash/parse/schema/key count、ACL、extension ID/origin整合は未検証。Console報告だけでdisk backup PASSとは扱わない。 |
+| NOT_VERIFIED | Options設定警告の原因 | 画面警告はユーザー報告。settings repositoryにはvalidator rejectionからcorrupt-settingsを返す経路があるが、raw JSONを取得できなかったためconfig keyの存在、実値のschema、どのfieldが不一致かは診断していない。Storage APIの全体読取不能やdata lossとも判定しない。 |
+| PASS | dist backup維持 | 保存済manifestに対し、現dist 11/11 filesとbackup 11/11 filesのsize/SHAを照合し、source mtime 11/11一致。manifest内source-before/source-after/backup tree hashは一致。合計767143 bytes。backup ACL 13 entriesは全てcurrent userのみ、reparse point/列挙エラーなし。distへの書込みなし。 |
+| BLOCKED | Phase 3B/C開始 | 保存済Storage JSONの所在を確認し、JSON構造、reported byte/hash、key count、extension identity/origin、user-only protected ACLをローカルでPASSすることが必要。さらにChromeで既存拡張ID、保存済MCP URL、実Host Permissionをread-only確認し、Phase 3Aレビューを完了する。Chrome reloadはこの作業では行わず、将来の段階でユーザーが担当する。 |
+
+### Storage file handling and next action
+
+- Storage Consoleの保存成功報告とCodexの独立検証を区別する。対象JSONが正規領域で見つからず、別場所も特定していないため、Storage backupは未検証のまま。
+- JSONが確認できないのでvalidateExtensionSettingsを実データへ実行していない。Optionsのcorrupt-settings警告の具体的原因は未解明。設定保存・修復・defaults上書き・storage.local変更・Chrome操作は行っていない。
+- 次に必要なのは、ユーザーが既に保存したファイルの正確なローカルpathを伝えること（JSON本体・内容は送らない）。Codexはそのpathでread-only検証を再開する。新たなexport、ファイル移動/複製、設定操作は今回実施しない。
+- Phase3B/C build/deploy/reloadとPhase4実機試験はNOT_RUN。Phase3Bへ自動進行しない。
