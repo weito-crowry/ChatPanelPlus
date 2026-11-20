@@ -74,3 +74,35 @@ Phase 2へ進む際の確認事項:
 - LAN設定は現在の選択設定の`bridge.host`、`bridge.port`、`bridge.lan_enabled`、`bridge.allowed_hosts`、`bridge.allowed_origins`または対応する環境変数が対象。現在はloopbackのみ。LAN公開時はWindows Defender Firewallの受信規則も変更対象になる。今回変更なし。
 - 稼働中MCP listenerは現在のConsole process tree外で起動主体が未確定。既存のConsole lifecycle操作がこのlistenerを再起動する根拠は取れていないため、再起動方法は起動元を確認してから選ぶ。他の稼働中Codex turnsの完了を確認してから操作する。
 - 次のChrome確認はユーザーが既存profileの`chrome://extensions` DetailsでID/version/実フォルダ/権限を目視し、既存Options画面からendpoint URLを読み取る。tokenや会話・turn IDを共有しない。現在値の保存や変更、permission付与、reloadは不要。
+
+## CPP-6 Phase 2A listener起動元・安全再起動経路の調査 (2026-11-20)
+
+Phase 2Aは読み取り専用調査、既存Phase 1 backupの検証、Git外の運用メモ作成まで完了した。Phase 2Bのtoken生成・設定/Firewall/環境変更・listener再起動、Phase 3のChrome配備/reload、Phase 4の実機機能試験は実施していない。
+
+### Phase 2A 評価
+
+| 状態 | 項目 | 実施根拠と結果 |
+| --- | --- | --- |
+| PASS | Repository identity | CodexBridgeは`codex/cpp-mcp-phase6-allowlist`、開始時のHEAD/upstream/originが`aec79411465bef065cd41b0e60ce74cdb47b5c41`で一致し、追跡ファイルに差分なし。既存の5未追跡領域を維持した。ChatPanelPlusは`codex/cpp-mcp-phase6-acceptance`、開始時のHEAD/upstream/originが`69df01b254f2ce9e16e3cb71f1400e31057da69d`で一致し、status clean。 |
+| PASS | Listener・設定 | MCP `127.0.0.1:18000`とBridge UI `127.0.0.1:18001`は同一のPython 3.14 Bridge processがlisten。process environmentの`CODEX_BRIDGE_CONFIG`で選択設定を特定し、host loopback、`lan_enabled=false`、`allowed_hosts=[]`、`allowed_origins=[]`を確認。CONTROL tokenは環境に存在し、MCP full tokenとCPP tokenは当該listener環境に存在しないことを値を表示せず確認した。 |
+| PASS | Console/Tunnelの現況 | 現在のConsoleは`uv`/PowerShell/Windows Terminalのprocess treeにあり、Bridge listenerはそのtree外。Console管理コードは自身が起動した`console_started`状態のBridgeに対して制御を許可する。ConsoleのTunnel clientは`127.0.0.1:55402`をlistenし、既存Tunnel profileはloopbackのMCP port 18000へ接続する。Tunnel profileにある環境credential参照先がTunnel process環境に存在することを値を出さず確認した。 |
+| NOT_VERIFIED | Listenerの起動主体・再起動方法 | listenerの親processのさらに上位の親PIDは既に終了していた。Consoleが現在のlistenerを起動・所有した証拠はなく、Consoleが外部listenerをadopt/restartできる証拠もない。Windows process creation event queryは利用不可、Sysmon logはなく、service/task/Run/Startupから該当launcherを確認できなかった。READMEにある`uv run codex-bridge`等は一般的なentry pointであり、今回のlistenerがその方法で起動した根拠や安全な再起動経路を示さない。 |
+| PASS | Port・Firewall・LAN状態 | 18000/18001/55402はすべてloopback bind。FirewallのDomain/Private/Public各profileは有効でinbound既定Block、調査した受信規則にこれらのportまたは対象実行pathを許可する規則なし。現行listenerにLAN bindingはない。 |
+| NOT_VERIFIED | 全Codex turn完了の確認経路 | 読み取り専用`codex_threads`は100件のpageと次cursorを返したため全pageを列挙した証拠ではない。process数はturnの実行状態を証明しない。別Codex Desktop/ChatGPT実行環境も未確定。current turnのlistener経由状況を含め、全turnが完了したとは判定できない。 |
+| BLOCKED | Listener再起動 | 現在のMCP listenerはこの調査turnのprocess ancestry上にあり、再起動すると実行中turn/tool transportを切断する。Consoleの管理対象でもないため、このphaseでは安全な停止・再起動方法を確定できない。調査turn自身も実行中であり、全turn完了確認も未達。 |
+| USER_CONFIRMATION_REQUIRED | Chrome登録・拡張情報 | 既存Chrome profileのPreferencesへの読み取りアクセスが拒否された。拡張ID/version/実インストールfolder/Host Permission/Options endpoint URL、および`chrome.storage.local`の監視状態は未確認。固定配備候補先との一致も未確認。Chrome UI/profileは操作せず、拡張folderやLevelDBのcopyも行っていない。 |
+| PASS | Phase 1 backup検証 | Git外の既存backup manifestに記録された設定2 fileについて、現行sourceとbackupのSHA-256・byte size・timestampが2/2で一致し、検証中sourceも不変。backup directoryはcurrent Windows userのみのprotected ACLで、各fileも同userだけのruleを継承。拡張本体と監視storageは退避していない。local復元メモに実パスなどを記録し、Gitへ含めていない。 |
+| NOT_RUN | Phase 2B–4 | token生成/登録、LAN/Firewall/config変更、Bridge/Console/Tunnel再起動、Chrome deploy/reload、実機MCP/拡張試験、新規または中断Codex turnは未実施。 |
+
+### 次段階へ進む前に必要な事実確認
+
+- **再起動は現状BLOCKED。** このturn完了後に、`codex_threads`全pageを読み取り専用で列挙し、実行中候補を`codex_status`で確認する。外部Codex Desktop/ChatGPT turnも別途確認する。page・context・statusのどれかが不明なら再起動しない。現在のlistenerが調査turnの祖先であるため、このturnの実行中に停止してはならない。
+- 現行listenerのowner/launcherと、重複起動しない制御可能な再起動経路を先に確定する。ConsoleはConsole自身が起動したBridgeだけを制御する実装で、現在の外部listenerへの管理権限を示す根拠はない。port使用中にREADMEの直接起動commandを実行しない。
+- `CODEX_BRIDGE_CPP_MCP_TOKEN`はTOMLではなくBridge process environmentから読み込まれる。Consoleから起動する場合はBridge起動前にConsole親processのenvironmentへ注入される必要がある。現在のConsole processへ後から環境変数を注入できる経路は確認できていない。永続的なUser/System environmentやcommand argument/logへtokenを保存しない。
+- 現listener環境では`CODEX_BRIDGE_MCP_TOKEN`が見つからず、Chrome側の既存session tokenは未確認。Tunnel profileのcredential参照とMCP full tokenは別物である。既存のfull-token接続とTunnel経路を維持できる方法を特定してから変更する。Tunnelはloopback MCP endpointに依存するため、Bridge再起動時にはChatGPT MCP接続を一時切断し得る。Tunnel supervisorの復帰動作があっても無停止・自動復旧は保証されない。
+- LAN化する場合に確認/変更対象となるのは選択中`CODEX_BRIDGE_CONFIG`の`[bridge] host`、`port`、`lan_enabled`、`allowed_hosts`、`allowed_origins`と、必要な場合の対応環境変数`CODEX_BRIDGE_HOST`、`CODEX_BRIDGE_PORT`、`CODEX_BRIDGE_LAN_ENABLED`、`CODEX_BRIDGE_ALLOWED_HOSTS`、`CODEX_BRIDGE_ALLOWED_ORIGINS`、およびWindows Defender Firewall受信規則。Tunnel profileとその現在のloopback MCP endpointは別に保持し、configと環境変数で同一項目を重複設定しない。
+- ユーザーがChrome `chrome://extensions`で登録済みChatPanelPlusのID、version、読み込み元folder、Host Permission、Options内endpoint URLを確認するまで`allowed_origins`の具体値は設定しない。拡張folder backupがChrome稼働中に安全に可能かも未確認。監視storageのexportは拡張context経由に限り、session token/LevelDBには触れない。
+- 後続の設計がLAN公開を使う場合、現在のPrivate subnetまたは確認済みclientだけにTCP 18000を限定し、18001/55402は開けない。TailscaleもPrivate分類のため、Private profileだけに限定した広い規則は意図しないinterfaceを含み得る。現行loopbackとTunnelのHost/Origin/routeを維持し、実際に必要なhost/originだけを加える。`http://`上のBearerは平文であり、Firewall/Host/Origin制限は暗号化にならない。
+- 変更直前に影響する設定ごとの新規user-only backupを作成しhash/size/time/ACLを確認する。rollback時は変更後の状態も別backupし、復元元manifestと宛先を照合して該当fileだけ戻し、ACL/hashとloopback/Tunnel healthを検証する。サービスownerと全turn完了を確定する前に復元後の再起動をしない。
+
+実機の秘密値、認証値、拡張ID、thread/turn ID、会話本文、機器のローカル実パスやprivate IPはこの文書に記録していない。Git外backupのmanifestと`phase2a-local-operations.txt`だけにローカル復元情報を保存した。
