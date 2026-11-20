@@ -265,3 +265,20 @@ Phase 3AのWindows Storage export確認と独立private backup、dist退避維�
 | BLOCKED | Phase 3B/C | このcommitのChatGPT GitHub review完了後、既存拡張identity、保存済みOptions URLと実Host Permissionのread-only照合、Phase 3A dist/Storage backupの維持確認を満たすまで開始しない。Chromeへのdeploy/reloadとPhase 4試験は未着手。 |
 
 最終検証は`pnpm run typecheck` PASS、`pnpm run lint` PASS（source size check 171 files）、`node --experimental-strip-types --test`のTypeScript unit tests 430/430 PASS、Options static tests 4/4 PASS、隔離Vite build 4/4 PASS。`pnpm test`、通常build/deploy command、Chrome操作、本番Storage writeは実行していない。
+
+## CPP-6 Phase 3B-0 isolated staging and Chrome read-only preflight (2026-11-20)
+
+この段階ではPhase 3Aの退避状態を読み取り専用で再確認し、レビュー済みsource HEADからGit外stagingを作成、Chrome Options Console用read-only診断helperを準備した。現在Chromeがロードするdist、拡張Storage、Chrome設定は変更していない。Chrome実機helper実行もまだ行っていない。
+
+| 状態 | 項目 | 実測結果 |
+| --- | --- | --- |
+| PASS | Repository baseline | CPPはレビュー済みPhase 3A.5 commitの既存branch/HEADで開始しclean。CodexBridgeのbranch/HEADも一致し、既存未追跡5領域を維持、tracked source不変。 |
+| PASS | Phase 3A dist backup維持 | 登録済みdistは11ファイル/767143 bytes。source-before/source-after/backup台帳に対し全相対path、size、SHA-256、mtimeが一致し、確認したpath components/treeにreparse pointなし。private rootのprotected DACLとuser-only Allowを維持。dist backup childはその限定ACLを継承しており、既存ACLは変更していない。 |
+| PASS | Phase 3A Storage backup維持 | Git外private exportは7 keys/661547 bytes。記録SHA-256、export format、宣言/実key set、ユーザー確認済extension identity/originが一致。ファイルと親のprotected ACLはcurrent-user-only。raw valueは表示・記録していない。 |
+| PASS | 隔離staging | 古いstagingは出所manifestがなく再利用せず保持。現source HEADからVite 4構成をCLI絶対outDirで新規Git外buildし、11ファイル/773569 bytesを確認。manifest version、permissions、optional host patternsはsourceおよび現在のdistと一致し、必須JS/HTMLとasset参照が解決。reparse pointなし、staging全項目はprotected/current-user-only ACL。production distには配備していない。 |
+| PASS | Chrome Console helper隔離検証 | Git外read-only helperの構文検査とsynthetic mock 12/12 PASS。wrong identity/versionはStorage read前に拒否。endpoint一致/不一致/未保存default、permission許可/拒否、Storage/API failure、例外の非機微化を確認。helperはconfig keyだけreadし、session・network・clipboard・download・permission request・storage writeを呼ばない。出力はstatus、booleans、custom-tab件数、failure stage、allowlisted error nameのみ。 |
+| USER_ACTION_REQUIRED | Chrome read-only preflight | ユーザーが既存Options pageのDevTools Consoleでprivate helperを手動実行し、安全な結果objectだけ共有する。Chrome Detailsで現在のload path/versionと実Host Permissionも読み取り確認する。extension reload、設定保存、permission requestはしない。 |
+| BLOCKED | Phase 3B配備ゲート | ChatGPTによる本commit reviewと、上記Chrome identity/config/実permissionのユーザーread-only結果を待つ。stagingから登録distへの配備は本段階で未承認・未実施。 |
+| NOT_RUN | 配備・実機試験 | distへのcopy/replace、Chrome reload、Options保存、MCP接続、Phase 3C/Phase 4はすべて未実施。 |
+
+将来の配備時は確認済みの登録rootを維持して拡張IDを変えない。隔離stagingと既存backupを配備直前に再検証し、同一volume上の復元可能なsibling backupを確保してから登録distを更新、更新後のmanifest/file inventoryを確認する。失敗時は検証済backupから復元する手順を使い、Chrome reloadはユーザーが手動で行う。Settings/Storageへの自動書込みや移行は行わない。既存scripts/deploy-chrome.mjsは登録済みrootとは別のChatPanelPlus-Content-Probe-20261021を宛先とするため使用しない。
