@@ -5,6 +5,7 @@ import { findActiveEditor, type EditorEnvironment } from './editor/adapter';
 import { startInteractionDiagnostics } from './interaction-debug';
 import { startPanelLifecycle, type PlacementTarget } from './lifecycle';
 import panelStyles from './panel.css?inline';
+import codexBridgeWatchStyles from './codexbridge-watch.css?inline';
 
 const HOST_ID = 'chatpanelplus-extension-root';
 
@@ -34,7 +35,7 @@ startPanelLifecycle({
     host.setAttribute('aria-label', 'ChatPanelPlus');
     const shadowRoot = host.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
-    style.textContent = panelStyles;
+    style.textContent = `${panelStyles}\n${codexBridgeWatchStyles}`;
     const appRoot = document.createElement('div');
     shadowRoot.append(style, appRoot);
     createRoot(appRoot).render(

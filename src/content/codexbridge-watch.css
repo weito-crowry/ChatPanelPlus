@@ -1,0 +1,18 @@
+.codex-bridge-watch { display: grid; gap: 5px; padding-top: 6px; border-top: 1px solid var(--border-light, #d9dadd); }
+.codex-bridge-watch h3 { margin: 0; font-size: 12px; }
+.codex-bridge-watch-list { display: grid; gap: 5px; max-height: 210px; overflow: auto; margin: 0; padding: 0; list-style: none; }
+.codex-bridge-watch-item { display: grid; gap: 2px; min-width: 0; padding: 6px; border: 1px solid var(--border-light, #d9dadd); border-radius: 7px; overflow-wrap: anywhere; }
+.codex-bridge-watch-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.codex-bridge-watch-heading strong { min-width: 0; overflow-wrap: anywhere; }
+.codex-bridge-watch-item small { color: var(--text-secondary, #565869); overflow-wrap: anywhere; }
+.codex-bridge-event-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding-top: 5px; border-top: 1px solid var(--border-light, #d9dadd); }
+.codex-bridge-event-heading h3 { margin: 0; font-size: 12px; }
+.codex-bridge-event-heading span { color: var(--text-secondary, #565869); font-size: 11px; }
+.codex-bridge-event-list { display: grid; gap: 5px; max-height: 190px; overflow: auto; margin: 0; padding: 0; list-style: none; }
+.codex-bridge-event-item { min-width: 0; border: 1px solid var(--border-light, #d9dadd); border-radius: 7px; overflow-wrap: anywhere; }
+.codex-bridge-event-select { display: grid; width: 100%; gap: 2px; padding: 6px; border: 0; border-radius: inherit; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.codex-bridge-event-select[aria-pressed="true"] { background: var(--main-surface-secondary, #f1f1f3); }
+.codex-bridge-event-select small, .codex-bridge-final-answer .codex-bridge-note { color: var(--text-secondary, #565869); overflow-wrap: anywhere; }
+.codex-bridge-final-answer { display: grid; gap: 5px; min-width: 0; padding-top: 5px; border-top: 1px solid var(--border-light, #d9dadd); }
+.codex-bridge-answer-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.codex-bridge-answer-text { max-height: 240px; overflow: auto; margin: 0; padding: 7px; border: 1px solid var(--border-light, #d9dadd); border-radius: 7px; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }

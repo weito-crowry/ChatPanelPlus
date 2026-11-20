@@ -65,6 +65,22 @@ h1 {
   margin-bottom: 0;
 }
 
+.mcp-connection-settings { display: grid; gap: 12px; margin-bottom: 20px; }
+.mcp-connection-settings h2,
+.mcp-connection-settings p { margin: 0; }
+.mcp-endpoint-label,
+.mcp-token-label { display: grid; gap: 6px; max-width: 560px; font-size: 13px; font-weight: 600; }
+.mcp-endpoint-label input,
+.mcp-token-label input { width: 100%; padding: 8px 10px; border: 1px solid #c7c8cc; border-radius: 6px; background: #fff; color: inherit; font: inherit; }
+.mcp-permission-note { color: #5d5e62; font-size: 13px; }
+.mcp-permission-status { display: grid; gap: 4px; color: #5d5e62; font-size: 13px; }
+.mcp-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+.mcp-actions button,
+.mcp-connection-settings > button { width: fit-content; padding: 7px 12px; border: 1px solid #d2d3d6; border-radius: 7px; background: #fff; color: inherit; font: inherit; cursor: pointer; }
+.mcp-actions button:disabled,
+.mcp-connection-settings > button:disabled { cursor: not-allowed; opacity: .6; }
+.mcp-diagnostic { min-height: 1.5em; color: #3157a4; }
+
 .sound-settings { display: grid; gap: 12px; }
 .sound-settings .tab-visibility { margin-top: 0; }
 .sound-select-label { max-width: 420px; }

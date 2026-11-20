@@ -8,9 +8,11 @@ export type DefaultButtonId =
   | 'a-btn' | 'b-btn' | 'c-btn' | 'd-btn';
 
 export type CustomButtonId = `custom-${string}`;
+export type CustomTabId = `custom-tab-${string}`;
 export type ButtonId = DefaultButtonId | CustomButtonId;
 
-export type TabId = 'directive' | 'control' | 'wall' | 'binary' | 'quad';
+export type StandardTabId = 'directive' | 'control' | 'wall' | 'binary' | 'quad';
+export type TabId = StandardTabId | CustomTabId;
 export type ButtonGroupId = 'always' | TabId;
 export type ButtonAction = 'insert-jst' | 'paste' | 'clear';
 export type ButtonKind = 'insert' | 'action';
@@ -24,6 +26,12 @@ export type CustomButtonDefinition = Readonly<{
   | { kind: 'insert'; text: string; insertionMode?: InsertionMode; action?: never }
   | { kind: 'action'; action: ButtonAction; text?: never; insertionMode?: never }
 )>;
+
+export type CustomTabDefinition = Readonly<{
+  label: string;
+  visible: boolean;
+  [key: string]: unknown;
+}>;
 
 export type ButtonDefinition = Readonly<{
   id: ButtonId;
@@ -97,8 +105,9 @@ export const DEFAULT_TABS: readonly TabDefinition[] = Object.freeze(
 function orderedIds<T extends string>(
   defaults: readonly T[],
   requested: readonly string[] | undefined,
+  customIds: readonly T[] = [],
 ): T[] {
-  const known = new Set(defaults);
+  const known = new Set([...defaults, ...customIds]);
   const seen = new Set<T>();
   const result: T[] = [];
   for (const id of requested ?? []) {
@@ -108,6 +117,9 @@ function orderedIds<T extends string>(
     }
   }
   for (const id of defaults) {
+    if (!seen.has(id)) result.push(id);
+  }
+  for (const id of [...customIds].sort()) {
     if (!seen.has(id)) result.push(id);
   }
   return result;
@@ -152,14 +164,30 @@ export function resolveDefaultUI(settings: ExtensionSettings = { schemaVersion: 
   const source = record(settings);
   const buttonOverrides = record(source.buttonOverrides);
   const customButtons = record(source.customButtons) as Record<string, CustomButtonDefinition>;
+  const customTabSource = record(source.customTabs);
+  const customTabs = Object.fromEntries(Object.entries(customTabSource).filter(([id, value]) =>
+    /^custom-tab-[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(id)
+      && typeof value === 'object' && value !== null && !Array.isArray(value)
+      && typeof (value as Record<string, unknown>).label === 'string'
+      && typeof (value as Record<string, unknown>).visible === 'boolean')) as Record<string, CustomTabDefinition>;
   const tabOverrides = record(source.tabOverrides);
   const buttonOrder = record(source.buttonOrder);
-  const tabIds = orderedIds(DEFAULT_TABS.map(({ id }) => id), stringArray(source.tabOrder));
-  const tabById = new Map(DEFAULT_TABS.map((tab) => [tab.id, tab]));
+  const customTabIds = Object.keys(customTabs) as CustomTabId[];
+  const tabIds = orderedIds(DEFAULT_TABS.map(({ id }) => id), stringArray(source.tabOrder), customTabIds);
+  const tabById = new Map<string, TabDefinition>(DEFAULT_TABS.map((tab) => [tab.id, tab]));
+  for (const id of customTabIds) {
+    const custom = customTabs[id]!;
+    tabById.set(id, { id, order: 0, label: custom.label, buttonIds: [] });
+  }
   const resolvedTabs = tabIds.map((id, order) => {
     const base = tabById.get(id)!;
     const override = record(tabOverrides[id]);
-    return Object.freeze({ ...base, order, visible: typeof override.visible === 'boolean' ? override.visible : true });
+    const custom = customTabs[id];
+    return Object.freeze({
+      ...base,
+      order,
+      visible: custom ? custom.visible : typeof override.visible === 'boolean' ? override.visible : true,
+    });
   });
   const buttonById = new Map<ButtonId, ButtonDefinition>(DEFAULT_BUTTONS.map((button) => [button.id, button]));
   const customIdsByGroup = new Map<ButtonGroupId, CustomButtonId[]>();
@@ -197,10 +225,14 @@ export function resolveDefaultUI(settings: ExtensionSettings = { schemaVersion: 
       resolvedButtons.push(Object.freeze(resolved));
     }
   }
-  const visibleTabs = resolvedTabs.filter(({ visible }) => visible);
+  const tabs = resolvedTabs.map((tab) => Object.freeze({
+    ...tab,
+    buttonIds: Object.freeze(resolvedButtons.filter((button) => button.groupId === tab.id).map(({ id }) => id)),
+  }));
+  const visibleTabs = tabs.filter(({ visible }) => visible);
   return Object.freeze({
     buttons: Object.freeze(resolvedButtons),
-    tabs: Object.freeze(resolvedTabs),
+    tabs: Object.freeze(tabs),
     selectedTabId: visibleTabs[0]?.id ?? null,
   });
 }

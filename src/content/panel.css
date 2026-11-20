@@ -450,6 +450,26 @@
   font: inherit;
   cursor: pointer;
 }
+.codex-bridge { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--border-light, #d9dadd); border-radius: 10px; font-size: 12px; }
+.codex-bridge-heading, .codex-bridge-actions { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.codex-bridge-heading h2 { margin: 0; font-size: 13px; }
+.codex-bridge-connection, .codex-bridge-empty, .codex-bridge-note { margin: 0; color: var(--text-secondary, #565869); }
+.codex-bridge-connection.is-error, .codex-bridge-error { margin: 0; color: #b42318; }
+.codex-bridge-target { display: grid; gap: 3px; }
+.codex-bridge-target select { width: 100%; min-width: 0; padding: 5px; border: 1px solid var(--border-light, #d9dadd); border-radius: 6px; background: var(--main-surface-secondary, #f7f7f8); color: inherit; font: inherit; }
+.codex-bridge-button { min-height: 28px; padding: 4px 8px; border: 1px solid var(--border-light, #d9dadd); border-radius: 7px; background: var(--main-surface-secondary, #f7f7f8); color: inherit; font: inherit; cursor: pointer; }
+.codex-bridge-button:disabled { cursor: not-allowed; opacity: .58; }
+.codex-bridge-thread-list { display: grid; gap: 4px; max-height: 112px; overflow: auto; margin: 0; padding: 0; list-style: none; }
+.codex-bridge-thread-list li { min-width: 0; }
+.codex-bridge-thread { display: grid; width: 100%; gap: 2px; padding: 6px; border: 1px solid transparent; border-radius: 6px; background: var(--main-surface-secondary, #f7f7f8); color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.codex-bridge-thread.is-selected { border-color: var(--border-medium, #9a9a9a); }
+.codex-bridge-thread small { overflow: hidden; color: var(--text-secondary, #565869); text-overflow: ellipsis; white-space: nowrap; }
+.codex-bridge-selected { display: grid; gap: 5px; min-width: 0; padding-top: 5px; border-top: 1px solid var(--border-light, #d9dadd); }
+.codex-bridge-selected code { overflow-wrap: anywhere; color: var(--text-secondary, #565869); font-size: 10px; }
+.codex-bridge-status { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 8px; margin: 0; }
+.codex-bridge-status dt { color: var(--text-secondary, #565869); }
+.codex-bridge-status dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.codex-bridge-button:focus-visible, .codex-bridge-target select:focus-visible, .codex-bridge-thread:focus-visible { outline: 2px solid #3157a4; outline-offset: 2px; }
 
 @media (prefers-color-scheme: dark) {
   .panel {

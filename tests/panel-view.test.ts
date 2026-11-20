@@ -11,6 +11,7 @@ import {
   togglePanelMinimized,
 } from '../src/content/panel-view.ts';
 import type { ClipboardPasteResult } from '../src/content/clipboard.ts';
+import { CUSTOM_TAB_ID, customTabSettings } from './fixtures/custom-tabs.ts';
 
 test('未確認や添付の貼り付け結果は通知せず、確定失敗だけエラー理由を返す', () => {
   const cases: Array<[ClipboardPasteResult, string | null]> = [
@@ -107,4 +108,19 @@ test('最小化の切替で選択タブを保ち、初期値は展開状態', ()
   const minimized = togglePanelMinimized(initial);
   assert.deepEqual(minimized, { selectedTabId: 'control', minimized: true });
   assert.deepEqual(togglePanelMinimized(minimized), initial);
+});
+
+test('カスタムタブを選択でき、非表示・消滅時は先頭可視タブへ戻る', () => {
+  const model = createPanelViewModel(customTabSettings());
+  const selected = createInitialPanelViewState(model.tabs, { selectedTabId: CUSTOM_TAB_ID });
+  assert.equal(selected.selectedTabId, CUSTOM_TAB_ID);
+  assert.ok(model.buttonsByTab.get(CUSTOM_TAB_ID)?.length === 7);
+  assert.equal(createInitialPanelViewState(model.tabs, { selectedTabId: 'custom-tab-123e4567-e89b-42d3-a456-426614174099' as TabId }).selectedTabId, CUSTOM_TAB_ID);
+
+  const hidden = createPanelViewModel({
+    ...customTabSettings(),
+    customTabs: { [CUSTOM_TAB_ID]: { label: 'Synthetic tab', visible: false } },
+  });
+  assert.equal(createInitialPanelViewState(hidden.tabs, { selectedTabId: CUSTOM_TAB_ID }).selectedTabId, 'wall');
+  assert.equal(reconcilePanelViewState(selected, model.tabs.filter(({ id }) => id !== CUSTOM_TAB_ID)).selectedTabId, 'wall');
 });

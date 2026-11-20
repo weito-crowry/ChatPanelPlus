@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { assertLocalAssetReferences, assertLocalOffscreenReferences } from '../scripts/deployment-assets.mjs';
+import { validateManifestPermissions } from '../scripts/manifest-permissions.mjs';
 
 const projectRoot = resolve(fileURLToPath(new URL('../', import.meta.url)));
 
@@ -23,6 +24,7 @@ async function runIsolatedDeploymentValidation(manifest) {
     ]);
     await copyFile(join(projectRoot, 'scripts', 'deploy-chrome.mjs'), join(scripts, 'deploy-chrome.mjs'));
     await copyFile(join(projectRoot, 'scripts', 'deployment-assets.mjs'), join(scripts, 'deployment-assets.mjs'));
+    await copyFile(join(projectRoot, 'scripts', 'manifest-permissions.mjs'), join(scripts, 'manifest-permissions.mjs'));
     await writeFile(join(project, 'package.json'), JSON.stringify({ version: manifest.version }));
     await mkdir(join(project, 'public'), { recursive: true });
     await writeFile(join(project, 'public', 'manifest.json'), JSON.stringify(manifest));
@@ -52,10 +54,55 @@ function validDeploymentManifest(overrides = {}) {
     content_scripts: [{ matches: ['https://chatgpt.com/*'], js: ['content.js'] }],
     background: { service_worker: 'background.js' },
     options_ui: { page: 'index.html' },
-    permissions: ['clipboardRead', 'storage', 'offscreen'],
+    permissions: ['clipboardRead', 'storage', 'offscreen', 'alarms'],
+    optional_host_permissions: ['http://*/*', 'https://*/*'],
     ...overrides,
   };
 }
+
+test('pure manifest permission preflight accepts current permissions irrespective of order', () => {
+  assert.doesNotThrow(() => validateManifestPermissions(validDeploymentManifest({
+    permissions: ['alarms', 'offscreen', 'storage', 'clipboardRead'],
+    optional_host_permissions: ['https://*/*', 'http://*/*'],
+  })));
+});
+
+test('pure manifest permission preflight rejects missing, duplicate, and additional permissions', () => {
+  for (const permissions of [
+    ['clipboardRead', 'storage', 'offscreen'],
+    ['clipboardRead', 'storage', 'offscreen', 'alarms', 'tabs'],
+    ['clipboardRead', 'storage', 'offscreen', 'alarms', 'alarms'],
+  ]) {
+    assert.throws(
+      () => validateManifestPermissions(validDeploymentManifest({ permissions })),
+      /clipboardRead, storage, offscreen, and alarms/,
+    );
+  }
+});
+
+test('pure manifest permission preflight rejects missing, duplicate, and expanded optional origins', () => {
+  for (const optional_host_permissions of [
+    ['http://*/*'],
+    ['http://*/*', 'https://*/*', 'https://*.example.test/*'],
+    ['http://*/*', 'http://*/*'],
+  ]) {
+    assert.throws(
+      () => validateManifestPermissions(validDeploymentManifest({ optional_host_permissions })),
+      /optional host permissions/,
+    );
+  }
+});
+
+test('pure manifest permission preflight rejects other permission-bearing manifest fields', () => {
+  assert.throws(
+    () => validateManifestPermissions(validDeploymentManifest({ host_permissions: [] })),
+    /must not request host_permissions/,
+  );
+  assert.throws(
+    () => validateManifestPermissions(validDeploymentManifest({ optional_permissions: [] })),
+    /must not request optional_permissions/,
+  );
+});
 
 test('deployment accepts existing local Options assets', () => {
   const assets = new Set(['assets/options.js', 'assets/options.css']);
@@ -79,7 +126,7 @@ test('deployment accepts only the built local Offscreen script', () => {
   assert.throws(() => assertLocalOffscreenReferences('<script src="offscreen.js"></script>', new Set()), /missing/);
 });
 
-test('deployment validation accepts clipboardRead, storage, and offscreen before rejecting a later invalid asset', async () => {
+test('deployment validation accepts current permissions before rejecting a later invalid asset', async () => {
   const result = await runIsolatedDeploymentValidation(validDeploymentManifest());
 
   assert.notEqual(result.status, 0);
@@ -102,13 +149,13 @@ test('deployment validation requires approved permissions exactly once', async (
     const result = await runIsolatedDeploymentValidation(validDeploymentManifest({ permissions }));
 
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /only clipboardRead, storage, and offscreen permissions/);
+    assert.match(result.stderr, /clipboardRead, storage, offscreen, and alarms/);
     assert.equal(result.after, 'must remain untouched');
   }
 });
 
-test('deployment validation continues to reject host and optional host permissions', async () => {
-  for (const field of ['host_permissions', 'optional_host_permissions']) {
+test('deployment validation rejects other permission-bearing manifest fields', async () => {
+  for (const field of ['host_permissions', 'optional_permissions']) {
     const result = await runIsolatedDeploymentValidation(validDeploymentManifest({ [field]: [] }));
 
     assert.notEqual(result.status, 0, `${field} must remain forbidden`);

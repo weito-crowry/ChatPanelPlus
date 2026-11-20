@@ -62,10 +62,9 @@ test('manifest declares only the expected ChatGPT content script, worker, and op
   }]);
   assert.deepEqual(manifest.background, { service_worker: 'background.js' });
   assert.deepEqual(manifest.options_ui, { page: 'index.html', open_in_tab: true });
-  assert.deepEqual(manifest.permissions, ['clipboardRead', 'storage', 'offscreen']);
-  for (const field of ['host_permissions', 'optional_host_permissions']) {
-    assert.equal(field in manifest, false, `${field} must not be present.`);
-  }
+  assert.deepEqual(manifest.permissions, ['clipboardRead', 'storage', 'offscreen', 'alarms']);
+  assert.equal('host_permissions' in manifest, false, 'Required host permissions must not be present.');
+  assert.deepEqual(manifest.optional_host_permissions, ['http://*/*', 'https://*/*']);
 
   for (const referencedFile of ['content.js', 'background.js', 'index.html', 'offscreen.html', 'offscreen.js']) {
     await assert.doesNotReject(readFile(resolve(distDirectory, referencedFile)));
@@ -84,6 +83,8 @@ test('built output includes the panel bootstrap, options UI, and options message
   assert.match(content, /ChatPanelPlus/);
   assert.match(background, /openOptionsPage/);
   assert.match(background, /createDocument/);
+  assert.match(background, /MCP-Protocol-Version/);
+  assert.match(background, /codex_targets/);
   assert.match(offscreen, /setSinkId/);
   assert.match(offscreenHtml, /<script src="offscreen\.js"><\/script>/);
   assert.match(html, /assets\/index-.+\.js/);

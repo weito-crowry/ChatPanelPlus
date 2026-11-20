@@ -4,6 +4,8 @@ import {
   type ButtonGroupId,
   type CustomButtonDefinition,
   type CustomButtonId,
+  type CustomTabDefinition,
+  type CustomTabId,
   type InsertionMode,
   type TabId,
 } from './default-ui.ts';
@@ -33,7 +35,9 @@ export type ExtensionSettings = Readonly<{
   answerCompletionSoundEnabled?: boolean;
   answerCompletionSoundId?: string;
   answerCompletionSoundVolumePercent?: number;
+  codexBridgeMcpUrl?: string;
   customButtons?: Readonly<Record<CustomButtonId, CustomButtonDefinition>>;
+  customTabs?: Readonly<Record<CustomTabId, CustomTabDefinition>>;
   [key: string]: unknown;
 }>;
 
@@ -51,6 +55,7 @@ const BUTTON_IDS = new Set<string>(DEFAULT_BUTTONS.map(({ id }) => id));
 const INSERT_BUTTON_IDS = new Set<string>(DEFAULT_BUTTONS.filter(({ kind }) => kind === 'insert').map(({ id }) => id));
 const TAB_IDS = new Set<string>(DEFAULT_TABS.map(({ id }) => id));
 const GROUP_IDS = new Set<ButtonGroupId>(['always', ...DEFAULT_TABS.map(({ id }) => id)]);
+const CUSTOM_TAB_ID_PATTERN = /^custom-tab-[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i;
 
 function plainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
@@ -84,6 +89,20 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
   if (!plainObject(value) || !('schemaVersion' in value)) return settingsError('malformed');
   if (value.schemaVersion !== SETTINGS_SCHEMA_VERSION) return settingsError('unsupported-schema');
 
+  const customTabs: Record<string, CustomTabDefinition> = {};
+  if (value.customTabs !== undefined) {
+    if (!plainObject(value.customTabs)) return settingsError('invalid-settings');
+    for (const [id, rawTab] of Object.entries(value.customTabs)) {
+      if (!CUSTOM_TAB_ID_PATTERN.test(id) || TAB_IDS.has(id) || BUTTON_IDS.has(id) || !plainObject(rawTab)) {
+        return settingsError('invalid-settings');
+      }
+      if (typeof rawTab.label !== 'string' || typeof rawTab.visible !== 'boolean') return settingsError('invalid-settings');
+      customTabs[id] = { ...rawTab } as CustomTabDefinition;
+    }
+  }
+  const validTabIds = new Set<string>([...TAB_IDS, ...Object.keys(customTabs)]);
+  const groupIds = new Set<string>([...GROUP_IDS, ...Object.keys(customTabs)]);
+
   const buttonOverrides: Record<string, ButtonOverride> = {};
   if (value.buttonOverrides !== undefined) {
     if (!plainObject(value.buttonOverrides)) return settingsError('invalid-settings');
@@ -109,7 +128,10 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
   if (value.tabOverrides !== undefined) {
     if (!plainObject(value.tabOverrides)) return settingsError('invalid-settings');
     for (const [rawId, rawOverride] of Object.entries(value.tabOverrides)) {
-      if (!TAB_IDS.has(rawId)) continue;
+      if (!validTabIds.has(rawId)) {
+        if (rawId.startsWith('custom-tab-')) return settingsError('invalid-settings');
+        continue;
+      }
       if (!plainObject(rawOverride)) return settingsError('invalid-settings');
       if ('visible' in rawOverride && typeof rawOverride.visible !== 'boolean') return settingsError('invalid-settings');
       tabOverrides[rawId] = { ...rawOverride };
@@ -126,7 +148,7 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
       const definition = rawDefinition as Record<string, unknown>;
       const allowedFields = new Set(['groupId', 'label', 'color', 'visible', 'kind', 'action', 'text', 'insertionMode']);
       if (Object.keys(definition).some((field) => !allowedFields.has(field))) return settingsError('invalid-settings');
-      if (!GROUP_IDS.has(definition.groupId as ButtonGroupId)
+      if (typeof definition.groupId !== 'string' || !groupIds.has(definition.groupId)
         || typeof definition.label !== 'string'
         || typeof definition.color !== 'string'
         || !/^#[\da-f]{3}(?:[\da-f]{3})?$/i.test(definition.color)
@@ -161,8 +183,9 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
   if (value.buttonOrder !== undefined) {
     if (!plainObject(value.buttonOrder)) return settingsError('invalid-settings');
     for (const [rawGroup, rawOrder] of Object.entries(value.buttonOrder)) {
-      if (!GROUP_IDS.has(rawGroup as ButtonGroupId)) {
-        if (Array.isArray(rawOrder) && rawOrder.some((id) => typeof id === 'string' && id.startsWith('custom-'))) {
+      if (!groupIds.has(rawGroup)) {
+        if (rawGroup.startsWith('custom-tab-')
+          || (Array.isArray(rawOrder) && rawOrder.some((id) => typeof id === 'string' && id.startsWith('custom-')))) {
           return settingsError('invalid-settings');
         }
         continue;
@@ -177,7 +200,15 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
     }
   }
 
-  const tabOrder = orderedIds(DEFAULT_TABS.map(({ id }) => id), value.tabOrder);
+  if (Array.isArray(value.tabOrder)) {
+    const customTabOrder = value.tabOrder.filter((id): id is string => typeof id === 'string' && id.startsWith('custom-tab-'));
+    if (new Set(customTabOrder).size !== customTabOrder.length) return settingsError('invalid-settings');
+  }
+  const tabOrder = orderedIds(
+    DEFAULT_TABS.map(({ id }) => id),
+    value.tabOrder,
+    Object.keys(customTabs) as CustomTabId[],
+  );
   if (!tabOrder) return settingsError('invalid-settings');
   if (value.answerCompletionSoundEnabled !== undefined && typeof value.answerCompletionSoundEnabled !== 'boolean') {
     return settingsError('invalid-settings');
@@ -194,6 +225,9 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
       || value.answerCompletionSoundVolumePercent > MAX_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT)) {
     return settingsError('invalid-settings');
   }
+  if (value.codexBridgeMcpUrl !== undefined && typeof value.codexBridgeMcpUrl !== 'string') {
+    return settingsError('invalid-settings');
+  }
   return {
     ok: true,
     settings: {
@@ -202,6 +236,7 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
       ...(value.buttonOverrides === undefined ? {} : { buttonOverrides }),
       ...(value.tabOverrides === undefined ? {} : { tabOverrides }),
       ...(value.customButtons === undefined ? {} : { customButtons }),
+      ...(value.customTabs === undefined ? {} : { customTabs }),
       ...(value.buttonOrder === undefined ? {} : { buttonOrder }),
       ...(value.tabOrder === undefined ? {} : { tabOrder: tabOrder as TabId[] }),
     } as ExtensionSettings,

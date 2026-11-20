@@ -5,6 +5,7 @@ import {
   type ButtonId,
   type CustomButtonDefinition,
   type CustomButtonId,
+  type CustomTabId,
   type InsertionMode,
   type TabId,
 } from '../../src/shared/default-ui';
@@ -12,13 +13,17 @@ import { createChromeSettingsRepository } from '../../src/shared/settings-reposi
 import { DEFAULT_COMPLETION_SOUND_ID } from '../../src/shared/answer-completion-sound-definitions.ts';
 import { DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT } from '../../src/shared/answer-completion-sound-volume.ts';
 import { CustomButtonCreator } from './CustomButtonCreator';
+import { OptionsTabControls } from './OptionsTabControls';
 import { AnswerCompletionSoundSettings } from './AnswerCompletionSoundSettings';
+import { McpConnectionSettings } from './McpConnectionSettings';
+import { CODEX_BRIDGE_MCP_DEFAULT_URL } from '../../src/shared/codexbridge-mcp-protocol.ts';
 import { prepareSoundAssetDeletion } from './answer-completion-sound-actions.ts';
 import {
   changeCustomButtonOperation,
   createCustomButton,
   deleteCustomButton,
   getCustomButtonImportDeletions,
+  getCustomTabImportDeletions,
   getLayoutPreview,
   getOptionsGroups,
   mergeImportedSettings,
@@ -28,6 +33,8 @@ import {
   reorderTabBefore,
   resetSettingsPreservingCustomButtons,
   updateCustomButton,
+  updateCustomTabLabel,
+  updateTabVisibility,
 } from './options-state';
 import {
   DEFAULT_SETTINGS,
@@ -42,6 +49,7 @@ type ImportPreview = Readonly<{
   savedCustomCount: number;
   importedCustomCount: number;
   deletionIds: readonly CustomButtonId[];
+  deletedCustomTabCount: number;
   legacy: boolean;
 }>;
 
@@ -114,10 +122,12 @@ export function OptionsPage() {
   }
 
   function updateTab(id: TabId, visible: boolean) {
-    setDraft((current) => ({
-      ...current,
-      tabOverrides: { ...(current.tabOverrides ?? {}), [id]: { ...(current.tabOverrides?.[id] ?? {}), visible } },
-    }));
+    setDraft((current) => updateTabVisibility(current, id, visible));
+    setStatus('未保存の変更があります。');
+  }
+
+  function updateCustomTab(id: CustomTabId, label: string) {
+    setDraft((current) => updateCustomTabLabel(current, id, label));
     setStatus('未保存の変更があります。');
   }
 
@@ -133,6 +143,11 @@ export function OptionsPage() {
 
   function updateAnswerCompletionSoundVolume(volumePercent: number) {
     setDraft((current) => ({ ...current, answerCompletionSoundVolumePercent: volumePercent }));
+    setStatus('未保存の変更があります。');
+  }
+
+  function updateCodexBridgeMcpUrl(value: string) {
+    setDraft((current) => ({ ...current, codexBridgeMcpUrl: value }));
     setStatus('未保存の変更があります。');
   }
 
@@ -256,13 +271,15 @@ export function OptionsPage() {
         : 'JSONまたは設定値が不正です。保存済み設定は変更されていません。');
       return;
     }
-    const legacy = !Object.prototype.hasOwnProperty.call(parsed.settings, 'customButtons');
+    const legacy = !Object.prototype.hasOwnProperty.call(parsed.settings, 'customButtons')
+      && !Object.prototype.hasOwnProperty.call(parsed.settings, 'customTabs');
     const imported = mergeImportedSettings(parsed.settings, base);
     setImportPreview({
       settings: imported,
       savedCustomCount: Object.keys(base.customButtons ?? {}).length,
       importedCustomCount: Object.keys(imported.customButtons ?? {}).length,
       deletionIds: getCustomButtonImportDeletions(base, parsed.settings),
+      deletedCustomTabCount: getCustomTabImportDeletions(base, parsed.settings).length,
       legacy,
     });
     setStatus('読込内容を確認し、ドラフトへ適用してください。');
@@ -307,6 +324,11 @@ export function OptionsPage() {
         <p className="preview-note">プレビューはドラフトに反映されます。パネルへの適用は保存後です。</p>
       </section>
 
+      <McpConnectionSettings
+        endpoint={draft.codexBridgeMcpUrl ?? CODEX_BRIDGE_MCP_DEFAULT_URL}
+        disabled={!ready || saving}
+        onEndpointChange={updateCodexBridgeMcpUrl}
+      />
       <fieldset className="settings-editor" disabled={!ready || saving}>
         {buttonGroups.map((group) => (
           <section
@@ -317,20 +339,15 @@ export function OptionsPage() {
             onDrop={(event) => group.id === 'always' ? undefined : dropTab(event, group.id)}
           >
             <h2 id={`group-${group.id}`}>{group.label}</h2>
-            {group.id !== 'always' && (() => {
-              const tab = resolved.tabs.find(({ id }) => id === group.id)!;
-              return (
-                <label className="tab-visibility">
-                  <input type="checkbox" checked={tab.visible} onChange={(event) => updateTab(tab.id, event.currentTarget.checked)} />
-                  このタブを表示
-                  <span className="row-order">
-                    <button type="button" aria-label={`${tab.label}を上へ`} onClick={() => moveTab(tab.id, -1)}>上へ</button>
-                    <button type="button" aria-label={`${tab.label}を下へ`} onClick={() => moveTab(tab.id, 1)}>下へ</button>
-                    <button type="button" className="drag-handle" draggable={ready && !saving} aria-label={`${tab.label}をドラッグして並べ替え`} title="ドラッグして並べ替え" onDragStart={(event) => startTabDrag(event, tab.id)}>⠿</button>
-                  </span>
-                </label>
-              );
-            })()}
+            {group.id !== 'always' && <OptionsTabControls
+              tab={resolved.tabs.find(({ id }) => id === group.id)!}
+              ready={ready}
+              saving={saving}
+              onVisibilityChange={updateTab}
+              onMove={moveTab}
+              onDragStart={startTabDrag}
+              onLabelChange={updateCustomTab}
+            />}
             <div className="button-settings-list">
               {resolved.buttons.filter((button) => button.groupId === group.id).map((button) => (
                 (() => {
@@ -452,7 +469,8 @@ export function OptionsPage() {
         {importPreview && (
           <div className="import-preview" aria-label="インポートプレビュー">
             <p>schemaVersion {importPreview.settings.schemaVersion}、ボタン{resolveDefaultUI(importPreview.settings).buttons.length}個、タブ{resolveDefaultUI(importPreview.settings).tabs.length}個の設定です。</p>
-            <p>保存済みカスタムボタン: {importPreview.savedCustomCount}個 / 適用後: {importPreview.importedCustomCount}個{importPreview.legacy ? '（旧JSONのため保存済み定義を保持）' : ''}</p>
+            <p>保存済みカスタムボタン: {importPreview.savedCustomCount}個 / 適用後: {importPreview.importedCustomCount}個{importPreview.legacy ? '（旧JSONのため保存済みタブ・ボタン定義を保持）' : ''}</p>
+            {importPreview.deletedCustomTabCount > 0 && <p>明示置換で削除されるカスタムタブ: {importPreview.deletedCustomTabCount}個</p>}
             {importPreview.deletionIds.length > 0 && (
               <div>
                 <p>削除予定ID（適用前に確認します）:</p>
@@ -460,7 +478,7 @@ export function OptionsPage() {
               </div>
             )}
             <button type="button" disabled={!ready || saving} onClick={() => {
-              if (importPreview.deletionIds.length > 0 && !window.confirm(`JSONの適用でカスタムボタンを削除します。保存後の復元にはJSONバックアップが必要です。\n\n${importPreview.deletionIds.join('\n')}\n\nドラフトに適用しますか？`)) {
+              if ((importPreview.deletionIds.length > 0 || importPreview.deletedCustomTabCount > 0) && !window.confirm(`JSONの適用でカスタム構造を置換し、カスタムボタン${importPreview.deletionIds.length}個・タブ${importPreview.deletedCustomTabCount}個を削除します。保存後の復元にはJSONバックアップが必要です。\n\n${importPreview.deletionIds.join('\n')}\n\nドラフトに適用しますか？`)) {
                 setStatus('インポートの適用を取り消しました。編集中のドラフトは変更されていません。');
                 return;
               }
@@ -473,7 +491,6 @@ export function OptionsPage() {
           </div>
         )}
       </section>
-
       <footer className="save-bar">
         <button type="button" disabled={!ready || saving} onClick={() => void reload()}>保存値を再読み込み</button>
         <button type="button" className="save-button" disabled={!ready || saving} onClick={() => void save()}>{saving ? '保存中…' : '保存'}</button>
