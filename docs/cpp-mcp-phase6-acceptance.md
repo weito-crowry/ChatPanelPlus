@@ -179,3 +179,25 @@ Phase 2認証本体は上表のとおりユーザー/Muse報告ベースでPASS�
 - Chrome Optionsからの接続/Host Permission、監視、通知音、最終回答表示・コピー・挿入、既存拡張storageの復元性は未確認。
 - **Phase 3開始前に、Chromeが実際にロードしている`dist`と拡張storageのbackupが必須。** `deploy:chrome`の固定候補先だけではロード元を示さない。実ロード元とstorageを安全に退避・照合してから、別途Phase 3を開始する。
 - この作業ではPhase 3/4、Chrome deploy/reload、`pnpm build`、`deploy:chrome`、実Codex turnは行っていない。
+
+## CPP-6 Phase 3A dist退避・Storage復元性確認 (2026-11-20)
+
+この段階は既存distの非破壊backupと復元手順の整備まで。Chrome profile/storageの自動退避経路は使えず、storage exportは未取得。Phase 3B/CおよびPhase 4へ進んでいない。
+
+| 状態 | 項目 | 実測結果 |
+| --- | --- | --- |
+| PASS | Repository identity / 保護 | ChatPanelPlusは指定branch/開始HEAD/upstreamでclean。CodexBridgeも指定branch/HEAD/upstreamで、既存の未追跡5領域を変更・読取りせず保護した。tracked sourceは変更していない。 |
+| PASS | 登録distの静的確認 | ユーザーがChrome Detailsで確認した登録元はrepo内dist、versionは0.1.5。ディスク上distのmanifestもMV3/version 0.1.5でsource manifestとbyte一致。主要6ファイル、manifest参照のcontent script、Options page、service workerを確認。permissionsは`clipboardRead`/`storage`/`offscreen`/`alarms`、optional host patternはHTTP/HTTPS全体。固定`deploy:chrome`先は登録元distと別フォルダ。 |
+| PASS | dist非破壊backup | 通常ファイル11件・767,143 bytesを相対pathとmtimeを保ってGit外へコピー。source-before/source-after/backupのfile inventory・size・SHA-256 tree hashが一致し、copy中のsource不変を確認。source/backupに再解析pointはなく、外部先への再帰なし。backup rootはDACL継承を切り、現在Windows userのみを許可し、全directory/file ACLを確認。具体path/hashはGit外のuser-only運用メモに保存。restoreは未実施。 |
+| NOT_VERIFIED | Chrome identity / 設定 | Chromeの生ID、実profile、Optionsに保存されたURL、Host Permissionの実許可状態はこの段階では独立readbackしていない。ID/version/source/loopback endpointはユーザー提示情報。endpointはmanifestのoptional HTTP patternに含まれるが、許可済みとは確認していない。 |
+| USER_ACTION_REQUIRED | `chrome.storage.local` export | CUA browser-access hostが利用できず、既存extension contextから`chrome.storage.local.get(null)`を実行できなかった。storage値・件数は未取得で、0件とは扱わない。Chrome profile/LevelDB/session storage/clipboardには触れていない。Git外にextension ID/originを照合し、全keyをJSON保存して値を出力しないconsole helperと本人操作手順を作成。helper構文検査はPASS、Chrome内実行は未実施。 |
+| NOT_RUN | 復元 / 変更 | dist復元、storageへの`set`、`clear`、extension reload/permission変更は実施していない。復元手順はGit外運用メモに記録し、本番storage書込みは別途明示承認後に限る。 |
+| BLOCKED | Phase 3B/C開始 | storage exportを同一profile/extension contextから取得し、拡張ID・JSON構造・key count・byte数・SHA-256・user-only ACLを確認するまで開始不可。Options URLと実Host Permissionもread-only照合が必要。Phase 3AのGitHub review完了前にも次工程へ進まない。 |
+| NOT_RUN | Phase 3B/C・Phase 4 | `pnpm build`、`pnpm deploy:chrome`、dist更新、Chrome reload、新規配備、Phase 4実機試験はすべて未実施。 |
+
+### Phase 3A復元準備と次のユーザー操作
+
+- Git外運用メモにdist backup manifest（相対path/size/SHA-256/mtime/source-before/source-after/backup）とdist復元手順を保存した。復元・上書き・Chrome reloadは今回の対象外。
+- storage export helperはOptions pageのConsoleでのみ使い、profile上の拡張ID/originを先に照合する。ユーザーが保存dialogでPhase 3A user-only backup folder内の新規JSONを選ぶ。Consoleにはstatus、key数、byte数、SHA-256だけを表示し、storage値は表示しない。JSON自体をChat/Gitへ貼らない。
+- helperが`status=saved`、`extensionIdMatch=true`、`schemaVerified=true`、`exactBytesVerified=true`を返した後、CodexがJSON構造・extension ID・key count・size/hash・ACLをローカルで検証する。書込み結果が不明または検証失敗ならfileを保持して停止する。
+- storage restoreはbackupのschema/extension ID/originを検証し、現在値とのconflictを値なしで確認する。`clear`は使わず、既存keyを保持し、明示承認後に限定したkeyのみを反映する。今回の文書追記・helper作成はrestoreの承認を意味しない。
