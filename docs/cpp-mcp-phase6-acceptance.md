@@ -365,3 +365,20 @@ pnpm build、pnpm deploy:chrome、scripts/deploy-chrome.mjsは使用していな
 | USER_ACTION_REQUIRED | 次のChrome確認 | ChatGPTのGitHubレビュー後、ユーザーがChrome Detailsで登録pathを確認し、拡張を手動reloadする。既存ChatGPT tabを再読み込みしてからOptionsを開き直し、設定・custom tab/button表示、権限表示、ローカルprobeと接続確認の結果を確認する。 |
 
 この段階のbuild/deployで`pnpm test`、通常build/deploy script、Chrome操作、Chrome Storage変更、Bridge変更は行っていない。unit tests 441/441、Options static tests 5/5、typecheck、lintはレビュー済みsource commitでの結果であり、このfile-only deployment turnでは再実行していない。詳細なパス、file inventory、mtime、ACL fingerprint、Storage backup hash、復旧手順はGit外のuser-only運用記録に保存した。
+
+## CPP-6 Chrome実機受入・基本接続/監視クローズアウト（2026-11-21）
+
+Phase 3C-FETCHFIX-D1配備後のChrome実機観測を、報告主体と時系列を分けて記録する。以下はChrome DevToolsでのユーザー観測、CPP画面のユーザー提供スクリーンショット、ChatGPTがCodexBridge native MCPで確認した検証turnの状態をまとめたものである。後から得た状態を、前段の診断操作すべてが同時に成功していた証拠として扱わない。
+
+| 状態 | 項目 | 観測・確認結果 |
+| --- | --- | --- |
+| USER_OBSERVED | 権限表示とローカルHTTP probe | Optionsの接続先はloopback MCP endpoint、Chrome Host Permissionは「許可済み」、Loopback Network AccessはUI上「未許可」と報告された。存在しないprobe pathへのHTTP 404はサーバーから応答が返った到達確認として成功。LNA表示が未許可でもローカル接続経路は成立し得ることを観測した。 |
+| USER_OBSERVED | native fetchの比較と旧Service Workerコード | Worker上で直接呼んだnative fetchはPOST HTTP 404またはMCP initialize HTTP 200/SSEへ到達した一方、unbound fetchをclass property経由で呼ぶ比較は`TypeError: Illegal invocation`となった。拡張reload後にもService Worker Sourcesに修正前compiled codeが見えた時期があり、診断wrapperを一時使用した試行ではHTTP 200/202/200/200の応答とOptionsの「接続確認成功」（MCP protocol 2025-03-26、tools/list 71件、`codex_targets`読取確認）が表示された。wrapperなしの通常動作では2msのTypeErrorが再現した。 |
+| PASS | fetch修正のsourceとisolated build | 原因はnative fetchのreceiver不一致と判断し、default fetchを`globalThis.fetch(...)`で呼ぶレビュー済み修正をsourceへ反映、回帰テストと隔離buildで確認済み。上記wrapper使用時のOptions接続成功は診断経路の観測であり、最終reload後に通常Optionsの「接続確認」を再度押して成功した証拠とは分ける。 |
+| USER_OBSERVED | worker/extension/tab再読込後の接続 | ユーザーがService Worker DevToolsを閉じ、個別拡張をreloadし、ChatGPT tabをreloadした後、CPP画面で「接続状態: Bridgeへ接続しています。」「Main PC・利用可能」とスレッド一覧が表示された。旧compiled codeの観測と症状はstale Service Worker実行に整合するが、Chrome内部の更新機構や全失敗原因までは確定しない。 |
+| PASS | thread discoveryとwatch登録 | ChatGPTがCodexBridge native MCPの`codex_start`で読み取り専用の検証turnを開始し、`codex_status`/`codex_threads`で`in_progress`、`live`、`managed_turn`を確認した。ユーザーのCPP画面では対象threadを選択でき、監視数`1/32`と`in_progress`/`live`が表示された。 |
+| PASS | 完了遷移と終了イベント | ChatGPTはnative MCPで検証turnの`completed`を確認。後のCPP画面には`codex_status=completed`、`last_turn=completed`、`evidence=live`、終了イベント`1/128`が表示され、完了通知行が作成された。完了後に`current_execution`が`unknown`/`inferred`と表示された観測もあったが、last turnのcompleted状態と終了イベントは成立しており、この表示だけを不具合確定とはしない。 |
+| PASS | 通知音の処理表示 | CPP画面で通知音の再生結果「成功」が表示された。これはアプリの処理結果表示の受入であり、実際に音を聴取できたことの確認とは区別する。 |
+| NOT_VERIFIED | 残る範囲 | CPP UIからのCodex job開始、最終回答本文のCPP取得・表示、実際に聞こえる音の確認、ネットワーク断・失敗後の復旧、最終reload後に通常Optionsの接続確認ボタンを再試験した結果は確認できていない。 |
+
+**クローズアウト判断：** ユーザーはCPPの基本接続・スレッド表示・監視・完了イベント機能を受入れ、今回の基本連携/監視範囲を一区切りと判断した。UI見た目の再構成は別フェーズへ移す。本記録追記ではsource、tests、dist、設定、Storage、Bridge、Chromeを変更・操作していない。テスト/build/lintは文書変更のみのため`NOT_RUN`。Phase 3C-FETCHFIX-D1に記録した当時のChrome実機`NOT_RUN`は、その時点の履歴として維持する。
