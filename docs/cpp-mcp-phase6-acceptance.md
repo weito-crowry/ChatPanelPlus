@@ -282,3 +282,18 @@ Phase 3AのWindows Storage export確認と独立private backup、dist退避維�
 | NOT_RUN | 配備・実機試験 | distへのcopy/replace、Chrome reload、Options保存、MCP接続、Phase 3C/Phase 4はすべて未実施。 |
 
 将来の配備時は確認済みの登録rootを維持して拡張IDを変えない。隔離stagingと既存backupを配備直前に再検証し、同一volume上の復元可能なsibling backupを確保してから登録distを更新、更新後のmanifest/file inventoryを確認する。失敗時は検証済backupから復元する手順を使い、Chrome reloadはユーザーが手動で行う。Settings/Storageへの自動書込みや移行は行わない。既存scripts/deploy-chrome.mjsは登録済みrootとは別のChatPanelPlus-Content-Probe-20261021を宛先とするため使用しない。
+
+## CPP-6 Phase 3B-1 file deploy verified / Chrome reload pending (2026-11-20)
+
+この段階では承認済みの隔離成果物を同じ登録distパスへディレクトリrenameで反映し、active distと保持rollbackをhash検証した。Chrome reload、Chrome設定操作、Storage/API操作は行っていない。Chromeで新しいコードが読み込まれたことはまだ確認していない。
+
+| 状態 | 項目 | 実測結果 |
+| --- | --- | --- |
+| PASS | 配備前ゲート | CPPは既存branch/期待HEADでclean。runtime sourceはレビュー済みPhase 3A.5 commitから変更なし。Phase 3A dist/Storage backupとPhase 3B-0 stagingの相対path、size、SHA、mtime、ACL、reparse、manifest/version/permissions/optional host patterns、asset参照を再照合した。 |
+| PASS | ユーザーread-only identity結果 | ユーザー報告のOptions Console結果はextensionId/origin/version/schema一致、Storage読取成功、custom tab 1件。URLは明示保存されずsource defaultが使われる状態。Host Permissionは未付与でaction_requiredと報告された。これは配備前の想定状態で、permission requestは配備後のユーザー操作とする。 |
+| PASS | 同一登録パスへの置換 | 固定Phase 3B-0 stagingから11ファイル/773569 bytesを新規siblingへcopy・ACL/hash検証後、既存distをunique rollback siblingへrenameし、新siblingを従来のdistパスへrenameした。active distはstagingと11/11 file hash/size一致。tree SHA-256は1d5f31e2cda9d80327ee25225ae8b27a139ef8e29c4a27fec4f42f1f9601e93a。versionは0.1.5でsource manifestとbyte一致。 |
+| PASS | Rollback保持・ACL | 旧distは11ファイル/767143 bytes、Phase 3A source-afterのfile hash/mtimeと一致し、recorded tree SHA-256は12b0d27651de216f3bb63f2a339e237264ca659d178d449dcbe05ac416777263。rename前後のACL/owner fingerprintは一致し、old folder ACLは変更していない。新active distは全項目protected/current-user-only ACL。rollback siblingは保持され、誤stage防止のためその一意パスだけをlocal .git/info/excludeへ追加した。 |
+| USER_ACTION_REQUIRED | Chrome受入 | Chrome Detailsの登録pathはCodexが自動読出ししていない。前回ユーザー受入記録のdist pathと今回のread-only identity結果に基づいて配備し、異なるpathの証拠はなかった。ユーザーがDetailsでpath/versionを目視照合し、拡張を手動reloadした後、Optionsで設定読込成功・custom tab/buttonと選択状態を確認する。続いてOptionsの「接続確認」からHost Permissionを本人操作で許可する。 |
+| NOT_RUN | Chrome/MCP/後続試験 | Chrome reload、Options設定保存、permission request、MCP接続、Storage変更/復元、Phase 3C、Phase 4は未実施。tokenにはアクセスしていない。 |
+
+pnpm build、pnpm deploy:chrome、scripts/deploy-chrome.mjsは使用していない。Chrome UIやprofileは操作・読出ししていない。ファイル置換の成功だけではChrome側のreload成功やMCP接続を示さない。Phase 3Cはユーザーreload後のOptions確認とHost Permission許可を経て、別途受入を行う。
