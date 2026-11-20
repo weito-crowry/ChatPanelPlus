@@ -222,3 +222,28 @@ Phase 2認証本体は上表のとおりユーザー/Muse報告ベースでPASS�
 - JSONが確認できないのでvalidateExtensionSettingsを実データへ実行していない。Optionsのcorrupt-settings警告の具体的原因は未解明。設定保存・修復・defaults上書き・storage.local変更・Chrome操作は行っていない。
 - 次に必要なのは、ユーザーが既に保存したファイルの正確なローカルpathを伝えること（JSON本体・内容は送らない）。Codexはそのpathでread-only検証を再開する。新たなexport、ファイル移動/複製、設定操作は今回実施しない。
 - Phase3B/C build/deploy/reloadとPhase4実機試験はNOT_RUN。Phase3Bへ自動進行しない。
+
+## CPP-6 Phase 3A Windows Storage export verification and schema diagnosis (2026-11-20)
+
+この追記は前項の「保存ファイル未発見・NOT_VERIFIED」という当時点の記録を更新する。ユーザーは先行するChatGPT添付検証で同一bytes/hash/format/extension identity/origin/keyCountを確認済みと報告した。今回CodexはWindows保存実体を別途read-only検証し、提示済みmetadataと一致することを確認した。
+
+| 状態 | 項目 | 実測結果 |
+| --- | --- | --- |
+| PASS | Chrome Console結果（ユーザー報告） | ユーザーは同一の既存Chrome Options contextでstatus=saved、extensionIdMatch/schemaVerified/exactBytesVerified/storageReadAttempted/storageRead=true、keyCount=7等が出たと報告。これはユーザー報告であり、Chrome UIをCodexが操作した結果ではない。 |
+| PASS | Windows保存実体・export envelope | 指定ファイルはユーザー提示の保存先に通常ファイルとして存在し、絶対path chainにreparse pointなし。661547 bytes、SHA-256 abf0ed9243267cc486d7177eb3a9bf1ed9c285ed6331726633cba9331ebf0788でConsole報告と一致。UTF-8 round-trip、JSON parse、format chatpanelplus.chrome-storage.local-export.v1、keyCount=7、keyNames/storage key一致、extension id/originとhelper期待値の一致を確認。config keyあり、監視state keyなし。keyの値は出力していない。 |
+| PASS | Git外private backup | 元JSONとは別の一意な通常ファイルを既存Phase3A private rootへcreate-newでコピー。コピー前/後のsource size/hash/mtime不変、backup bytes/hash/mtime一致。source Downloads ACLはread-only確認時にuser-onlyではなかったため変更せず、backup fileと親rootはprotected DACL/current-user-onlyを確認。metadata-only private manifestを保存した。 |
+| PASS | Settings警告のroot cause | 実config schemaVersion=1にcustomTabs map 1件、customButtons 10件がある。7件のcustom button groupIdがdefault-only GROUP_IDSにないcustom tab IDを参照。buttonOrderにはそのcustom tab groupの1 entryとcustom button参照7件、tabOrderにはcustom tab参照1件がある。現validatorの純関数結果はinvalid-settings。これら未対応のgroup/order参照だけを除いた隔離cloneはvalidationを通過し、customTabs mapを含む他設定fieldのvalidationも通過した。保存値の破損ではなく、現行validatorのcustom tab形式との互換性欠落と分類する。 |
+| PASS | 設定データ保護 | OptionsのloadSettingsはvalidator rejectionをcorrupt-settingsとして返し、既存値保護のため保存停止する。raw JSONの設定値は出力せず、本番settings/storageの読み書き、修復、移行はしていない。監視state keyがこのsnapshotにないことはexport時点の不在だけを示し、過去/別時点のwatch有無を証明しない。 |
+| PASS | dist backup維持 | 現dist/backupはmanifestの11/11 file size/SHAに一致し、source mtime 11/11一致、合計767143 bytes。manifest tree hashはsource-before/source-after/backupで一致。backup ACL確認もPASS。distへの書込みなし。 |
+| NOT_VERIFIED | Chrome実値のread-only照合 | export内extension ID/originはhelper期待値と一致するが、Chrome Details、Optionsに保存されたMCP URL、実Host Permissionは今回Chrome UIでreadbackしていない。これらは次工程前にユーザー側のread-only確認が必要。 |
+
+### 非互換の対象と後続の最小設計範囲（今回ソース変更なし）
+
+- settings.ts: schemaVersion 1のcustomTabs mapを型/validatorで明示し、validated custom tab IDsをcustomButtons groupId、buttonOrder、tabOrder、tabOverridesで扱う。現行default-only GROUP_IDSとorderedIdsが拒否要因。
+- default-ui.tsと表示側: DEFAULT_TABSだけを使うresolver/type/render flowを、検証済みcustom tabs/groupsも構成できる形へ拡張する。現src/testsにはcustomTabs参照がない。
+- settings-repository.tsとOptions編集/save: load/save validator前提を維持しつつ、custom tab/groupsのpatch、conflict判定、tab selection/view stateを保持する。無関係な編集でcustom metadataを消さない。
+- 最小回帰計画: schemaVersion 1のcustom tab 1件と関連button/orderを含むfixtureでvalidatorとround-trip保持、custom tabのresolver表示、malformed/dangling referenceの拒否、loadSettingsがstorageへ書かないことをテストする。実装とテスト作成は別途レビュー後であり、今回未実施。
+
+## Phase 3A exit status and Phase 3B gate
+
+Phase 3AのWindows Storage export確認と独立private backup、dist退避維持確認、Options警告の互換性原因分類は完了。Phase 3A GitHub reviewはこのcommit後に行う。Phase 3B/CはBLOCKEDのまま：customTabs互換性の設計・実装修正を別turnでレビューし、Chrome上の既存拡張identity、保存済みMCP URL、実Host Permissionをread-onlyで確認すること。Chrome reloadは将来もユーザー担当。build/deploy/reload、Phase 4、Storage復元や設定変更はNOT_RUN。
