@@ -6,6 +6,7 @@ import {
 import {
   CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH,
   CODEX_BRIDGE_WATCH_ACK_EVENTS,
+  CODEX_BRIDGE_WATCH_ACK_EVENT_IDS_LIMIT,
   CODEX_BRIDGE_WATCH_LIST,
   CODEX_BRIDGE_WATCH_READ,
   CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER,
@@ -105,7 +106,7 @@ function isMessage(value: unknown): value is CodexBridgeWatchMessage {
   }
   if (value.type === CODEX_BRIDGE_WATCH_ACK_EVENTS) {
     return keys.length === 3 && isConversationId(value.conversationId) && Array.isArray(value.eventIds)
-      && value.eventIds.length > 0 && value.eventIds.length <= 128
+      && value.eventIds.length > 0 && value.eventIds.length <= CODEX_BRIDGE_WATCH_ACK_EVENT_IDS_LIMIT
       && value.eventIds.every((eventId) => isCodexBridgeWatchIdentifier(eventId) && eventId.length <= 96);
   }
   return (value.type === CODEX_BRIDGE_WATCH_LIST || value.type === CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH)

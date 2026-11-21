@@ -24,6 +24,8 @@ export function PanelView({
   activeButtons,
   conversationId,
   bridgeExpanded,
+  bridgeWatchSelection,
+  bridgeEventSelection,
   conversationMuted,
   muteLoaded,
   mutePending,
@@ -42,6 +44,8 @@ export function PanelView({
   onSelectTab,
   onToggleMinimized,
   onToggleBridgeExpanded,
+  onSelectBridgeWatch,
+  onSelectBridgeEvent,
   onToggleConversationMute,
   onOpenSettings,
   onToggleAnswerCompletionSound,
@@ -161,7 +165,12 @@ export function PanelView({
           </button>
         </section>
         <div id="panel-bridge-details" className="panel-bridge-details" hidden={!bridgeExpanded}>
-          <CodexBridgeList foregroundEnabled={!currentViewState.minimized} conversationId={conversationId} onSummaryChange={updateBridgeSummary} />
+          <CodexBridgeList
+            foregroundEnabled={!currentViewState.minimized} conversationId={conversationId}
+            bridgeWatchSelection={bridgeWatchSelection} bridgeEventSelection={bridgeEventSelection}
+            onSelectBridgeWatch={onSelectBridgeWatch} onSelectBridgeEvent={onSelectBridgeEvent}
+            onSummaryChange={updateBridgeSummary}
+          />
         </div>
         {error && <div className="panel-error" role="status">{error}</div>}
         <div className="settings-entry">

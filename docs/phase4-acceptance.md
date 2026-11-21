@@ -3,9 +3,9 @@
 ## 自動受入結果
 
 - 状態: **PARTIAL／自動検証・配備PASS、総保持方針とChrome実機確認は保留**。未実施項目をPASSとしていない。
-- Phase 3の全テスト518件を基準に、Phase 4変更後は隔離コピーで全テスト527/527 PASS（9件追加）。Bridge関連の焦点テストは39/39 PASS。
+- Phase 3の全テスト518件を基準に、Phase 4初回変更後は527/527 PASS（9件追加）。今回の最終レビュー修正後は539/539 PASS（累計21件追加）、修正箇所の焦点テストは29/29 PASS。
 - `pnpm typecheck`: PASS。`pnpm lint`: PASS（500行／32 KiB検査を含む）。`git diff --check`: PASS。
-- 全テストは`dist/`を除いた一時ソースコピーで実行し、`node_modules`のみリンクした。実行前後で登録済みrepo直下`dist/`の11ファイルについて相対パス・サイズ・SHA-256が一致した。
+- 全テストは`dist/`を除いた一時ソースコピーで実行し、`node_modules`のみリンクした。最終実行前後で登録済みrepo直下`dist/`の11ファイルについて相対パス・サイズ・SHA-256が一致した。
 - MCP APIを追加せず、既存Chrome runtime messageと共有watch/event保存形式を内部拡張した。
 
 ## 登録済みdistへの配備記録
@@ -40,3 +40,12 @@
 - 未確認eventが128件を超える場合の保持、確認済みeventの保持範囲、重複TurnとACK race。
 - Bridge音のowner mute、owner不明時のskip、再生直前mute更新の直列化。
 - SPA route変更中のwatch操作、final-answer取得・copy・入力欄挿入キャンセル。
+
+## 最終レビュー修正（2026-11-21）
+
+- この修正は初回Phase 4配備の後に追加した。修正commit後、登録済みrepo直下`dist/`を新しい兄弟バックアップへ照合してから再配備する。
+- **未確認event 129件以上のACK:** UIでowner会話に表示中のevent IDを一度snapshotし、最大128件ずつ重複除外・直列送信する。部分失敗では成功応答件数を示して一覧を再取得し、再試行可能な未確認分を残す。SPA route変更時は次batchを送らない。backgroundのsender/owner認可、冪等ACK、event ID単位のrace保護は維持した。
+- **会話別B/C選択:** 監視watch identityと終了event IDを既存versioned conversation stateへ追加。同じconversationの複数Chrome tabで共有し、別conversationでは分離する。schemaVersion 1の旧状態は新項目を`null`補完し、owner一致の保存済み一覧に存在しない選択は解除する。Aの一般thread探索選択とは別状態。最終回答本文は永続化せず、event ownerと現在routeの一致を従来どおり要求する。
+- 自動確認: 129/256件batch、実background handler上限、途中失敗、新規event並行発生、route中止、owner認可、conversation A/B選択分離、旧schema互換を含む539/539 PASS。`pnpm typecheck`、`pnpm lint`、500行／32 KiB検査もPASS。
+- 初回全回帰の538/539では`PanelView`が新しい選択propsを`CodexBridgeList`へ渡す契約テストが旧JSX形を固定して失敗した。テストを新props（watch/event selectionとcallbackを含む）へ更新し、UI契約を維持した上で全539 PASSを確認した。機能テストを削除・緩和していない。
+- 総event保持数上限は引き続き未決定で、未確認eventの保持方針を変更していない。Chrome実機の大量ACK、途中通信失敗、同一会話別tab／SPA／reload後の選択復元は未実施のまま最終チェックリストに残す。

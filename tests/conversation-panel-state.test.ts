@@ -40,7 +40,10 @@ test('会話別状態をversioned local keyへ保存し、旧共有view stateを
   assert.deepEqual(result, { ok: true });
   assert.deepEqual(fake.data[VIEW_STATE_STORAGE_KEY], LEGACY);
   assert.deepEqual(await repository.load('conversation-A'), {
-    ok: true, state: { schemaVersion: 1, selectedTabId: 'control', minimized: true, bridgeExpanded: true }, saved: true,
+    ok: true, state: {
+      schemaVersion: 1, selectedTabId: 'control', minimized: true, bridgeExpanded: true,
+      bridgeWatchSelection: null, bridgeEventSelection: null,
+    }, saved: true,
   });
   assert.ok(CONVERSATION_PANEL_STATE_STORAGE_KEY in fake.data);
 });
@@ -48,13 +51,19 @@ test('会話別状態をversioned local keyへ保存し、旧共有view stateを
 test('同じ会話は保存状態を共有し、別会話は分離する', async () => {
   const fake = storage();
   const repository = new ConversationPanelStateRepository(fake.area);
-  const state = { schemaVersion: 1 as const, selectedTabId: 'wall' as const, minimized: false, bridgeExpanded: true };
+  const state = {
+    schemaVersion: 1 as const, selectedTabId: 'wall' as const, minimized: false, bridgeExpanded: true,
+    bridgeWatchSelection: null, bridgeEventSelection: null,
+  };
   assert.deepEqual(await repository.save('conversation-A', state), { ok: true });
   const loaded = await repository.load('conversation-A');
   assert.equal(loaded.ok, true);
   if (loaded.ok) assert.deepEqual(loaded.state, state);
   assert.deepEqual(await repository.load('conversation-B'), {
-    ok: true, state: { schemaVersion: 1, selectedTabId: null, minimized: false, bridgeExpanded: false }, saved: false,
+    ok: true, state: {
+      schemaVersion: 1, selectedTabId: null, minimized: false, bridgeExpanded: false,
+      bridgeWatchSelection: null, bridgeEventSelection: null,
+    }, saved: false,
   });
 });
 
@@ -75,14 +84,72 @@ test('同じ会話の複数タブが別項目を同時更新しても相互に�
   const tabA = new ConversationPanelStateRepository(fake.area, undefined, locks);
   const tabB = new ConversationPanelStateRepository(fake.area, undefined, locks);
   const results = await Promise.all([
-    tabA.update('conversation-A', { selectedTabId: 'wall' }),
-    tabB.update('conversation-A', { minimized: true }),
+    tabA.update('conversation-A', {
+      selectedTabId: 'wall', bridgeWatchSelection: { connectionId: 'connection-A', targetId: 'target-A', threadId: 'thread-A' },
+    }),
+    tabB.update('conversation-A', { minimized: true, bridgeEventSelection: 'event-A' }),
   ]);
   assert.deepEqual(results, [{ ok: true }, { ok: true }]);
   const loaded = await tabA.load('conversation-A');
   assert.equal(loaded.ok, true);
   if (loaded.ok) assert.deepEqual(loaded.state, {
     schemaVersion: 1, selectedTabId: 'wall', minimized: true, bridgeExpanded: false,
+    bridgeWatchSelection: { connectionId: 'connection-A', targetId: 'target-A', threadId: 'thread-A' },
+    bridgeEventSelection: 'event-A',
+  });
+});
+
+test('B watch identityとC event選択を同一会話で共有し、別会話と分離する', async () => {
+  const fake = storage();
+  const repository = new ConversationPanelStateRepository(fake.area, fake.onChanged);
+  const stateA = {
+    schemaVersion: 1 as const, selectedTabId: 'control' as const, minimized: false, bridgeExpanded: true,
+    bridgeWatchSelection: { connectionId: 'connection-A', targetId: 'target-A', threadId: 'thread-A' },
+    bridgeEventSelection: 'event-A',
+  };
+  const stateB = {
+    schemaVersion: 1 as const, selectedTabId: 'wall' as const, minimized: false, bridgeExpanded: true,
+    bridgeWatchSelection: { connectionId: 'connection-B', targetId: 'target-B', threadId: 'thread-B' },
+    bridgeEventSelection: 'event-B',
+  };
+  assert.deepEqual(await repository.save('conversation-A', stateA), { ok: true });
+  assert.deepEqual(await repository.save('conversation-B', stateB), { ok: true });
+  assert.deepEqual(await repository.load('conversation-A'), { ok: true, state: stateA, saved: true });
+  assert.deepEqual(await repository.load('conversation-B'), { ok: true, state: stateB, saved: true });
+});
+
+test('既存schemaVersion 1状態は選択フィールドを既定値に補完して読み込む', async () => {
+  const legacyConversationState = { schemaVersion: 1, selectedTabId: 'control', minimized: true, bridgeExpanded: false };
+  const fake = storage({ [CONVERSATION_PANEL_STATE_STORAGE_KEY]: {
+    schemaVersion: 1, conversations: { 'conversation-A': legacyConversationState },
+  } });
+  const repository = new ConversationPanelStateRepository(fake.area);
+  assert.deepEqual(await repository.load('conversation-A'), {
+    ok: true,
+    state: {
+      ...legacyConversationState, bridgeWatchSelection: null, bridgeEventSelection: null,
+    },
+    saved: true,
+  });
+});
+
+test('壊れた新規選択値だけを既定値へ戻し、既存conversation状態を保つ', async () => {
+  const fake = storage({ [CONVERSATION_PANEL_STATE_STORAGE_KEY]: {
+    schemaVersion: 1,
+    conversations: { 'conversation-A': {
+      schemaVersion: 1, selectedTabId: 'control', minimized: true, bridgeExpanded: true,
+      bridgeWatchSelection: { connectionId: 'connection-A', targetId: 'target-A' },
+      bridgeEventSelection: 'x'.repeat(97),
+    } },
+  } });
+  const repository = new ConversationPanelStateRepository(fake.area);
+  assert.deepEqual(await repository.load('conversation-A'), {
+    ok: true,
+    state: {
+      schemaVersion: 1, selectedTabId: 'control', minimized: true, bridgeExpanded: true,
+      bridgeWatchSelection: null, bridgeEventSelection: null,
+    },
+    saved: true,
   });
 });
 

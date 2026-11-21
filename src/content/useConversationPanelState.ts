@@ -4,6 +4,7 @@ import {
   createChromeConversationPanelStateRepository,
   type ConversationPanelState,
   type ConversationPanelStatePatch,
+  type ConversationPanelWatchSelection,
   type ConversationPanelStateRepository,
 } from '../shared/conversation-panel-state-repository.ts';
 import { conversationIdFromPath } from '../shared/conversation-route.ts';
@@ -14,10 +15,14 @@ export interface ConversationPanelStateController {
   readonly conversationId: string | null;
   readonly viewState: PanelViewState;
   readonly bridgeExpanded: boolean;
+  readonly bridgeWatchSelection: ConversationPanelWatchSelection | null;
+  readonly bridgeEventSelection: string | null;
   readonly error: string;
   readonly onSelectTab: (tabId: ResolvedTab['id']) => void;
   readonly onToggleMinimized: () => void;
   readonly onToggleBridgeExpanded: () => void;
+  readonly onSelectBridgeWatch: (selection: ConversationPanelWatchSelection | null) => void;
+  readonly onSelectBridgeEvent: (eventId: string | null) => void;
 }
 
 export function useConversationPanelState(tabs: readonly ResolvedTab[]): ConversationPanelStateController {
@@ -34,6 +39,12 @@ export function useConversationPanelState(tabs: readonly ResolvedTab[]): Convers
   const [bridgeExpanded, setBridgeExpanded] = useState(false);
   const bridgeExpandedRef = useRef(bridgeExpanded);
   bridgeExpandedRef.current = bridgeExpanded;
+  const [bridgeWatchSelection, setBridgeWatchSelection] = useState<ConversationPanelWatchSelection | null>(null);
+  const bridgeWatchSelectionRef = useRef(bridgeWatchSelection);
+  bridgeWatchSelectionRef.current = bridgeWatchSelection;
+  const [bridgeEventSelection, setBridgeEventSelection] = useState<string | null>(null);
+  const bridgeEventSelectionRef = useRef(bridgeEventSelection);
+  bridgeEventSelectionRef.current = bridgeEventSelection;
   const loadedForRef = useRef<string | null>(null);
   const [error, setError] = useState('');
   const routeGeneration = useRef(0);
@@ -46,6 +57,10 @@ export function useConversationPanelState(tabs: readonly ResolvedTab[]): Convers
     bridgeExpandedRef.current = state.bridgeExpanded;
     setViewState(next);
     setBridgeExpanded(state.bridgeExpanded);
+    bridgeWatchSelectionRef.current = state.bridgeWatchSelection;
+    bridgeEventSelectionRef.current = state.bridgeEventSelection;
+    setBridgeWatchSelection(state.bridgeWatchSelection);
+    setBridgeEventSelection(state.bridgeEventSelection);
     loadedForRef.current = id;
   }
 
@@ -81,6 +96,20 @@ export function useConversationPanelState(tabs: readonly ResolvedTab[]): Convers
     if (id && loadedForRef.current === id) persist(id, { bridgeExpanded: next });
   }
 
+  function updateBridgeSelection(patch: Pick<ConversationPanelStatePatch, 'bridgeWatchSelection' | 'bridgeEventSelection'>) {
+    const nextWatch = patch.bridgeWatchSelection === undefined ? bridgeWatchSelectionRef.current : patch.bridgeWatchSelection;
+    const nextEvent = patch.bridgeEventSelection === undefined ? bridgeEventSelectionRef.current : patch.bridgeEventSelection;
+    if (JSON.stringify(nextWatch) === JSON.stringify(bridgeWatchSelectionRef.current)
+      && nextEvent === bridgeEventSelectionRef.current) return;
+    bridgeWatchSelectionRef.current = nextWatch;
+    bridgeEventSelectionRef.current = nextEvent;
+    setBridgeWatchSelection(nextWatch);
+    setBridgeEventSelection(nextEvent);
+    editRevision.current += 1;
+    const id = conversationIdRef.current;
+    if (id && loadedForRef.current === id) persist(id, patch);
+  }
+
   useEffect(() => {
     const route = createCodexWorkModeRouteObserver(window);
     let seenInitialRoute = false;
@@ -99,6 +128,10 @@ export function useConversationPanelState(tabs: readonly ResolvedTab[]): Convers
       setViewState(initial);
       bridgeExpandedRef.current = false;
       setBridgeExpanded(false);
+      bridgeWatchSelectionRef.current = null;
+      setBridgeWatchSelection(null);
+      bridgeEventSelectionRef.current = null;
+      setBridgeEventSelection(null);
       unsubscribeState();
       unsubscribeState = () => {};
       if (!nextId) return;
@@ -123,6 +156,8 @@ export function useConversationPanelState(tabs: readonly ResolvedTab[]): Convers
             selectedTabId: viewStateRef.current.selectedTabId,
             minimized: viewStateRef.current.minimized,
             bridgeExpanded: bridgeExpandedRef.current,
+            bridgeWatchSelection: bridgeWatchSelectionRef.current,
+            bridgeEventSelection: bridgeEventSelectionRef.current,
           });
         }
       });
@@ -144,9 +179,13 @@ export function useConversationPanelState(tabs: readonly ResolvedTab[]): Convers
     conversationId,
     viewState,
     bridgeExpanded,
+    bridgeWatchSelection,
+    bridgeEventSelection,
     error,
     onSelectTab: (tabId) => updateViewState(selectPanelTab(viewStateRef.current, tabsRef.current, tabId)),
     onToggleMinimized: () => updateViewState(togglePanelMinimized(reconcilePanelViewState(viewStateRef.current, tabsRef.current))),
     onToggleBridgeExpanded: () => updateBridgeExpanded(!bridgeExpandedRef.current),
+    onSelectBridgeWatch: (selection) => updateBridgeSelection({ bridgeWatchSelection: selection }),
+    onSelectBridgeEvent: (eventId) => updateBridgeSelection({ bridgeEventSelection: eventId }),
   };
 }

@@ -3,14 +3,21 @@ import { isConversationId } from './conversation-route.ts';
 
 export const CONVERSATION_PANEL_STATE_STORAGE_KEY = 'chatPanelPlus.panelStateByConversation.v1';
 
+export type ConversationPanelWatchSelection = Readonly<{ connectionId: string; targetId: string; threadId: string }>;
+
 export interface ConversationPanelState {
   readonly schemaVersion: 1;
   readonly selectedTabId: TabId | null;
   readonly minimized: boolean;
   readonly bridgeExpanded: boolean;
+  readonly bridgeWatchSelection: ConversationPanelWatchSelection | null;
+  readonly bridgeEventSelection: string | null;
 }
 
-export type ConversationPanelStatePatch = Partial<Pick<ConversationPanelState, 'selectedTabId' | 'minimized' | 'bridgeExpanded'>>;
+export type ConversationPanelStateInput = Omit<ConversationPanelState, 'bridgeWatchSelection' | 'bridgeEventSelection'>
+  & Partial<Pick<ConversationPanelState, 'bridgeWatchSelection' | 'bridgeEventSelection'>>;
+export type ConversationPanelStatePatch = Partial<Pick<ConversationPanelState,
+  'selectedTabId' | 'minimized' | 'bridgeExpanded' | 'bridgeWatchSelection' | 'bridgeEventSelection'>>;
 
 export interface PanelStateStorageAreaLike {
   get(keys: string[]): Promise<Record<string, unknown>>;
@@ -39,6 +46,8 @@ const DEFAULT_PANEL_STATE: ConversationPanelState = {
   selectedTabId: null,
   minimized: false,
   bridgeExpanded: false,
+  bridgeWatchSelection: null,
+  bridgeEventSelection: null,
 };
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -52,6 +61,19 @@ function validTabId(value: unknown): value is TabId | null {
     || /^custom-tab-[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/iu.test(value);
 }
 
+function validIdentifier(value: unknown, maximumLength = 512): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= maximumLength && value.trim() === value
+    && !Array.from(value).some((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code <= 0x1f || (code >= 0x7f && code <= 0x9f);
+    });
+}
+
+function validWatchSelection(value: unknown): value is ConversationPanelWatchSelection {
+  return isObject(value) && Object.keys(value).length === 3
+    && validIdentifier(value.connectionId) && validIdentifier(value.targetId) && validIdentifier(value.threadId);
+}
+
 function validateState(value: unknown): ConversationPanelState | null {
   if (!isObject(value) || value.schemaVersion !== 1 || !validTabId(value.selectedTabId)
     || typeof value.minimized !== 'boolean' || typeof value.bridgeExpanded !== 'boolean') return null;
@@ -60,6 +82,8 @@ function validateState(value: unknown): ConversationPanelState | null {
     selectedTabId: value.selectedTabId,
     minimized: value.minimized,
     bridgeExpanded: value.bridgeExpanded,
+    bridgeWatchSelection: validWatchSelection(value.bridgeWatchSelection) ? value.bridgeWatchSelection : null,
+    bridgeEventSelection: validIdentifier(value.bridgeEventSelection, 96) ? value.bridgeEventSelection : null,
   };
 }
 
@@ -97,7 +121,7 @@ export class ConversationPanelStateRepository {
     }
   }
 
-  async save(conversationId: string | null, state: ConversationPanelState): Promise<ConversationPanelStateSaveResult> {
+  async save(conversationId: string | null, state: ConversationPanelStateInput): Promise<ConversationPanelStateSaveResult> {
     if (!isConversationId(conversationId)) return { ok: false, reason: 'invalid-conversation-id' };
     const validated = validateState(state);
     if (!validated) return { ok: false, reason: 'invalid-state' };
@@ -177,10 +201,12 @@ export class ConversationPanelStateRepository {
 function isValidPatch(value: ConversationPanelStatePatch): boolean {
   if (typeof value !== 'object' || value === null || Object.keys(value).length === 0) return false;
   const candidate = value as Record<string, unknown>;
-  return Object.keys(candidate).every((key) => ['selectedTabId', 'minimized', 'bridgeExpanded'].includes(key))
+    return Object.keys(candidate).every((key) => ['selectedTabId', 'minimized', 'bridgeExpanded', 'bridgeWatchSelection', 'bridgeEventSelection'].includes(key))
     && (!('selectedTabId' in candidate) || validTabId(candidate.selectedTabId))
     && (!('minimized' in candidate) || typeof candidate.minimized === 'boolean')
-    && (!('bridgeExpanded' in candidate) || typeof candidate.bridgeExpanded === 'boolean');
+    && (!('bridgeExpanded' in candidate) || typeof candidate.bridgeExpanded === 'boolean')
+    && (!('bridgeWatchSelection' in candidate) || candidate.bridgeWatchSelection === null || validWatchSelection(candidate.bridgeWatchSelection))
+    && (!('bridgeEventSelection' in candidate) || candidate.bridgeEventSelection === null || validIdentifier(candidate.bridgeEventSelection, 96));
 }
 
 export function createChromeConversationPanelStateRepository(): ConversationPanelStateRepository {

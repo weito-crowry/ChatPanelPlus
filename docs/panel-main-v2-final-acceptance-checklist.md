@@ -38,6 +38,8 @@
 | C24 権限・認証・接続変化 | Bridgeの権限不足、認証切れ、接続先変更を再現できる場合に一覧・read・stopを確認する。 | 現行エラー表示を保ち、別会話情報やfinal本文を返さない。接続先変更中は古いevent本文を再利用しない。 | NOT_RUN | 環境で再現できない項目はNOT_RUN |
 | C25 CPP UIからの実ジョブ開始 | CPPの既存画面に対象環境で使用するジョブ開始導線がある場合だけ、その承認済み手順でテスト用jobを開始する。 | 対象jobが意図した会話・Bridge threadへ紐づき、監視eventがownerを保つ。既存UIに開始機能がない場合は未対応として記録し、新規APIや自動送信を代用しない。 | NOT_RUN | 現在の実ジョブ開始動作は未検証 |
 | C26 deployコマンドの宛先 | 配備手順を記録で確認する。`pnpm deploy:chrome`は実行しない。 | 実際の登録元はrepo直下`dist/`。現行`deploy:chrome`は兄弟Probeへコピーする宛先不一致を未修正として認識し、今後も登録元へは`pnpm build`を使う。 | NOT_RUN | スクリプト修正は本Phase外 |
+| C27 大量ACKと部分失敗 | owner会話に129件以上（可能なら256件）の未確認終了eventがあるテスト環境で一括確認する。通信失敗を挿入できる場合は2回目のbatchを失敗させ、その間に新eventを発生させる。 | 最大128 IDsずつ直列処理し、全件成功時は未確認数が減る。部分失敗は応答件数と一覧再取得を表示し、成功済み以外を未確認のまま残す。操作開始時snapshot外の新eventは確認済みにしない。 | NOT_RUN | 自動では129/256、途中失敗、新event並行を検証済み |
+| C28 B/C選択の会話別復元 | 会話AでB監視対象とC終了eventを選ぶ。同じ会話の別tab/reload、別会話B、A thread探索の選択をそれぞれ確認する。watch解除またはevent一覧からの消失後も確認する。 | B/C選択だけが同一conversation ID内で共有・復元される。A探索選択とは独立し、別会話には漏れない。owner一覧にない選択は解除され、最終回答本文は保存・越境表示されない。 | NOT_RUN | 自動ではconversation state、旧schema、owner filterを検証済み |
 
 ## 判断待ち・実装上の保留
 
@@ -54,5 +56,5 @@
 
 - Phase 2: 501/501 PASS、typecheck/lint PASS、登録済みrepo直下`dist/`へ配備済み。Phase 2 Chrome確認は延期。
 - Phase 3: 518/518 PASS、typecheck/lint PASS、登録済み`dist/`へ配備済み。live `dist/`は隔離テスト前後で11ファイルの相対path・size・SHA-256一致。
-- Phase 4: 527/527 PASS、focused Bridge suite 39/39 PASS、typecheck/lint PASS、隔離テスト前後のlive `dist/` 11ファイルSHA-256 manifest一致。登録済み`dist/`への配備はバックアップ照合後に成功。Phase 4総保持方針の判断は未完了。
+- Phase 4初回: 527/527 PASS。最終レビュー修正後: 539/539 PASS、修正焦点suite 29/29 PASS、typecheck/lint PASS、隔離テスト前後のlive `dist/` 11ファイルSHA-256 manifest一致。既存のPhase 4配備記録は前回commitの結果。今回の修正版配備はレビュー修正commit後に別バックアップを取得して行う。総保持方針の判断は未完了。
 - Phase 5はこのチェックリスト作成のみでコードを変更していないため、追加build・dist配備は不要。Chrome実機受入は**NOT_RUN**。

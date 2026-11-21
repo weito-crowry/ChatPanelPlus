@@ -14,6 +14,7 @@ import {
 } from '../shared/codexbridge-mcp-protocol.ts';
 import { CodexBridgeRequestTracker, mergeCodexBridgeThreads } from './codexbridge-request-tracker.ts';
 import { CodexBridgeWatchPanel } from './CodexBridgeWatchPanel.tsx';
+import type { ConversationPanelWatchSelection } from '../shared/conversation-panel-state-repository.ts';
 
 type ConnectionState = 'loading' | 'connected' | 'error';
 
@@ -88,10 +89,18 @@ function isReadResponse<T>(value: unknown): value is CodexBridgeReadResponse<T> 
 export function CodexBridgeList({
   foregroundEnabled = true,
   conversationId = null,
+  bridgeWatchSelection = null,
+  bridgeEventSelection = null,
   onSummaryChange,
+  onSelectBridgeWatch = () => {},
+  onSelectBridgeEvent = () => {},
 }: Readonly<{
   foregroundEnabled?: boolean;
   conversationId?: string | null;
+  bridgeWatchSelection?: ConversationPanelWatchSelection | null;
+  bridgeEventSelection?: string | null;
+  onSelectBridgeWatch?: (selection: ConversationPanelWatchSelection | null) => void;
+  onSelectBridgeEvent?: (eventId: string | null) => void;
   onSummaryChange?: (summary: Readonly<{ watchingCount: number; unacknowledgedThreadCount: number }> | null) => void;
 }> = {}) {
   const [connection, setConnection] = useState<ConnectionState>('loading');
@@ -384,6 +393,10 @@ export function CodexBridgeList({
         selected={selected ? { targetId: selected.targetId, threadId: selected.id } : null}
         foregroundEnabled={foregroundEnabled}
         conversationId={conversationId}
+        bridgeWatchSelection={bridgeWatchSelection}
+        bridgeEventSelection={bridgeEventSelection}
+        onSelectBridgeWatch={onSelectBridgeWatch}
+        onSelectBridgeEvent={onSelectBridgeEvent}
         onSummaryChange={onSummaryChange}
       />
     </section>

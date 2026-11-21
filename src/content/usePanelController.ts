@@ -20,6 +20,7 @@ import {
 import type { ResolvedTab } from '../shared/default-ui';
 import { useConversationPanelState } from './useConversationPanelState.ts';
 import { useConversationAudioMute } from './useConversationAudioMute.ts';
+import type { ConversationPanelWatchSelection } from '../shared/conversation-panel-state-repository.ts';
 
 const ERROR_MESSAGES: Record<string, string> = {
   'editor-not-found': '入力欄が見つかりません。',
@@ -56,6 +57,8 @@ export interface PanelControllerState {
   readonly minimized: boolean;
   readonly conversationId: string | null;
   readonly bridgeExpanded: boolean;
+  readonly bridgeWatchSelection: ConversationPanelWatchSelection | null;
+  readonly bridgeEventSelection: string | null;
   readonly conversationMuted: boolean;
   readonly muteLoaded: boolean;
   readonly mutePending: boolean;
@@ -74,6 +77,8 @@ export interface PanelControllerState {
   readonly onSelectTab: (tabId: ResolvedTab['id']) => void;
   readonly onToggleMinimized: () => void;
   readonly onToggleBridgeExpanded: () => void;
+  readonly onSelectBridgeWatch: (selection: ConversationPanelWatchSelection | null) => void;
+  readonly onSelectBridgeEvent: (eventId: string | null) => void;
   readonly onToggleConversationMute: (muted: boolean) => Promise<void>;
   readonly onOpenSettings: () => void;
   readonly onToggleAnswerCompletionSound: (enabled: boolean) => Promise<void>;
@@ -251,6 +256,8 @@ export function usePanelController(): PanelControllerState {
     minimized: currentViewState.minimized,
     conversationId: conversationPanel.conversationId,
     bridgeExpanded: conversationPanel.bridgeExpanded,
+    bridgeWatchSelection: conversationPanel.bridgeWatchSelection,
+    bridgeEventSelection: conversationPanel.bridgeEventSelection,
     conversationMuted: conversationMute.muted,
     muteLoaded: conversationMute.loaded,
     mutePending: conversationMute.pending,
@@ -269,6 +276,8 @@ export function usePanelController(): PanelControllerState {
     onSelectTab: conversationPanel.onSelectTab,
     onToggleMinimized: conversationPanel.onToggleMinimized,
     onToggleBridgeExpanded: conversationPanel.onToggleBridgeExpanded,
+    onSelectBridgeWatch: conversationPanel.onSelectBridgeWatch,
+    onSelectBridgeEvent: conversationPanel.onSelectBridgeEvent,
     onToggleConversationMute: conversationMute.onToggle,
     onOpenSettings: () => { void chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS' }); },
     onToggleAnswerCompletionSound: toggleAnswerCompletionSound,

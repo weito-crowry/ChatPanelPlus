@@ -38,7 +38,7 @@ test('Bridge詳細は会話stateで開閉し、ARIA・owner filter・route race�
   assert.match(view, /<div id="panel-bridge-details" className="panel-bridge-details" hidden=\{!bridgeExpanded\}>/);
   assert.match(view, /onClick=\{onToggleBridgeExpanded\}/);
   assert.equal([...view.matchAll(/<CodexBridgeList\b/g)].length, 1);
-  assert.match(view, /<CodexBridgeList foregroundEnabled=\{!currentViewState\.minimized\} conversationId=\{conversationId\} onSummaryChange=\{updateBridgeSummary\} \/>/);
+  assert.match(view, /<CodexBridgeList[\s\S]*?foregroundEnabled=\{!currentViewState\.minimized\}[\s\S]*?conversationId=\{conversationId\}[\s\S]*?bridgeWatchSelection=\{bridgeWatchSelection\}[\s\S]*?bridgeEventSelection=\{bridgeEventSelection\}[\s\S]*?onSelectBridgeWatch=\{onSelectBridgeWatch\}[\s\S]*?onSelectBridgeEvent=\{onSelectBridgeEvent\}[\s\S]*?onSummaryChange=\{updateBridgeSummary\}[\s\S]*?\/>/);
   assert.match(controller, /useConversationPanelState\(model\.tabs\)/);
   assert.match(controller, /bridgeExpanded: conversationPanel\.bridgeExpanded/);
   assert.doesNotMatch(controller, /loadViewState\(|saveViewState\(/);
