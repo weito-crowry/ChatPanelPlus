@@ -23,7 +23,7 @@ Phase 6では通常、Bridge詳細展開、最小化の3状態を扱う。白〜
 
 通常状態の上半分を保ち、Bridge barの下にA/B/Cのcardを横並びに配置する。広い画面で3列、狭い画面で2列または縦積みにし、横スクロールや操作buttonの隠れを避ける。900px/640px付近を初期breakpoint候補とし、Container queryを優先する。ライト・ダーク両方で文字と操作を判別できる配色にする。
 
-- **A — スレッド一覧:** title/previewなどの人間可読ラベル、状態iconと短い日本語状態を主に表示する。C12で実装した実行中優先と「実行中のみ」filterを維持する。現在のUIは既存APIの通常ページを取得し、初期ONのclient filterを読み込み済みthreadだけに適用する。running-only server機能と通常20件paginationの切替はCodexBridge別repoのAPI連携後の依存項目であり、CPPから未実装APIを送信しない。更新、次ページ、マシン選択など既存操作を保つ。thread ID、cwd、target/connection ID、execution/turnの詳細や時刻を通常行に列挙せず、必要な情報は選択後の「技術情報」で折りたたむ。Aのtitleにはthread IDのhover tooltipとkeyboard説明を付ける。
+- **A — スレッド一覧:** title/previewなどの人間可読ラベル、状態iconと短い日本語状態を主に表示する。C12で実装した取得済み候補の実行中優先を維持し、Bridgeの実行中APIと通常20件paginationをmodeで切り替える。実行中modeはBridge返却threadを直接表示し、通常一覧modeは通常APIの取得済み候補を使う。API未対応時に実行中結果を捏造せず、通常一覧へ切替可能。更新、次ページ、マシン選択など既存操作を保つ。thread ID、cwd、target/connection ID、execution/turnの詳細や時刻を通常行に列挙せず、必要な情報は選択後の「技術情報」で折りたたむ。Aのtitleにはthread IDのhover tooltipとkeyboard説明を付ける。
 - **B — 選択スレッド／監視中:** 現在選択したthreadの表示名、日本語status、既存の監視開始／解除を表示する。利用可能なtitle/nameを主ラベルに使う。ラベルが取得不能、null/空白、または表示に使えない場合はthread IDを仮の主ラベルにする。title/nameがある行にもIDを行内で常時併記しない。ラベルにmouse hoverするとthread IDをtooltipで確認できる。キーボードfocus時にも同じIDを説明文（例:`aria-describedby`）から取得できるようにする。tooltip対象は接続・target・ownerの内部IDに置き換えず、監視identityと認可は従来どおり`connectionId`/`targetId`/`threadId`で行う。
 - **C — 通知・最終回答:** 現在会話ownerに属するeventだけを表示する。完了／失敗等の短い状態と時刻、最終回答の取得・copy・入力欄挿入を必要時に出す。event ID/Turn IDは通常行に出さず、「技術情報」に折りたたむ。既存ACK、background owner認可、SPA遷移時の本文破棄、部分失敗処理、event保存・保持動作を変えない。
 
@@ -33,11 +33,13 @@ Phase 6では通常、Bridge詳細展開、最小化の3状態を扱う。白〜
 
 ## Bridge barの表示値とデータ境界
 
-- **実行中:** 将来のCodexBridge `running_only=true`結果が持つ、Bridgeが実行中と認識したthread数を表示する。確定中と推定中の内訳は別countにしない。現行の通常20件ページを全thread数として数えない。API接続・応答前は`—`と待機中tooltipを表示し、実行数を推測・捏造しない。
+- **実行中:** 選択中targetへ`codex_threads(running_only=true)`を要求し、Bridgeが返したthread数を確定・推定の区別なく表示する。Bridgeの認識範囲に基づく件数であり、Bridgeが把握していないthreadまで含む完全性は保証しない。通常20件ページから推定しない。接続中・未取得・失敗・未対応では`—`と状況tooltipを表示し、真の0件だけ0とする。
 - **監視中:** 既存のowner conversation-specific summaryを使用する。
 - **通知:** 未確認終了通知を持つwatch identityの重複除外件数を使用する。既存のowner会話別集計を維持する。
 - **接続状態／対象マシン:** 現行接続状態と選択中targetなど、取得済みの実データのみを表示する。接続失敗や未取得を接続中・0件に見せない。
-- `running_only`用server APIまたは件数が未取得の時点ではplaceholderと説明を用いる。Bridge barの「実行中」は現在`—`で、既存runtime messageを装った新requestやmock数値を追加しない。監視中・通知は現在会話の既存summaryを使い、接続状態・対象名は既存一覧経路の取得値だけを使う。
+- Aの取得modeは「実行中（既定）」と「通常一覧」。実行中modeは`running_only=true`を使い、返却threadをclient側で実行状態filterしない。通常一覧modeは既存の`limit=20`とcursorを維持し、読み込み済み候補のC12優先順を適用する。mode/target切替時は古い非同期応答を破棄し、監視対象の選択をmode切替で解除しない。
+- MCP `tools/list`で`codex_threads.inputSchema.properties.running_only`がbooleanと確認できた場合だけ実行中要求を送る。欠落・不明schemaのBridgeや、実行中要求を拒否するremote targetでは実行中件数を`—`にしてBridge更新待ち／取得失敗を示し、通常一覧modeは使用可能にする。実行中要求はtargetと`running_only`だけを送り、cursor/history/page limitと混ぜない。通常一覧は従来どおり通常APIの20件cursorを使う。
+- 実行中件数は実行中modeの返却、または通常一覧modeで別途実行した`running_only`取得から更新する。target変更・接続エラー・失敗・未対応時に古い件数を残さず、通常／展開／最小化で同じtargetの同じsummaryを使う。初回取得・手動更新のみで、定期pollingは追加しない。
 
 ## ID・会話owner・アクセシビリティ
 
@@ -48,14 +50,14 @@ Phase 6では通常、Bridge詳細展開、最小化の3状態を扱う。白〜
 
 ## 依存と未実装事項
 
-- CodexBridge別repoの`running_only`実装・paginationとの共存・重複排除が必要。完了まではCPPの既存API経路を維持し、現在のC12 client filterだけを使う。新API成功や全thread網羅を表示しない。
-- React/CSSの3状態、A/B/C card、Bridge bar、Bの名前fallback/ID tooltip、Aのhover・keyboard ID説明は実装済み。Bridge barの実行中件数に必要なCodexBridge `running_only` APIは未接続で、未取得表示`—`のまま。現在のAPIは変更していない。
-- 自動検証は552/552 PASS、Phase6 focused suite 34/34 PASS、typecheck/lint PASS。テスト時に登録済みlive dist 11ファイルの相対path・size・SHA-256は前後一致。配備手順と生成ファイルhashは下記の記録を参照。Chrome表示の受入は未実施。
+- CodexBridge側の`running_only` APIはローカルcommit `41faae1`に実装済みとのユーザー報告だが、稼働サービスへは未反映。CPPはschema能力検出と実行中modeを実装済み。旧schemaでは誤って通常20件を実行中結果として見せず、件数を`—`にする。
+- Phase6のReact/CSS 3状態、A/B/C card、Bridge bar、Bの名前fallback/ID tooltip、Aのhover・keyboard ID説明は先行commitで実装・配備済み。今回のCPP running_only連携commitは`4cee26e980e2bfaf32e0f2a299c86a0c4082073d`で自動検証済みだが、`dist/`へは未build・未配備なので現在のChrome登録済みbundleには含まれない。
+- 自動検証: 全suite 563/563 PASS、focused suite 50/50 PASS、typecheck/lint/サイズ検査PASS。隔離source-only copyでテスト・buildし、登録済みlive `dist/`の11ファイルはテスト前後で相対path・size・SHA-256一致。今回の作業ではrepo `dist/`、Chrome、CodexBridgeサービスに変更を加えていない。
 - Chrome上の正確な余白・幅、hover/focus、light/dark配色、最小化時の実表示は未確認。最終受入チェックリストC31–C36は実機確認まで`NOT_RUN`とする。
 
 ## Phase 6受入
 
-最終Chrome受入のC31以降を本仕様の受入項目とする。コードの構造・自動回帰と登録済みdistへの配備は完了したが、通常/展開/最小化・tooltip・responsiveのC31–C36は実機報告がなく`NOT_RUN`を維持する。別項目C37は2026-11-22のユーザー報告でfinal-answer取得失敗となった。native `codex_threads(include_history=true)`の別経路応答には同じTurnの`agentMessage`/`final_answer` itemがあるとの確認がある一方、CPP失敗時の応答は未取得で原因未特定。running-only server API連携は別repo依存として保留し、現在のC12/C30等の既存判定は変更しない。
+最終Chrome受入のC31以降を本仕様の受入項目とする。先行Phase6 UIのdist配備後も通常／展開／最小化・tooltip・responsiveの実機報告がなくC31–C36は`NOT_RUN`。今回のrunning_only CPP実装はcommit `4cee26e980e2bfaf32e0f2a299c86a0c4082073d`・自動検証済みだがdist未配備で、Bridgeサービスも未反映のためC38を含む実機確認は後日。別項目C37は2026-11-22のユーザー報告でfinal-answer取得失敗となった。native `codex_threads(include_history=true)`の別経路応答には同じTurnの`agentMessage`/`final_answer` itemがあるとの確認がある一方、CPP失敗時の応答は未取得で原因未特定。C37は未解決のままとし、C12/C30等の既存判定も変更しない。
 
 ## 配備記録（2026-11-22）
 
@@ -64,7 +66,7 @@ Phase 6では通常、Bridge詳細展開、最小化の3状態を扱う。白〜
 - 実行: `pnpm build` exit 0。誤った兄弟Probe宛ての`pnpm deploy:chrome`は実行していない。
 - 配備前backup: `D:\weito\Documents\src\codexapp\ChatPanelPlus-dist-phase6-predeploy-backup-20261122-012236-b904e2364297495daf438482a97522f8`。distとbackupはlink/reparse pointなし。build前に相対path・byte length・SHA-256が11/11一致。
 - 配備後検査: 11ファイル、Manifest V3/version 0.1.5、必須6ファイル、HTML/CSS local asset参照5件、Phase 6表示marker10/10を確認。build前からの内容変更は`content.js`のみ。
-- Chrome reload・Bridge操作はしていない。C31–C36は`NOT_RUN`。Bridge server-side `running_only`は未接続のため実行中件数は`—`。
+- Chrome reload・Bridge操作はしていない。C31–C36は`NOT_RUN`。今回のrunning_only CPP連携commit `4cee26e980e2bfaf32e0f2a299c86a0c4082073d`はdist未配備、Bridgeサービスも未反映のため現在のbundleは実行中件数`—`。
 
 配備後ファイルのSHA-256 manifest:
 
