@@ -33,7 +33,7 @@
 | C18 登録元muteでBridge完了音 | watch登録元Aをmute/unmuteしつつ、別会話Bをactiveにした状態でBridge監視対象を終了させる。登録元tabを閉じるケースも確認する。 | active tabでなくowner watchの最新muteを使う。mute中／owner mute不明は音をskipし、event・視覚通知・未確認件数は記録する。tab終了後は最終既知muteを使い、別tabへfallbackしない。 | NOT_RUN | 実音声の証跡は内容を含めない |
 | C19 音声raceと共通gate | mute切替と通知再生を近接させ、共有音声OFF、volume 0、再生デバイス不在も確認する。 | 再生直前の最新owner policyを使い、mute・owner不明・共有OFF・volume 0では音が鳴らない。音声をskipしても通知は残る。 | NOT_RUN | |
 | C20 final-answer owner認可 | Aの終了eventを選び、Aで取得・表示・copy・挿入し、同じ会話別tabでも試す。Bから同じevent IDにアクセスする。 | Aのeventだけが取得でき、同じ会話の別tabは許可。Bは拒否され本文・event存在を漏らさない。copyと挿入は明示操作のみで、自動送信しない。 | NOT_RUN | |
-| C21 final-answer完全性 | 最終回答項目なし、複数候補、履歴不足のeventで取得する。 | 別messageを最終回答と推測しない。no-final-answer／不完全を示し、完全性未確認の注意を保つ。 | NOT_RUN | CodexBridge側履歴の欠落が既知 |
+| C21 final-answer完全性 | 最終回答項目なし、複数候補、履歴不足のeventで取得する。 | 別messageを最終回答と推測しない。no-final-answer／不完全を示し、完全性未確認の注意を保つ。 | NOT_RUN | 過去に履歴項目なしの例がある。今回の対象turnは別経路のnative include_history応答にfinal_answer itemが存在したとの確認あり。CPP表示時点の応答との差は原因未特定。C37参照。 |
 | C22 SPA中の非同期結果 | Aでfinal-answer取得を開始し、応答待ち中にBへSPA遷移する。取得後にcopy／挿入操作も試す。 | 古いrouteのevent選択・本文・非同期結果を破棄。挿入直前にも現在routeとownerを照合し、BへAの本文を入れない。 | NOT_RUN | |
 | C23 worker／Bridge復旧 | 監視中にService Worker休止・再起動、Bridge接続の切断・復旧を自然に発生させ、一覧を再取得する。 | watch/event owner、mute snapshot、ACK状態が復元される。二重eventや誤通知を発生させず、未知状態を完了と誤判定しない。 | NOT_RUN | 手動でworkerを破壊せず通常の休止／再開で観察 |
 | C24 権限・認証・接続変化 | Bridgeの権限不足、認証切れ、接続先変更を再現できる場合に一覧・read・stopを確認する。 | 現行エラー表示を保ち、別会話情報やfinal本文を返さない。接続先変更中は古いevent本文を再利用しない。 | NOT_RUN | 環境で再現できない項目はNOT_RUN |
@@ -46,9 +46,10 @@
 | C31 Phase 6 B表示名fallback・ID tooltip | Bの監視対象でtitle/nameあり、null、空白、不使用ラベルを用意する。ラベルへmouse hoverし、Tab等でkeyboard focusしてIDを確認する。異なるtarget/ownerでも確認する。 | usableなtitle/nameを主表示。取得不可・空白・不使用ならthread IDを仮主ラベル。全行のhover tooltipでthread IDを表示し、keyboard focusでも説明を取得可能。名前がある行にIDを常時併記しない。内部identity/owner認可は表示名で置換せず、別会話情報を出さない。 | NOT_RUN | 自動回帰でfallback/tooltip/keyboard説明を確認。コードcommit `3aca9ca`を登録済みdistへ配備済み。Chrome実機は未確認。 |
 | C32 Phase 6通常画面とBridge bar | 正式ロード元で通常画面を開き、header、utility、tab、prompt、Bridge barを確認する。Optionsの表示順/非表示/labelも使う。 | 動的project名、Codex作業中、会話別speaker、統計、Options、最小化をheaderに整理。設定済みutility/tab/promptのみ表示。Bridge barに「実行中」「監視中」「通知」を表示する。API未取得の実行中は`—`。注釈や固定例示buttonをUIに含めない。 | NOT_RUN | UI構造の自動回帰PASS、Phase6 bundleを配備済み。server-side実行件数は未接続で`—`表示。Chrome未確認。 |
 | C33 Phase 6 Bridge値と未取得 | 会話A/B、複数target、接続中・失敗・未取得、20件ページとrunning_only応答を比較する。 | 実行中はBridge running_only結果の件数。監視中と通知は現在owner会話の既存summary。通知は未確認終了通知を持つ一意watch件数。未取得は`—`と説明し0や20件を全件と誤表示しない。他会話件数を出さない。 | NOT_RUN | 既存owner summaryと未取得表示を自動回帰で確認。bundle配備済み。running_only backendは別repo依存、未接続。 |
-| C34 Phase 6 Bridge詳細A/B/C | 十分な幅で展開し、A一覧/B選択・監視/C通知・最終回答と技術情報の折りたたみを確認する。 | Aの更新・filter・pagination・machine選択を維持。Bの監視開始/解除とthread identityを維持。Cのowner filter、ACK、最終回答copy/挿入、SPA保護を維持。通常行に診断IDやcwdを並べず、必要時だけ表示する。 | NOT_RUN | A/B/C構成と既存callback/認可経路は自動回帰確認済み。bundle配備済みだが、Chrome操作・Bridge実データは未確認。 |
+| C34 Phase 6 Bridge詳細A/B/C | 十分な幅で展開し、A一覧/B選択・監視/C通知・最終回答と技術情報の折りたたみを確認する。 | Aの更新・filter・pagination・machine選択を維持。Bの監視開始/解除とthread identityを維持。Cのowner filter、ACK、最終回答copy/挿入、SPA保護を維持。通常行に診断IDやcwdを並べず、必要時だけ表示する。 | NOT_RUN（一部観測、C37はFAIL） | A/B/C全体は未確認。2026-11-22、ユーザー報告では終了event検出・回答完了音は成功したが、Cのfinal-answer取得が失敗。詳細をC37に記録。 |
 | C35 Phase 6 responsive・dark・keyboard | 幅900px/640px付近、ライト/ダーク、Tab/Enter、hover tooltip、focus説明を確認する。 | 3列から2列/縦積みへ変化し横scrollなし。操作とlabelが隠れず、focus ring/ARIA/tooltip説明が使える。 | NOT_RUN | CSS breakpoint、dark palette、focus/ARIA契約は自動検査済み、bundle配備済み。実機の幅・色・tooltip表示は未確認。 |
 | C36 Phase 6最小化bar | 通常/展開から最小化・復帰し、未取得値、別会話への移動、再読込も確認する。 | 本文buttonを隠した1行にChatPanelPlus、既存作業中状態、3つのBridge表示値、復帰操作を保つ。未取得を0とせず他会話データを混ぜない。 | NOT_RUN | minimized markup/CSSと既存切替操作を自動回帰確認済み、bundle配備済み。Chrome実機は未確認。 |
+| C37 C通知 final-answer取得の不一致 | Cの同一終了eventから最終回答を取得し、表示結果と時刻を記録する。必要に応じ、時間を置いて同じeventでもう一度取得する。再現時は本文/tokenを保存せず、event.turnId、時刻、MCP応答itemのtype/phase有無、同route時と後刻の差を確認する。 | 当該turnの`agentMessage`/`final_answer` itemが返る場合に限りその回答を表示する。itemがない応答ではno-final-answerと完全性未確認を示し、別itemを推測昇格したり他会話へfallbackしたりしない。原因特定後に同じeventの再取得結果を記録する。 | FAIL（ユーザー報告）／再検証待ち | 2026-11-22 01:40 JST報告：監視終了event検出と回答完了音は成功。CPPの最終回答取得は「このturnのfinal_answerは見つかりませんでした。完全性は未確認です。」となった。一方、native `codex_threads(include_history=true)`の別経路照会では対象Turnの`agentMessage`/`final_answer` itemが存在したとの確認あり。CPP失敗時のraw MCP応答は未取得のため原因未特定。Chrome reloadの有無も未確認。 |
 
 ## 判断待ち・実装上の保留
 
@@ -57,7 +58,7 @@
 | Bridge event総保持上限 | 未確認eventは削除せず、確認済み履歴は最新128件を保持。総件数に上限なし。 | 保存量上限と、上限到達時の確認前eventの扱いが未決定。Phase 4はこのためPARTIAL。 |
 | 通常回答完了音でconversation ID不明 | 既存経路を保ち、会話別mute仕様を確定していない。 | 未知会話での実効音声policyを決める。 |
 | Options「既定値に戻す」 | 新しい会話別panel stateへの適用範囲は未決定。既存reset挙動は変更していない。 | 新規stateをreset対象に含める範囲を決める。 |
-| final-answer本文の完全性 | Bridgeのhistoryにfinal itemがない実例があり、完全性は未確認。推測選択はしない。 | Bridgeが正確な最終回答を返す条件と、取得不足時の受入方法を確認する。 |
+| final-answer本文の完全性・取得時点差 | 今回、CPPはno-final-answerを表示したが、同じ対象Turnはnative `include_history=true`の別経路照会にfinal_answer itemを含んでいた。CPP失敗時のraw MCP応答がなく、時刻差・経路差・競合等の原因は未特定。 | 同じeventで後刻の再取得を試し、再現時は本文/tokenを保存せずTurn ID・時刻・返却itemのtype/phase有無・route差を採取する。欠落原因を特定するまで無条件fallbackや別messageの推測昇格をしない。 |
 | ownerless legacy保守 | 通常panelに表示せず、ownerを推定しない。旧watchの解除・移行の管理導線は未設計。 | 他会話へ情報を漏らさない管理方法を決める。 |
 | CodexBridge server-side running-first | CPPは現在の取得済みページだけを並べ替える。通常の`codex_threads`ページ外の状態は不明で、このCPP turnではserver-side optionを追加していない。 | Bridge側でactive priority-listと通常paginationを併用する案を別途設計する。重複除外、cursor、remote targetを検討する。 |
 | Phase 6のブラウザ外観確認 | Phase6 React/CSSを実装し、ユーザー提示画像の構成を基準にした。実際のChrome描画と幅・色・tooltipは未確認。 | 登録済みdistへの配備後、通常/展開/最小化の見た目をChromeで確認する。 |

@@ -55,7 +55,7 @@ Phase 6では通常、Bridge詳細展開、最小化の3状態を扱う。白〜
 
 ## Phase 6受入
 
-最終Chrome受入のC31以降を本仕様の受入項目とする。コードの構造・自動回帰と登録済みdistへの配備は完了したが、Chrome実機確認は未実施のため、C31–C36はすべて`NOT_RUN`。running-only server API連携は別repo依存として保留する。現在のC12/C30等の既存判定は変更しない。
+最終Chrome受入のC31以降を本仕様の受入項目とする。コードの構造・自動回帰と登録済みdistへの配備は完了したが、通常/展開/最小化・tooltip・responsiveのC31–C36は実機報告がなく`NOT_RUN`を維持する。別項目C37は2026-11-22のユーザー報告でfinal-answer取得失敗となった。native `codex_threads(include_history=true)`の別経路応答には同じTurnの`agentMessage`/`final_answer` itemがあるとの確認がある一方、CPP失敗時の応答は未取得で原因未特定。running-only server API連携は別repo依存として保留し、現在のC12/C30等の既存判定は変更しない。
 
 ## 配備記録（2026-11-22）
 
