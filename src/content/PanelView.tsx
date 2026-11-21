@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { ConversationStatistics } from './ConversationStatistics';
 import { CodexWorkModeToggle } from './CodexWorkModeToggle';
 import { CodexBridgeList } from './CodexBridgeList';
@@ -38,6 +39,8 @@ export function PanelView({
   onSubmitManualPaste,
   onCancelManualPaste,
 }: PanelControllerState) {
+  const [bridgeExpanded, setBridgeExpanded] = useState(false);
+
   return (
     <aside className={'panel' + (currentViewState.minimized ? ' is-minimized' : '')} aria-label="ChatPanelPlus パネル">
       <div className="panel-header">
@@ -53,7 +56,6 @@ export function PanelView({
           soundToggleError={soundToggleError}
           onToggleAnswerCompletionSound={onToggleAnswerCompletionSound}
         />
-        <CodexBridgeList foregroundEnabled={!currentViewState.minimized} />
         <div className="utility-row" aria-label="常時表示操作">
           {model.utilityButtons.map((button) => (
             <button
@@ -109,6 +111,34 @@ export function PanelView({
             ))}
           </div>
         )}
+        <section className="panel-bridge-summary" aria-label="CodexBridgeサマリー">
+          <dl className="panel-bridge-summary-list" aria-label="CodexBridge件数">
+            <div className="panel-bridge-summary-item">
+              <dt>監視中</dt>
+              <dd aria-label="Phase 4で接続">—</dd>
+            </div>
+            <div className="panel-bridge-summary-item">
+              <dt>監視スレッドが終了した未確認</dt>
+              <dd aria-label="Phase 4で接続">—</dd>
+            </div>
+          </dl>
+          <p className="panel-bridge-summary-note" role="note">会話別件数はPhase 4で接続します。</p>
+          <button
+            type="button"
+            className="codex-bridge-button panel-bridge-details-toggle"
+            aria-expanded={bridgeExpanded}
+            aria-controls="panel-bridge-details"
+            onClick={() => setBridgeExpanded((open) => !open)}
+          >
+            CodexBridge詳細を{bridgeExpanded ? '閉じる' : '開く'}
+          </button>
+        </section>
+        <div id="panel-bridge-details" className="panel-bridge-details" hidden={!bridgeExpanded}>
+          <p className="panel-bridge-scope-note" role="note">
+            この一覧は現行の共有表示です。会話別の絞り込みはPhase 4で接続します。
+          </p>
+          <CodexBridgeList foregroundEnabled={!currentViewState.minimized} />
+        </div>
         {error && <div className="panel-error" role="status">{error}</div>}
         <div className="settings-entry">
           <button type="button" onClick={onOpenSettings}>
