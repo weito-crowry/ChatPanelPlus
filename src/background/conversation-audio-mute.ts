@@ -69,17 +69,28 @@ export class ConversationAudioMuteStore {
     });
   }
 
-  set(tabId: number, conversationId: string, muted: boolean): Promise<ReadResult | ErrorResult> {
+  set(tabId: number, conversationId: string, muted: boolean, onCommit?: (value: ConversationAudioMuteValue) => Promise<void>): Promise<ReadResult | ErrorResult> {
     const key = sessionKey(tabId, conversationId);
     return this.serial(key, async () => {
       try {
         const stored = await this.session.get(key);
         const previous = key in stored ? validateConversationAudioMuteValue(stored[key]) : { schemaVersion: 1 as const, muted: false, revision: 0 };
         if (!previous) return { ok: false, reason: 'invalid-data' };
-        if (previous.muted === muted) return { ok: true, value: previous, saved: true };
+        if (previous.muted === muted) {
+          if (onCommit) await onCommit(previous);
+          return { ok: true, value: previous, saved: true };
+        }
         if (previous.revision >= Number.MAX_SAFE_INTEGER) return { ok: false, reason: 'invalid-data' };
         const value: ConversationAudioMuteValue = { schemaVersion: 1, muted, revision: previous.revision + 1 };
         await this.session.set({ [key]: value });
+        if (onCommit) {
+          try { await onCommit(value); }
+          catch {
+            try { if (key in stored) await this.session.set({ [key]: stored[key] }); else await this.session.remove(key); }
+            catch { /* Keep the original write failure visible; callers fail closed for audio. */ }
+            return { ok: false, reason: 'storage-error' };
+          }
+        }
         return { ok: true, value, saved: true };
       } catch { return { ok: false, reason: 'storage-error' }; }
     });
@@ -101,6 +112,24 @@ export class ConversationAudioMuteStore {
     });
   }
 
+  runIfOwnerUnmuted<T>(tabId: number, conversationId: string, lastKnownMuted: boolean | null | undefined, action: () => Promise<T>): Promise<
+    | { readonly ok: true; readonly value: T }
+    | { readonly ok: false; readonly reason: 'muted' | 'unavailable' }
+  > {
+    const key = sessionKey(tabId, conversationId);
+    return this.serial(key, async () => {
+      try {
+        const stored = await this.session.get(key);
+        const value = key in stored ? validateConversationAudioMuteValue(stored[key]) : null;
+        if (key in stored && !value) return { ok: false, reason: 'unavailable' };
+        const muted = value?.muted ?? lastKnownMuted;
+        if (muted === null || muted === undefined) return { ok: false, reason: 'unavailable' };
+        if (muted) return { ok: false, reason: 'muted' };
+        return { ok: true, value: await action() };
+      } catch { return { ok: false, reason: 'unavailable' }; }
+    });
+  }
+
   private async serial<T>(key: string, action: () => Promise<T>): Promise<T> {
     const previous = this.queues.get(key) ?? Promise.resolve();
     let release!: () => void;
@@ -115,7 +144,11 @@ export class ConversationAudioMuteStore {
   }
 }
 
-export function createConversationAudioMuteMessageHandler(store: ConversationAudioMuteStore, extensionId: string) {
+export function createConversationAudioMuteMessageHandler(
+  store: ConversationAudioMuteStore,
+  extensionId: string,
+  onUpdated?: (tabId: number, conversationId: string, value: ConversationAudioMuteValue) => Promise<void>,
+) {
   return async (message: unknown, sender: ConversationAudioMuteSenderLike): Promise<ReadResult | ErrorResult | null> => {
     const type = conversationAudioMuteRequestType(message);
     if (!type || typeof message !== 'object' || message === null || !('conversationId' in message)) return null;
@@ -124,13 +157,25 @@ export function createConversationAudioMuteMessageHandler(store: ConversationAud
     if (!identity) return null;
     if (type === GET_CONVERSATION_AUDIO_MUTE) return store.load(identity.tabId, identity.conversationId);
     if (type !== SET_CONVERSATION_AUDIO_MUTE || typeof request.muted !== 'boolean') return null;
-    return store.set(identity.tabId, identity.conversationId, request.muted);
+    return store.set(identity.tabId, identity.conversationId, request.muted,
+      onUpdated ? (value) => onUpdated(identity.tabId, identity.conversationId, value) : undefined);
   };
 }
 
-export async function removeConversationAudioMuteEntriesForTab(session: ConversationAudioMuteSessionLike, tabId: number): Promise<void> {
+export async function removeConversationAudioMuteEntriesForTab(
+  session: ConversationAudioMuteSessionLike,
+  tabId: number,
+  onRemoving?: (conversationId: string, value: ConversationAudioMuteValue | null) => Promise<void>,
+): Promise<void> {
   const entries = await session.get(null);
   const prefix = `${CONVERSATION_AUDIO_MUTE_SESSION_KEY_PREFIX}${tabId}.`;
   const keys = Object.keys(entries).filter((key) => key.startsWith(prefix));
+  if (onRemoving) {
+    for (const key of keys) {
+      const conversationId = key.slice(prefix.length);
+      if (!isConversationId(conversationId)) continue;
+      await onRemoving(conversationId, validateConversationAudioMuteValue(entries[key]));
+    }
+  }
   if (keys.length) await session.remove(keys);
 }

@@ -85,7 +85,15 @@ function isReadResponse<T>(value: unknown): value is CodexBridgeReadResponse<T> 
   return isRecord(value) && typeof value.ok === 'boolean';
 }
 
-export function CodexBridgeList({ foregroundEnabled = true }: Readonly<{ foregroundEnabled?: boolean }> = {}) {
+export function CodexBridgeList({
+  foregroundEnabled = true,
+  conversationId = null,
+  onSummaryChange,
+}: Readonly<{
+  foregroundEnabled?: boolean;
+  conversationId?: string | null;
+  onSummaryChange?: (summary: Readonly<{ watchingCount: number; unacknowledgedThreadCount: number }> | null) => void;
+}> = {}) {
   const [connection, setConnection] = useState<ConnectionState>('loading');
   const [connectionMessage, setConnectionMessage] = useState('対象マシンを確認しています。');
   const [targets, setTargets] = useState<readonly CodexBridgeTarget[]>([]);
@@ -375,6 +383,8 @@ export function CodexBridgeList({ foregroundEnabled = true }: Readonly<{ foregro
       <CodexBridgeWatchPanel
         selected={selected ? { targetId: selected.targetId, threadId: selected.id } : null}
         foregroundEnabled={foregroundEnabled}
+        conversationId={conversationId}
+        onSummaryChange={onSummaryChange}
       />
     </section>
   );

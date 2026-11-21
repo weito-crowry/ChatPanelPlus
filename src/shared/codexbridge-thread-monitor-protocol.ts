@@ -1,5 +1,6 @@
 import type { CodexBridgeLastTurn } from './codexbridge-mcp-protocol.ts';
 import { parseCodexBridgeMcpEndpoint } from './codexbridge-mcp-protocol.ts';
+import { isConversationId } from './conversation-route.ts';
 
 export const CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY = 'chatPanelPlus.codexBridgeThreadMonitor.v1';
 export const CODEX_BRIDGE_THREAD_MONITOR_ALARM = 'chatPanelPlus.codexBridgeThreadMonitor.poll';
@@ -13,11 +14,20 @@ export const CODEX_BRIDGE_WATCH_LIST = 'CODEX_BRIDGE_WATCH_LIST' as const;
 export const CODEX_BRIDGE_WATCH_READ = 'CODEX_BRIDGE_WATCH_READ' as const;
 export const CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH = 'CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH' as const;
 export const CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER = 'CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER' as const;
+export const CODEX_BRIDGE_WATCH_ACK_EVENTS = 'CODEX_BRIDGE_WATCH_ACK_EVENTS' as const;
 
 export type CodexBridgeTerminalStatus = 'completed' | 'failed' | 'interrupted';
 export type CodexBridgeNotificationState = 'pending' | 'requested' | 'played' | 'skipped' | 'failed';
 export type CodexBridgeNotificationReason = 'disabled' | 'volume-zero' | 'settings-unavailable'
-  | 'output-device-unavailable' | 'device-unavailable' | 'permission-denied' | 'sink-failed' | 'playback-failed';
+  | 'output-device-unavailable' | 'device-unavailable' | 'permission-denied' | 'sink-failed' | 'playback-failed'
+  | 'muted' | 'owner-unavailable';
+
+export type CodexBridgeWatchOwnerMute = Readonly<{
+  ownerTabId: number;
+  ownerConversationId: string;
+  ownerMuted: boolean | null;
+  ownerMuteRevision: number;
+}>;
 
 export type CodexBridgeTerminalEvent = Readonly<{
   eventId: string;
@@ -30,6 +40,11 @@ export type CodexBridgeTerminalEvent = Readonly<{
   detectedAt: string;
   notificationState: CodexBridgeNotificationState;
   notificationReason: CodexBridgeNotificationReason | null;
+  ownerTabId?: number;
+  ownerConversationId?: string;
+  ownerMuted?: boolean | null;
+  ownerMuteRevision?: number;
+  acknowledgedAt?: string | null;
 }>;
 
 export type CodexBridgeFinalAnswerResult =
@@ -89,25 +104,31 @@ export type CodexBridgeWatchSnapshot = Readonly<{
   fetchOutcome: CodexBridgeWatchFetchOutcome;
   nextPollAt: number;
   failureCount: number;
+  ownerTabId?: number;
+  ownerConversationId?: string;
+  ownerMuted?: boolean | null;
+  ownerMuteRevision?: number;
 }>;
 
 export type CodexBridgeWatchMessage =
-  | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_START; targetId: string; threadId: string }>
+  | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_START; targetId: string; threadId: string; conversationId: string }>
   | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_STOP; connectionId: string; targetId: string; threadId: string }>
   | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_LIST }>
   | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_READ; connectionId: string; targetId: string; threadId: string }>
   | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH }>
-  | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER; eventId: string }>;
+  | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER; eventId: string }>
+  | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_ACK_EVENTS; conversationId: string; eventIds: readonly string[] }>;
 
 export type CodexBridgeWatchListData = Readonly<{
   items: readonly CodexBridgeWatchSnapshot[];
   events: readonly CodexBridgeTerminalEvent[];
   currentConnectionId: string | null;
+  summary: Readonly<{ watchingCount: number; unacknowledgedThreadCount: number }>;
 }>;
 
 export type CodexBridgeWatchResponse<T = undefined> =
   | Readonly<{ ok: true; data: T }>
-  | Readonly<{ ok: false; reason: 'invalid-request' | 'watch-limit' | 'connection-unavailable' | 'storage-error' }>;
+  | Readonly<{ ok: false; reason: 'invalid-request' | 'watch-limit' | 'connection-unavailable' | 'storage-error' | 'owner-conflict' }>;
 
 export function isCodexBridgeWatchFetchOutcome(value: unknown): value is CodexBridgeWatchFetchOutcome {
   return typeof value === 'string' && [
@@ -134,7 +155,14 @@ export function codexBridgeTerminalEventKey(
 export function isCodexBridgeTerminalEvent(value: unknown): value is CodexBridgeTerminalEvent {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const event = value as Record<string, unknown>;
-  return typeof event.eventId === 'string' && event.eventId.length > 0 && event.eventId.length <= 96
+  const hasOwner = ['ownerTabId', 'ownerConversationId', 'ownerMuted', 'ownerMuteRevision'].some((key) => key in event);
+  const validOwner = !hasOwner || (Number.isSafeInteger(event.ownerTabId) && (event.ownerTabId as number) >= 0
+    && isConversationId(event.ownerConversationId) && (typeof event.ownerMuted === 'boolean' || event.ownerMuted === null)
+    && Number.isSafeInteger(event.ownerMuteRevision) && (event.ownerMuteRevision as number) >= 0);
+  const validAcknowledgement = !('acknowledgedAt' in event) || event.acknowledgedAt === null
+    || (typeof event.acknowledgedAt === 'string' && event.acknowledgedAt.length <= 40);
+  return validOwner && validAcknowledgement
+    && typeof event.eventId === 'string' && event.eventId.length > 0 && event.eventId.length <= 96
     && typeof event.watchId === 'string' && event.watchId.length > 0 && event.watchId.length <= 96
     && isCodexBridgeWatchIdentifier(event.connectionId) && event.connectionId.length <= 96
     && isCodexBridgeWatchIdentifier(event.targetId) && isCodexBridgeWatchIdentifier(event.threadId)
@@ -143,7 +171,7 @@ export function isCodexBridgeTerminalEvent(value: unknown): value is CodexBridge
     && typeof event.detectedAt === 'string' && event.detectedAt.length <= 40
     && ['pending', 'requested', 'played', 'skipped', 'failed'].includes(String(event.notificationState))
     && (event.notificationReason === null || ['disabled', 'volume-zero', 'settings-unavailable',
-      'output-device-unavailable', 'device-unavailable', 'permission-denied', 'sink-failed', 'playback-failed']
+      'output-device-unavailable', 'device-unavailable', 'permission-denied', 'sink-failed', 'playback-failed', 'muted', 'owner-unavailable']
       .includes(String(event.notificationReason)));
 }
 

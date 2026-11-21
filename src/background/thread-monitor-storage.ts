@@ -9,6 +9,7 @@ import {
   type CodexBridgeTerminalEvent,
   type CodexBridgeWatchSnapshot,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
+import { isConversationId } from '../shared/conversation-route.ts';
 
 export const CODEX_BRIDGE_THREAD_MONITOR_MAX_EVENTS = 128;
 
@@ -43,10 +44,14 @@ function nullableText(value: unknown, maxLength = 512): value is string | null {
 
 function readSnapshot(value: unknown): CodexBridgeWatchSnapshot | null {
   if (!isRecord(value)) return null;
+  const hasOwner = ['ownerTabId', 'ownerConversationId', 'ownerMuted', 'ownerMuteRevision'].some((key) => key in value);
+  const validOwner = !hasOwner || (Number.isSafeInteger(value.ownerTabId) && (value.ownerTabId as number) >= 0
+    && isConversationId(value.ownerConversationId) && (typeof value.ownerMuted === 'boolean' || value.ownerMuted === null)
+    && Number.isSafeInteger(value.ownerMuteRevision) && (value.ownerMuteRevision as number) >= 0);
   const currentExecutionReason = value.currentExecutionReason === undefined ? null : value.currentExecutionReason;
   const baselineTurnKind = value.baselineTurnKind === undefined
     ? (value.baselineTurnId === null ? 'unknown' : 'turn') : value.baselineTurnKind;
-  if (!isBaselineTurnKind(baselineTurnKind)
+  if (!validOwner || !isBaselineTurnKind(baselineTurnKind)
     || (baselineTurnKind === 'turn') !== (typeof value.baselineTurnId === 'string')
     || (baselineTurnKind === 'none' && value.baselineCaptured !== true)
     || (value.baselineCaptured === false && baselineTurnKind !== 'unknown')
@@ -85,13 +90,11 @@ function readState(value: unknown): MonitorState {
     const key = codexBridgeTerminalEventKey(candidate.connectionId, candidate.targetId,
       candidate.threadId, candidate.turnId);
     const existing = events.get(key);
-    if (!existing || notificationStatePriority(candidate.notificationState) > notificationStatePriority(existing.notificationState)) {
-      events.set(key, candidate);
-    }
+    events.set(key, existing ? mergeDuplicateEvent(existing, candidate) : candidate);
   }
   return {
     items: [...items.values()],
-    events: [...events.values()].slice(-CODEX_BRIDGE_THREAD_MONITOR_MAX_EVENTS),
+    events: retainEvents([...events.values()]),
   };
 }
 
@@ -126,7 +129,7 @@ export class CodexBridgeThreadMonitorStorage {
       await this.area.set({ [CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY]: {
         version: 2,
         items: changed.items.slice(0, CODEX_BRIDGE_THREAD_MONITOR_MAX_WATCHES),
-        events: changed.events.slice(-CODEX_BRIDGE_THREAD_MONITOR_MAX_EVENTS),
+        events: retainEvents(changed.events),
       } });
       return changed.result;
     });
@@ -142,6 +145,27 @@ export class CodexBridgeThreadMonitorStorage {
     this.tail = result.then(() => undefined, () => undefined);
     return result;
   }
+}
+
+function mergeDuplicateEvent(existing: CodexBridgeTerminalEvent, candidate: CodexBridgeTerminalEvent): CodexBridgeTerminalEvent {
+  const preferred = notificationStatePriority(candidate.notificationState) > notificationStatePriority(existing.notificationState)
+    ? candidate : existing;
+  const { ownerTabId, ownerConversationId, ownerMuted, ownerMuteRevision } = existing;
+  const acknowledgedAt = existing.acknowledgedAt ?? candidate.acknowledgedAt;
+  return {
+    ...preferred,
+    ...(ownerTabId !== undefined && ownerConversationId !== undefined && ownerMuted !== undefined && ownerMuteRevision !== undefined
+      ? { ownerTabId, ownerConversationId, ownerMuted, ownerMuteRevision }
+      : {}),
+    ...(acknowledgedAt !== undefined ? { acknowledgedAt } : {}),
+  };
+}
+
+function retainEvents(events: readonly CodexBridgeTerminalEvent[]): CodexBridgeTerminalEvent[] {
+  const unacknowledged = events.filter((event) => !event.acknowledgedAt);
+  const confirmed = events.filter((event) => Boolean(event.acknowledgedAt));
+  const retainedConfirmed = confirmed.slice(-CODEX_BRIDGE_THREAD_MONITOR_MAX_EVENTS);
+  return [...unacknowledged, ...retainedConfirmed];
 }
 
 export type { LocalStorageLike, Mutation as CodexBridgeThreadMonitorMutation, MonitorState };

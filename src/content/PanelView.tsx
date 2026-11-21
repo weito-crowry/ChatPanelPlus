@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import { ConversationStatistics } from './ConversationStatistics';
 import { CodexWorkModeToggle } from './CodexWorkModeToggle';
 import { CodexBridgeList } from './CodexBridgeList';
 import { ProjectPanelTitle } from './ProjectPanelTitle';
 import type { PanelControllerState } from './usePanelController';
+import { conversationIdFromPath } from '../shared/conversation-route.ts';
 
 const MIN_ICON_SVG = (
   <svg className="panel-minimize-icon" viewBox="0 0 320 120" width="140" height="52" aria-hidden="true">
@@ -47,6 +49,16 @@ export function PanelView({
   onSubmitManualPaste,
   onCancelManualPaste,
 }: PanelControllerState) {
+  const [bridgeSummary, setBridgeSummary] = useState<Readonly<{
+    conversationId: string;
+    watchingCount: number;
+    unacknowledgedThreadCount: number;
+  }> | null>(null);
+  const currentBridgeSummary = bridgeSummary?.conversationId === conversationId && conversationId
+    && conversationIdFromPath(window.location.pathname) === conversationId ? bridgeSummary : null;
+  function updateBridgeSummary(summary: Readonly<{ watchingCount: number; unacknowledgedThreadCount: number }> | null) {
+    setBridgeSummary(summary && conversationId ? { ...summary, conversationId } : null);
+  }
   return (
     <aside className={'panel' + (currentViewState.minimized ? ' is-minimized' : '')} aria-label="ChatPanelPlus パネル">
       <div className="panel-header">
@@ -128,14 +140,16 @@ export function PanelView({
           <dl className="panel-bridge-summary-list" aria-label="CodexBridge件数">
             <div className="panel-bridge-summary-item">
               <dt>監視中</dt>
-              <dd aria-label="Phase 4で接続">—</dd>
+              <dd aria-label="この会話の監視件数">{currentBridgeSummary?.watchingCount ?? '—'}</dd>
             </div>
             <div className="panel-bridge-summary-item">
               <dt>監視スレッドが終了した未確認</dt>
-              <dd aria-label="Phase 4で接続">—</dd>
+              <dd aria-label="この会話の未確認終了件数">{currentBridgeSummary?.unacknowledgedThreadCount ?? '—'}</dd>
             </div>
           </dl>
-          <p className="panel-bridge-summary-note" role="note">会話別件数はPhase 4で接続します。</p>
+          <p className="panel-bridge-summary-note" role="note">
+            {!conversationId ? '会話IDが確認できると件数を表示します。' : currentBridgeSummary ? '現在の会話に紐づく監視・終了通知です。' : '会話別件数を確認しています。'}
+          </p>
           <button
             type="button"
             className="codex-bridge-button panel-bridge-details-toggle"
@@ -147,10 +161,7 @@ export function PanelView({
           </button>
         </section>
         <div id="panel-bridge-details" className="panel-bridge-details" hidden={!bridgeExpanded}>
-          <p className="panel-bridge-scope-note" role="note">
-            この一覧は現行の共有表示です。会話別の絞り込みはPhase 4で接続します。
-          </p>
-          <CodexBridgeList foregroundEnabled={!currentViewState.minimized} />
+          <CodexBridgeList foregroundEnabled={!currentViewState.minimized} conversationId={conversationId} onSummaryChange={updateBridgeSummary} />
         </div>
         {error && <div className="panel-error" role="status">{error}</div>}
         <div className="settings-entry">

@@ -5,6 +5,7 @@ import {
 } from '../shared/codexbridge-mcp-protocol.ts';
 import {
   CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH,
+  CODEX_BRIDGE_WATCH_ACK_EVENTS,
   CODEX_BRIDGE_WATCH_LIST,
   CODEX_BRIDGE_WATCH_READ,
   CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER,
@@ -17,7 +18,9 @@ import {
   type CodexBridgeWatchResponse,
   type CodexBridgeWatchSnapshot,
   type CodexBridgeFinalAnswerResult,
+  type CodexBridgeWatchOwnerMute,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
+import { conversationIdFromPath, isConversationId } from '../shared/conversation-route.ts';
 import { createChromeSettingsRepository } from '../shared/settings-repository.ts';
 import { CodexBridgeMcpClient } from './mcp-client.ts';
 import { McpTransportError } from './mcp-transport.ts';
@@ -36,12 +39,17 @@ type SenderLike = Readonly<{
   frameId?: number;
   tab?: { id?: number; url?: string };
 }>;
-type MonitorLike = Pick<CodexBridgeThreadMonitor, 'startWatch' | 'stopWatch' | 'list' | 'listEvents' | 'read' | 'readEvent' | 'refreshForeground'>;
+type MonitorLike = Pick<CodexBridgeThreadMonitor, 'startWatch' | 'stopWatch' | 'list' | 'listEvents' | 'read' | 'readEvent'
+  | 'refreshForeground' | 'acknowledgeEvents'>;
 
 export type CodexBridgeThreadMonitorHandlerOptions = Readonly<{
   extensionId: string;
   monitor: MonitorLike;
   resolveAccess: () => Promise<CodexBridgeMonitorAccess>;
+  loadOwnerMute: (tabId: number, conversationId: string) => Promise<
+    | { readonly ok: true; readonly muted: boolean; readonly revision: number }
+    | { readonly ok: false }
+  >;
 }>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -63,20 +71,27 @@ function matchesTargetThread(targetId: string, threadId: string): boolean {
   return separator < 0 || threadId.slice(0, separator) === targetId;
 }
 
-function isTrustedSender(sender: SenderLike, extensionId: string): boolean {
+function trustedConversation(sender: SenderLike, extensionId: string, requestedConversationId?: string): { tabId: number; conversationId: string } | null {
   const origin = 'https://chatgpt.com';
-  return sender.id === extensionId && Number.isSafeInteger(sender.tab?.id) && (sender.tab?.id ?? -1) >= 0
-    && sender.frameId === 0 && pageOrigin(sender.tab?.url) === origin
-    && (sender.url === undefined || pageOrigin(sender.url) === origin)
-    && (sender.origin === undefined || sender.origin === origin);
+  if (sender.id !== extensionId || !Number.isSafeInteger(sender.tab?.id) || (sender.tab?.id ?? -1) < 0
+    || sender.frameId !== 0 || pageOrigin(sender.tab?.url) !== origin || pageOrigin(sender.url) !== origin
+    || (sender.origin !== undefined && sender.origin !== origin)) return null;
+  try {
+    const frameConversationId = conversationIdFromPath(new URL(sender.url!).pathname);
+    const tabConversationId = conversationIdFromPath(new URL(sender.tab!.url!).pathname);
+    if (!isConversationId(frameConversationId) || frameConversationId !== tabConversationId
+      || (requestedConversationId !== undefined && requestedConversationId !== frameConversationId)) return null;
+    return { tabId: sender.tab!.id!, conversationId: frameConversationId };
+  } catch { return null; }
 }
 
 function isMessage(value: unknown): value is CodexBridgeWatchMessage {
   if (!isRecord(value) || typeof value.type !== 'string') return false;
   const keys = Object.keys(value);
   if (value.type === CODEX_BRIDGE_WATCH_START) {
-    return keys.length === 3 && keys.includes('targetId') && keys.includes('threadId')
+    return keys.length === 4 && keys.includes('targetId') && keys.includes('threadId') && keys.includes('conversationId')
       && isCodexBridgeWatchIdentifier(value.targetId) && isCodexBridgeWatchIdentifier(value.threadId)
+      && isConversationId(value.conversationId)
       && matchesTargetThread(value.targetId, value.threadId);
   }
   if (value.type === CODEX_BRIDGE_WATCH_STOP || value.type === CODEX_BRIDGE_WATCH_READ) {
@@ -88,8 +103,21 @@ function isMessage(value: unknown): value is CodexBridgeWatchMessage {
   if (value.type === CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER) {
     return keys.length === 2 && isCodexBridgeWatchIdentifier(value.eventId) && value.eventId.length <= 96;
   }
+  if (value.type === CODEX_BRIDGE_WATCH_ACK_EVENTS) {
+    return keys.length === 3 && isConversationId(value.conversationId) && Array.isArray(value.eventIds)
+      && value.eventIds.length > 0 && value.eventIds.length <= 128
+      && value.eventIds.every((eventId) => isCodexBridgeWatchIdentifier(eventId) && eventId.length <= 96);
+  }
   return (value.type === CODEX_BRIDGE_WATCH_LIST || value.type === CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH)
     && keys.length === 1;
+}
+
+function summarize(items: readonly CodexBridgeWatchSnapshot[], events: CodexBridgeWatchListData['events']) {
+  const unacknowledged = new Set<string>();
+  for (const event of events) {
+    if (!event.acknowledgedAt) unacknowledged.add(`${event.connectionId}\u0000${event.targetId}\u0000${event.threadId}`);
+  }
+  return { watchingCount: items.length, unacknowledgedThreadCount: unacknowledged.size };
 }
 
 async function currentConnectionId(resolveAccess: () => Promise<CodexBridgeMonitorAccess>): Promise<string | null> {
@@ -118,27 +146,38 @@ export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridg
     | CodexBridgeWatchResponse<CodexBridgeWatchSnapshot | null>
     | CodexBridgeWatchResponse<CodexBridgeWatchListData>
     | CodexBridgeWatchResponse<CodexBridgeFinalAnswerResult>
+    | CodexBridgeWatchResponse<Readonly<{ acknowledged: boolean }>>
     | null
   > => {
-    if (!isTrustedSender(sender, options.extensionId)) return null;
     if (!isMessage(message)) return { ok: false, reason: 'invalid-request' };
+    const requestedConversationId = message.type === CODEX_BRIDGE_WATCH_START ? message.conversationId : undefined;
+    const identity = trustedConversation(sender, options.extensionId, requestedConversationId);
+    if (!identity) return null;
     try {
       if (message.type === CODEX_BRIDGE_WATCH_START) {
-        const result = await options.monitor.startWatch(message.targetId, message.threadId);
+        const mute = await options.loadOwnerMute(identity.tabId, identity.conversationId);
+        if (!mute.ok) return { ok: false, reason: 'storage-error' };
+        const owner: CodexBridgeWatchOwnerMute = {
+          ownerTabId: identity.tabId, ownerConversationId: identity.conversationId,
+          ownerMuted: mute.muted, ownerMuteRevision: mute.revision,
+        };
+        const result = await options.monitor.startWatch(message.targetId, message.threadId, owner);
         if (!result.ok) return result;
         return { ok: true, data: { item: result.item, created: result.created } };
       }
       if (message.type === CODEX_BRIDGE_WATCH_STOP) {
-        const removed = await options.monitor.stopWatch(message.connectionId, message.targetId, message.threadId);
+        const removed = await options.monitor.stopWatch(message.connectionId, message.targetId, message.threadId, identity.conversationId);
         return { ok: true, data: { removed } };
       }
       if (message.type === CODEX_BRIDGE_WATCH_READ) {
         const item = await options.monitor.read(message.connectionId, message.targetId, message.threadId);
-        return { ok: true, data: item };
+        return { ok: true, data: item?.ownerConversationId === identity.conversationId ? item : null };
       }
       if (message.type === CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER) {
-        const event = await options.monitor.readEvent(message.eventId);
-        if (!event) return { ok: true, data: { status: 'failed', reason: 'event-not-found' } };
+        const event = await options.monitor.readEvent(message.eventId, identity.conversationId);
+        if (!event || event.ownerConversationId !== identity.conversationId) {
+          return { ok: true, data: { status: 'failed', reason: 'event-not-found' } };
+        }
         if (!matchesTargetThread(event.targetId, event.threadId)) {
           return { ok: true, data: { status: 'failed', reason: 'event-not-found' } };
         }
@@ -159,7 +198,7 @@ export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridg
           result = finalAnswerFailure(error);
         }
         const [stillCurrent, stillSaved] = await Promise.all([
-          currentConnectionId(options.resolveAccess), options.monitor.readEvent(event.eventId),
+          currentConnectionId(options.resolveAccess), options.monitor.readEvent(event.eventId, identity.conversationId),
         ]);
         if (stillCurrent !== event.connectionId) return { ok: true, data: { status: 'failed', reason: 'connection-changed' } };
         if (!stillSaved || stillSaved.connectionId !== event.connectionId || stillSaved.targetId !== event.targetId
@@ -168,14 +207,23 @@ export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridg
         }
         return { ok: true, data: result };
       }
+      if (message.type === CODEX_BRIDGE_WATCH_ACK_EVENTS) {
+        if (message.conversationId !== identity.conversationId) return { ok: false, reason: 'invalid-request' };
+        const acknowledged = await options.monitor.acknowledgeEvents(identity.conversationId, message.eventIds, new Date().toISOString());
+        return acknowledged ? { ok: true, data: { acknowledged: true } } : { ok: false, reason: 'invalid-request' };
+      }
       if (message.type === CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH) await options.monitor.refreshForeground();
       const [items, events, connectionId] = await Promise.all([
         options.monitor.list(),
         options.monitor.listEvents(),
         currentConnectionId(options.resolveAccess),
       ]);
-      if (message.type === CODEX_BRIDGE_WATCH_LIST) return { ok: true, data: { items, events, currentConnectionId: connectionId } };
-      return { ok: true, data: { items, events, currentConnectionId: connectionId } };
+      const ownedItems = items.filter((item) => item.ownerConversationId === identity.conversationId);
+      const ownedEvents = events.filter((event) => event.ownerConversationId === identity.conversationId);
+      return { ok: true, data: {
+        items: ownedItems, events: ownedEvents, currentConnectionId: connectionId,
+        summary: summarize(ownedItems, ownedEvents),
+      } };
     } catch {
       return { ok: false, reason: 'storage-error' };
     }
@@ -185,6 +233,7 @@ export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridg
 export function createDefaultCodexBridgeThreadMonitor(
   extensionId: string,
   notification?: CodexBridgeNotificationHandler,
+  loadOwnerMute: CodexBridgeThreadMonitorHandlerOptions['loadOwnerMute'] = async () => ({ ok: false }),
 ) {
   const sessionStorage = chrome.storage.session as SessionStorageLike;
   const settings = createChromeSettingsRepository();
@@ -242,6 +291,6 @@ export function createDefaultCodexBridgeThreadMonitor(
   };
 
   const monitor = new CodexBridgeThreadMonitor(chrome.storage.local, chrome.alarms, resolveAccess, { notification });
-  const handleMessage = createCodexBridgeThreadMonitorMessageHandler({ extensionId, monitor, resolveAccess });
+  const handleMessage = createCodexBridgeThreadMonitorMessageHandler({ extensionId, monitor, resolveAccess, loadOwnerMute });
   return { monitor, handleMessage };
 }

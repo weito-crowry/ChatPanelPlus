@@ -12,6 +12,7 @@ import {
   type CodexBridgeFinalAnswerResult,
   type CodexBridgeWatchFetchOutcome,
   type CodexBridgeWatchSnapshot,
+  type CodexBridgeWatchOwnerMute,
   type CodexBridgeWatchTurnChange,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import type { CodexBridgeThreadStatus } from '../shared/codexbridge-mcp-protocol.ts';
@@ -136,8 +137,9 @@ export class CodexBridgeThreadMonitor {
     return [...await this.storage.listEvents()].sort((left, right) => right.detectedAt.localeCompare(left.detectedAt));
   }
 
-  async readEvent(eventId: string): Promise<CodexBridgeTerminalEvent | null> {
-    return this.storage.readEvent(eventId);
+  async readEvent(eventId: string, ownerConversationId?: string): Promise<CodexBridgeTerminalEvent | null> {
+    const event = await this.storage.readEvent(eventId);
+    return ownerConversationId === undefined || event?.ownerConversationId === ownerConversationId ? event : null;
   }
 
   async read(connectionId: string, targetId: string, threadId: string): Promise<CodexBridgeWatchSnapshot | null> {
@@ -145,9 +147,9 @@ export class CodexBridgeThreadMonitor {
     return (await this.list()).find((item) => codexBridgeWatchKey(item.connectionId, item.targetId, item.threadId) === key) ?? null;
   }
 
-  async startWatch(targetId: string, threadId: string): Promise<
+  async startWatch(targetId: string, threadId: string, owner?: CodexBridgeWatchOwnerMute): Promise<
     | Readonly<{ ok: true; item: CodexBridgeWatchSnapshot; created: boolean }>
-    | Readonly<{ ok: false; reason: 'watch-limit' | 'connection-unavailable' }>
+    | Readonly<{ ok: false; reason: 'watch-limit' | 'connection-unavailable' | 'owner-conflict' }>
   > {
     if (!isCodexBridgeWatchIdentifier(targetId) || !isCodexBridgeWatchIdentifier(threadId)) {
       return { ok: false, reason: 'connection-unavailable' };
@@ -163,20 +165,25 @@ export class CodexBridgeThreadMonitor {
     const key = codexBridgeWatchKey(access.connectionId, targetId, threadId);
     const initial: CodexBridgeWatchSnapshot = {
       watchId: this.createWatchId(), connectionId: access.connectionId, targetId, threadId, enabled: true,
+      ...(owner ?? {}),
       baselineCaptured: false, baselineTurnKind: 'unknown', baselineTurnId: null, baselineTurnStatus: null,
       lastObservedTurnId: null, statusState: null, lastTurnStatus: null, lastTurnEvidence: null,
       currentExecutionState: null, currentExecutionEvidence: null, currentExecutionReason: null, currentExecutionTurnId: null,
       needsAttention: null, turnChange: 'unknown', observedAt: null, lastSuccessAt: null,
       fetchOutcome: 'unknown', nextPollAt: this.now(), failureCount: 0,
     };
-    const result = await this.storage.mutate<Readonly<{ item: CodexBridgeWatchSnapshot | null; created: boolean }>>((items, events) => {
+    const result = await this.storage.mutate<Readonly<{ item: CodexBridgeWatchSnapshot | null; created: boolean; conflict: boolean }>>((items, events) => {
       const existing = items.find((item) => codexBridgeWatchKey(item.connectionId, item.targetId, item.threadId) === key);
-      if (existing) return { items, events, result: { item: existing, created: false } };
-      if (items.length >= CODEX_BRIDGE_THREAD_MONITOR_MAX_WATCHES) {
-        return { items, events, result: { item: null, created: false } };
+      if (existing) {
+        const conflict = Boolean(owner && existing.ownerConversationId !== owner.ownerConversationId);
+        return { items, events, result: { item: existing, created: false, conflict } };
       }
-      return { items: [...items, initial], events, result: { item: initial, created: true } };
+      if (items.length >= CODEX_BRIDGE_THREAD_MONITOR_MAX_WATCHES) {
+        return { items, events, result: { item: null, created: false, conflict: false } };
+      }
+      return { items: [...items, initial], events, result: { item: initial, created: true, conflict: false } };
     });
+    if (result.conflict) return { ok: false, reason: 'owner-conflict' };
     if (!result.item) return { ok: false, reason: 'watch-limit' };
     await this.syncAlarm();
     if (result.created) {
@@ -185,14 +192,43 @@ export class CodexBridgeThreadMonitor {
     return { ok: true, item: (await this.read(access.connectionId, targetId, threadId)) ?? result.item, created: result.created };
   }
 
-  async stopWatch(connectionId: string, targetId: string, threadId: string): Promise<boolean> {
+  async stopWatch(connectionId: string, targetId: string, threadId: string, ownerConversationId?: string): Promise<boolean> {
     const key = codexBridgeWatchKey(connectionId, targetId, threadId);
     const removed = await this.storage.mutate((items, events) => {
-      const next = items.filter((item) => codexBridgeWatchKey(item.connectionId, item.targetId, item.threadId) !== key);
+      const next = items.filter((item) => codexBridgeWatchKey(item.connectionId, item.targetId, item.threadId) !== key
+        || (ownerConversationId !== undefined && item.ownerConversationId !== ownerConversationId));
       return { items: next, events, result: next.length !== items.length };
     });
     if (removed) await this.syncAlarm();
     return removed;
+  }
+
+  async updateOwnerMute(ownerTabId: number, ownerConversationId: string, ownerMuted: boolean | null, ownerMuteRevision?: number): Promise<void> {
+    await this.storage.mutate((items, events) => ({
+      items: items.map((item) => item.ownerTabId === ownerTabId && item.ownerConversationId === ownerConversationId
+        ? { ...item, ownerMuted, ...(ownerMuteRevision === undefined ? {} : { ownerMuteRevision }) } : item),
+      events: events.map((event) => event.ownerTabId === ownerTabId && event.ownerConversationId === ownerConversationId
+        ? { ...event, ownerMuted, ...(ownerMuteRevision === undefined ? {} : { ownerMuteRevision }) } : event),
+      result: undefined,
+    }));
+  }
+
+  async acknowledgeEvents(ownerConversationId: string, eventIds: readonly string[], acknowledgedAt: string): Promise<boolean> {
+    return this.storage.mutate((items, events) => {
+      const unique = [...new Set(eventIds)];
+      const selected = events.filter((event) => unique.includes(event.eventId));
+      if (unique.length !== eventIds.length || selected.length !== unique.length
+        || selected.some((event) => event.ownerConversationId !== ownerConversationId)) {
+        return { items, events, result: false };
+      }
+      const ids = new Set(unique);
+      return {
+        items,
+        events: events.map((event) => ids.has(event.eventId)
+          ? { ...event, acknowledgedAt: event.acknowledgedAt ?? acknowledgedAt } : event),
+        result: true,
+      };
+    });
   }
 
   async restore(): Promise<void> {
@@ -326,6 +362,12 @@ export class CodexBridgeThreadMonitor {
         targetId: success.targetId, threadId: success.threadId, turnId: success.lastObservedTurnId!,
         status: terminalStatus, detectedAt: timestamp(now) ?? new Date(now).toISOString(),
         notificationState: 'pending', notificationReason: null,
+        ...(success.ownerTabId !== undefined && success.ownerConversationId !== undefined
+          && success.ownerMuted !== undefined && success.ownerMuteRevision !== undefined
+          ? {
+            ownerTabId: success.ownerTabId, ownerConversationId: success.ownerConversationId,
+            ownerMuted: success.ownerMuted, ownerMuteRevision: success.ownerMuteRevision,
+          } : {}),
       };
       return { items: next, events: [...events, created], result: created };
     });
@@ -352,10 +394,11 @@ export class CodexBridgeThreadMonitor {
   }
 
   private async notifyForEvent(event: CodexBridgeTerminalEvent): Promise<void> {
+    const latestEvent = await this.storage.readEvent(event.eventId) ?? event;
     let preparation: CodexBridgeNotificationPreparation;
     try {
       preparation = this.notification
-        ? await this.notification.prepare(event)
+        ? await this.notification.prepare(latestEvent)
         : { state: 'failed', reason: 'settings-unavailable' };
     } catch {
       await this.updateNotification(event.eventId, 'failed', 'settings-unavailable');
@@ -369,7 +412,9 @@ export class CodexBridgeThreadMonitor {
     if (!reserved) return;
     try {
       const result = await preparation.play();
-      await this.updateNotification(event.eventId, result.ok ? 'played' : 'failed', result.ok ? null : result.reason);
+      const suppressed = !result.ok && (result.reason === 'muted' || result.reason === 'owner-unavailable');
+      await this.updateNotification(event.eventId, result.ok ? 'played' : suppressed ? 'skipped' : 'failed',
+        result.ok ? null : result.reason);
     } catch {
       await this.updateNotification(event.eventId, 'failed', 'playback-failed');
     }

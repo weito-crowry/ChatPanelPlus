@@ -26,6 +26,7 @@ import { createCodexBridgeNotificationHandler } from './background/codexbridge-n
 import { createChromeSettingsRepository } from './shared/settings-repository.ts';
 import {
   CODEX_BRIDGE_THREAD_MONITOR_ALARM,
+  CODEX_BRIDGE_WATCH_ACK_EVENTS,
   CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH,
   CODEX_BRIDGE_WATCH_LIST,
   CODEX_BRIDGE_WATCH_READ,
@@ -64,7 +65,7 @@ function isCodexBridgePanelMessage(message: unknown): boolean {
 
 function isCodexBridgeWatchMessage(message: unknown): boolean {
   return typeof message === 'object' && message !== null && 'type' in message
-    && (message.type === CODEX_BRIDGE_WATCH_START || message.type === CODEX_BRIDGE_WATCH_STOP
+    && (message.type === CODEX_BRIDGE_WATCH_ACK_EVENTS || message.type === CODEX_BRIDGE_WATCH_START || message.type === CODEX_BRIDGE_WATCH_STOP
       || message.type === CODEX_BRIDGE_WATCH_LIST || message.type === CODEX_BRIDGE_WATCH_READ
       || message.type === CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH
       || message.type === CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER);
@@ -76,7 +77,6 @@ const handleCodexWorkModeMessage = createCodexWorkModeMessageHandler(
   (tabId, message) => chrome.tabs.sendMessage(tabId, message),
 );
 const conversationAudioMuteStore = new ConversationAudioMuteStore(chrome.storage.session);
-const handleConversationAudioMute = createConversationAudioMuteMessageHandler(conversationAudioMuteStore, chrome.runtime.id);
 const handleCodexBridgeMcpTest = createCodexBridgeMcpTestHandler({
   sessionStorage: chrome.storage.session,
   permissions: chrome.permissions,
@@ -118,8 +118,32 @@ const notification = createCodexBridgeNotificationHandler({
   outputDevice: outputDeviceRepository,
   assets: soundAssetRepository,
   audio: offscreenTransport,
+  loadOwnerMute: async (event) => {
+    if (event.ownerTabId === undefined || event.ownerConversationId === undefined || event.ownerMuted === undefined) return { ok: false };
+    const loaded = await conversationAudioMuteStore.load(event.ownerTabId, event.ownerConversationId);
+    if (!loaded.ok) return { ok: false };
+    return { ok: true, muted: loaded.saved ? loaded.value.muted : event.ownerMuted };
+  },
+  playWithOwnerMuteGuard: async (event, action) => {
+    if (event.ownerTabId === undefined || event.ownerConversationId === undefined) return { ok: false, reason: 'owner-unavailable' };
+    const result = await conversationAudioMuteStore.runIfOwnerUnmuted(
+      event.ownerTabId, event.ownerConversationId, event.ownerMuted, action,
+    );
+    if (!result.ok) return { ok: false, reason: result.reason === 'muted' ? 'muted' : 'owner-unavailable' };
+    return result.value;
+  },
 });
-const codexBridgeThreadMonitor = createDefaultCodexBridgeThreadMonitor(chrome.runtime.id, notification);
+const codexBridgeThreadMonitor = createDefaultCodexBridgeThreadMonitor(chrome.runtime.id, notification, async (tabId, conversationId) => {
+  const mute = await conversationAudioMuteStore.load(tabId, conversationId);
+  return mute.ok ? { ok: true, muted: mute.value.muted, revision: mute.value.revision } : { ok: false };
+});
+const handleConversationAudioMute = createConversationAudioMuteMessageHandler(
+  conversationAudioMuteStore,
+  chrome.runtime.id,
+  async (tabId, conversationId, value) => codexBridgeThreadMonitor.monitor.updateOwnerMute(
+    tabId, conversationId, value.muted, value.revision,
+  ),
+);
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === CODEX_BRIDGE_THREAD_MONITOR_ALARM) {
@@ -136,7 +160,9 @@ void codexBridgeThreadMonitor.monitor.restore().catch(() => {});
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   void removeCodexWorkModeEntriesForTab(chrome.storage.session, tabId);
-  void removeConversationAudioMuteEntriesForTab(chrome.storage.session, tabId).catch(() => {});
+  void removeConversationAudioMuteEntriesForTab(chrome.storage.session, tabId, async (conversationId, value) => {
+    await codexBridgeThreadMonitor.monitor.updateOwnerMute(tabId, conversationId, value?.muted ?? null, value?.revision);
+  }).catch(() => {});
 });
 
 chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {

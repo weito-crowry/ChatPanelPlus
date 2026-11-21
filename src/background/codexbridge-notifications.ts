@@ -1,4 +1,5 @@
 import type { CodexBridgeNotificationHandler, CodexBridgeNotificationPreparation } from './thread-monitor.ts';
+import type { CodexBridgeTerminalEvent, CodexBridgeNotificationReason } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import type { SettingsRepository } from '../shared/settings-repository.ts';
 import type { AnswerCompletionOutputDeviceRepository } from '../shared/answer-completion-output-device.ts';
 import type { SoundAsset, SoundAssetRepository } from '../shared/answer-completion-sound-assets.ts';
@@ -12,9 +13,18 @@ export function createCodexBridgeNotificationHandler(dependencies: Readonly<{
   outputDevice: Pick<AnswerCompletionOutputDeviceRepository, 'load'>;
   assets: Pick<SoundAssetRepository, 'loadAssets'>;
   audio: OffscreenAudioTransport | null;
+  loadOwnerMute: (event: CodexBridgeTerminalEvent) => Promise<{ readonly ok: true; readonly muted: boolean | null } | { readonly ok: false }>;
+  playWithOwnerMuteGuard: (event: CodexBridgeTerminalEvent, action: () => Promise<Readonly<{ ok: true } | { ok: false; reason: CodexBridgeNotificationReason }>>) =>
+    Promise<Readonly<{ ok: true } | { ok: false; reason: CodexBridgeNotificationReason }>>;
 }>): CodexBridgeNotificationHandler {
   return {
-    async prepare(): Promise<CodexBridgeNotificationPreparation> {
+    async prepare(event): Promise<CodexBridgeNotificationPreparation> {
+      if (event.ownerTabId === undefined || event.ownerConversationId === undefined || event.ownerMuted == null
+        || event.ownerMuteRevision === undefined) return { state: 'skipped', reason: 'owner-unavailable' };
+      const ownerMute = await dependencies.loadOwnerMute(event);
+      if (!ownerMute.ok) return { state: 'skipped', reason: 'owner-unavailable' };
+      if (ownerMute.muted === null) return { state: 'skipped', reason: 'owner-unavailable' };
+      if (ownerMute.muted) return { state: 'skipped', reason: 'muted' };
       const loaded = await dependencies.settings.loadSettings();
       if (!loaded.ok) return { state: 'failed', reason: 'settings-unavailable' };
       if (loaded.settings.answerCompletionSoundEnabled !== true) return { state: 'skipped', reason: 'disabled' };
@@ -33,14 +43,14 @@ export function createCodexBridgeNotificationHandler(dependencies: Readonly<{
       const soundId = isUserCompletionSoundId(selectedSoundId) && !asset ? DEFAULT_COMPLETION_SOUND_ID : selectedSoundId;
       return {
         state: 'ready',
-        play: async () => {
+        play: async () => dependencies.playWithOwnerMuteGuard(event, async () => {
           if (!dependencies.audio) return { ok: false, reason: 'playback-failed' };
           const result = await dependencies.audio.play({
             type: OFFSCREEN_PLAY_ANSWER_COMPLETION_SOUND, deviceId: output.device.deviceId,
             soundId, volumePercent, ...(asset && soundId === selectedSoundId ? { asset } : {}),
           });
           return result.ok ? { ok: true } : { ok: false, reason: result.reason ?? 'playback-failed' };
-        },
+        }),
       };
     },
   };

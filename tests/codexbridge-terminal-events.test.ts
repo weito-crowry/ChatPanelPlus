@@ -108,6 +108,59 @@ test('an actively observed baseline turn and a later new terminal turn notify on
   assert.equal(notificationCalls, 1);
 });
 
+test('watch owner is single, duplicate same-conversation start preserves origin, and event ownership survives stop/re-registration', async () => {
+  const h = harness(status('turn-a', 'in_progress'));
+  const ownerA = { ownerTabId: 4, ownerConversationId: 'conversation-A', ownerMuted: false, ownerMuteRevision: 0 } as const;
+  const sameConversationOtherTab = { ...ownerA, ownerTabId: 9, ownerMuted: true, ownerMuteRevision: 3 } as const;
+  const ownerB = { ownerTabId: 10, ownerConversationId: 'conversation-B', ownerMuted: false, ownerMuteRevision: 0 } as const;
+  const first = await h.monitor.startWatch('target-1', 'thread-1', ownerA);
+  assert.equal(first.ok, true);
+  if (!first.ok) return;
+  assert.deepEqual({ tabId: first.item.ownerTabId, conversationId: first.item.ownerConversationId, muted: first.item.ownerMuted },
+    { tabId: 4, conversationId: 'conversation-A', muted: false });
+  const duplicate = await h.monitor.startWatch('target-1', 'thread-1', sameConversationOtherTab);
+  assert.equal(duplicate.ok && duplicate.created, false);
+  if (duplicate.ok) assert.equal(duplicate.item.ownerTabId, 4);
+  assert.deepEqual(await h.monitor.startWatch('target-1', 'thread-1', ownerB), { ok: false, reason: 'owner-conflict' });
+
+  h.setStatus(status('turn-a', 'completed'));
+  h.advance(30_000);
+  await h.monitor.refreshAlarm();
+  assert.equal(await h.monitor.updateOwnerMute(4, 'conversation-A', true, 1), undefined);
+  const event = (await h.monitor.listEvents())[0];
+  assert.equal(event?.ownerConversationId, 'conversation-A');
+  assert.equal(event?.ownerTabId, 4);
+  assert.equal(event?.ownerMuted, true);
+  assert.equal(await h.monitor.stopWatch('connection-A', 'target-1', 'thread-1', 'conversation-A'), true);
+  const reassigned = await h.monitor.startWatch('target-1', 'thread-1', ownerB);
+  assert.equal(reassigned.ok, true);
+  const retainedEvent = (await h.monitor.listEvents())[0];
+  assert.equal(retainedEvent?.ownerConversationId, 'conversation-A');
+  assert.equal(retainedEvent?.ownerTabId, 4);
+});
+
+test('event ACK is owner-scoped and idempotent while a concurrent new event remains unconfirmed', async () => {
+  const h = harness(status('turn-a', 'in_progress'));
+  const owner = { ownerTabId: 4, ownerConversationId: 'conversation-A', ownerMuted: false, ownerMuteRevision: 0 } as const;
+  await h.monitor.startWatch('target-1', 'thread-1', owner);
+  h.setStatus(status('turn-a', 'completed'));
+  h.advance(30_000);
+  await h.monitor.refreshAlarm();
+  const first = (await h.monitor.listEvents())[0]!;
+  assert.equal(await h.monitor.acknowledgeEvents('conversation-B', [first.eventId], '2026-11-21T00:00:00.000Z'), false);
+  assert.equal(await h.monitor.acknowledgeEvents('conversation-A', [first.eventId], '2026-11-21T00:00:00.000Z'), true);
+  assert.equal(await h.monitor.acknowledgeEvents('conversation-A', [first.eventId], '2026-11-21T00:01:00.000Z'), true);
+  h.setStatus(status('turn-b', 'in_progress'));
+  h.advance(30_000);
+  await h.monitor.refreshAlarm();
+  h.setStatus(status('turn-b', 'failed'));
+  h.advance(30_000);
+  await h.monitor.refreshAlarm();
+  const events = await h.monitor.listEvents();
+  assert.equal(events.find((event) => event.eventId === first.eventId)?.acknowledgedAt, '2026-11-21T00:00:00.000Z');
+  assert.equal(events.filter((event) => !event.acknowledgedAt).length, 1);
+});
+
 test('live terminal turns complete when current execution is specifically unconfirmed', async () => {
   for (const terminal of ['completed', 'failed', 'interrupted'] as const) {
     let playbackCalls = 0;
@@ -328,7 +381,34 @@ test('unwatch during a delayed status request ignores the old response and its e
   assert.equal((await delayed.listEvents()).length, 0);
 });
 
-test('the event ledger stays bounded and pruning cannot re-notify the still-current terminal turn', async () => {
+test('確認済み履歴のみ128件を保持し、未確認eventを追加しても消さず、pruning後に再通知しない', async () => {
+  const h = harness(status(null, null));
+  const owner = { ownerTabId: 4, ownerConversationId: 'conversation-A', ownerMuted: false, ownerMuteRevision: 0 } as const;
+  await h.monitor.startWatch('target-1', 'thread-1', owner);
+  for (let index = 0; index < 130; index += 1) {
+    h.setStatus(status(`turn-${index}`, 'completed'));
+    h.advance(30_000);
+    await h.monitor.refreshAlarm();
+    const latest = (await h.monitor.listEvents())[0];
+    if (latest) await h.monitor.acknowledgeEvents('conversation-A', [latest.eventId], new Date(h.now()).toISOString());
+  }
+  assert.equal((await h.monitor.listEvents()).length, 128);
+  assert.ok((await h.monitor.listEvents()).every((event) => Boolean(event.acknowledgedAt)));
+  for (let index = 130; index < 260; index += 1) {
+    h.setStatus(status(`turn-${index}`, 'completed'));
+    h.advance(30_000);
+    await h.monitor.refreshAlarm();
+  }
+  const mixed = await h.monitor.listEvents();
+  assert.equal(mixed.length, 258);
+  assert.equal(mixed.filter((event) => event.acknowledgedAt).length, 128);
+  assert.equal(mixed.filter((event) => !event.acknowledgedAt).length, 130);
+  h.advance(30_000);
+  await h.monitor.refreshAlarm();
+  assert.equal((await h.monitor.listEvents()).length, 258);
+});
+
+test('未確認イベントは128件を超えても削除せず、件数の誤りを防ぐ', async () => {
   const h = harness(status(null, null));
   await h.monitor.startWatch('target-1', 'thread-1');
   for (let index = 0; index < 130; index += 1) {
@@ -336,8 +416,7 @@ test('the event ledger stays bounded and pruning cannot re-notify the still-curr
     h.advance(30_000);
     await h.monitor.refreshAlarm();
   }
-  assert.equal((await h.monitor.listEvents()).length, 128);
-  h.advance(30_000);
-  await h.monitor.refreshAlarm();
-  assert.equal((await h.monitor.listEvents()).length, 128);
+  const events = await h.monitor.listEvents();
+  assert.equal(events.length, 130);
+  assert.ok(events.every((event) => !event.acknowledgedAt));
 });

@@ -5,7 +5,7 @@ import test from 'node:test';
 
 const read = (path) => readFile(fileURLToPath(new URL(path, import.meta.url)), 'utf8');
 
-test('通常画面はBridgeの計画済み2件数だけを示し、未接続値を0と見せない', async () => {
+test('通常画面は現在会話のBridge2件数だけを示し、未取得を0と見せない', async () => {
   const view = await read('../src/content/PanelView.tsx');
   const summary = view.match(/<section className="panel-bridge-summary"[\s\S]*?<\/section>/)?.[0];
 
@@ -13,12 +13,14 @@ test('通常画面はBridgeの計画済み2件数だけを示し、未接続値�
   assert.equal([...summary.matchAll(/<dt>/g)].length, 2);
   assert.match(summary, /監視中/);
   assert.match(summary, /監視スレッドが終了した未確認/);
-  assert.equal([...summary.matchAll(/aria-label="Phase 4で接続"/g)].length, 2);
-  assert.match(summary, /会話別件数はPhase 4で接続します/);
+  assert.match(summary, /currentBridgeSummary\?\.watchingCount \?\? '—'/);
+  assert.match(summary, /currentBridgeSummary\?\.unacknowledgedThreadCount \?\? '—'/);
+  assert.match(summary, /この会話の監視件数/);
+  assert.match(summary, /この会話の未確認終了件数/);
   assert.doesNotMatch(summary, /0件|実行中|要対応|新着/);
 });
 
-test('Bridge詳細は会話stateで開閉し、ARIA・共有一覧・route raceを保つ', async () => {
+test('Bridge詳細は会話stateで開閉し、ARIA・owner filter・route raceを保つ', async () => {
   const [view, controller, stateHook] = await Promise.all([
     read('../src/content/PanelView.tsx'),
     read('../src/content/usePanelController.ts'),
@@ -35,9 +37,8 @@ test('Bridge詳細は会話stateで開閉し、ARIA・共有一覧・route race�
   assert.match(toggle, /aria-controls="panel-bridge-details"/);
   assert.match(view, /<div id="panel-bridge-details" className="panel-bridge-details" hidden=\{!bridgeExpanded\}>/);
   assert.match(view, /onClick=\{onToggleBridgeExpanded\}/);
-  assert.match(view, /この一覧は現行の共有表示です。会話別の絞り込みはPhase 4で接続します。/);
   assert.equal([...view.matchAll(/<CodexBridgeList\b/g)].length, 1);
-  assert.match(view, /<CodexBridgeList foregroundEnabled=\{!currentViewState\.minimized\} \/>/);
+  assert.match(view, /<CodexBridgeList foregroundEnabled=\{!currentViewState\.minimized\} conversationId=\{conversationId\} onSummaryChange=\{updateBridgeSummary\} \/>/);
   assert.match(controller, /useConversationPanelState\(model\.tabs\)/);
   assert.match(controller, /bridgeExpanded: conversationPanel\.bridgeExpanded/);
   assert.doesNotMatch(controller, /loadViewState\(|saveViewState\(/);
@@ -59,6 +60,9 @@ test('Bridge詳細の順序はthread一覧、監視登録、終了通知を保�
   assert.match(watch, /選択threadの監視を開始/);
   assert.match(watch, /選択threadの監視を解除/);
   assert.match(watch, /監視終了イベント一覧/);
+  assert.match(watch, /未確認の終了通知を確認/);
+  assert.match(watch, /event\.ownerConversationId !== currentConversationId/);
+  assert.match(watch, /conversationIdFromPath\(window\.location\.pathname\) !== conversationId/);
 });
 
 test('表示ボタンはOptionsで解決した一覧を使い、最小化は既存本文領域を隠す', async () => {
