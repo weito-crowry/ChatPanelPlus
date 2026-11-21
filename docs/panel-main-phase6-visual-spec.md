@@ -1,7 +1,7 @@
 # ChatPanelPlus Phase 6 — メインパネル外観・Bridge表示仕様
 
 更新日: 2026-11-22
-状態: 仕様を記録し、Phase 6 UIコードをcommit `3aca9ca05b52b0ca4232aee3b80d72dae6f62f70`へ実装済み。登録済みdistへは未配備で、現在のChrome表示・動作を示すものではない。
+状態: 仕様を記録し、Phase 6 UIコードをcommit `3aca9ca05b52b0ca4232aee3b80d72dae6f62f70`へ実装・自動検証し、2026-11-22にバックアップ後の`pnpm build`で登録済みdistへ配備済み。Chrome reloadと実機表示確認は未実施で、現在のChrome表示・動作を示すものではない。
 
 ## 目的と対象
 
@@ -50,9 +50,34 @@ Phase 6では通常、Bridge詳細展開、最小化の3状態を扱う。白〜
 
 - CodexBridge別repoの`running_only`実装・paginationとの共存・重複排除が必要。完了まではCPPの既存API経路を維持し、現在のC12 client filterだけを使う。新API成功や全thread網羅を表示しない。
 - React/CSSの3状態、A/B/C card、Bridge bar、Bの名前fallback/ID tooltip、Aのhover・keyboard ID説明は実装済み。Bridge barの実行中件数に必要なCodexBridge `running_only` APIは未接続で、未取得表示`—`のまま。現在のAPIは変更していない。
-- 自動検証は552/552 PASS、Phase6 focused suite 34/34 PASS、typecheck/lint PASS。テスト時に登録済みlive dist 11ファイルの相対path・size・SHA-256は前後一致。今回のコードはdistにbuild・配備しておらず、Chrome表示の受入は未実施。
+- 自動検証は552/552 PASS、Phase6 focused suite 34/34 PASS、typecheck/lint PASS。テスト時に登録済みlive dist 11ファイルの相対path・size・SHA-256は前後一致。配備手順と生成ファイルhashは下記の記録を参照。Chrome表示の受入は未実施。
 - Chrome上の正確な余白・幅、hover/focus、light/dark配色、最小化時の実表示は未確認。最終受入チェックリストC31–C36は実機確認まで`NOT_RUN`とする。
 
 ## Phase 6受入
 
-最終Chrome受入のC31以降を本仕様の受入項目とする。コードの構造・自動回帰は確認済みだが、登録済みdistへの配備とChrome実機確認は未実施のため、C31–C36はすべて`NOT_RUN`。running-only server API連携は別repo依存として保留する。現在のC12/C30等の既存判定は変更しない。
+最終Chrome受入のC31以降を本仕様の受入項目とする。コードの構造・自動回帰と登録済みdistへの配備は完了したが、Chrome実機確認は未実施のため、C31–C36はすべて`NOT_RUN`。running-only server API連携は別repo依存として保留する。現在のC12/C30等の既存判定は変更しない。
+
+## 配備記録（2026-11-22）
+
+- UIソースcommit: `3aca9ca05b52b0ca4232aee3b80d72dae6f62f70`
+- 配備先: `D:\weito\Documents\src\codexapp\ChatPanelPlus\dist`（Chrome登録済みロード元）
+- 実行: `pnpm build` exit 0。誤った兄弟Probe宛ての`pnpm deploy:chrome`は実行していない。
+- 配備前backup: `D:\weito\Documents\src\codexapp\ChatPanelPlus-dist-phase6-predeploy-backup-20261122-012236-b904e2364297495daf438482a97522f8`。distとbackupはlink/reparse pointなし。build前に相対path・byte length・SHA-256が11/11一致。
+- 配備後検査: 11ファイル、Manifest V3/version 0.1.5、必須6ファイル、HTML/CSS local asset参照5件、Phase 6表示marker10/10を確認。build前からの内容変更は`content.js`のみ。
+- Chrome reload・Bridge操作はしていない。C31–C36は`NOT_RUN`。Bridge server-side `running_only`は未接続のため実行中件数は`—`。
+
+配備後ファイルのSHA-256 manifest:
+
+| 相対path | bytes | SHA-256 |
+|---|---:|---|
+| `assets/index-C_XpLgfC.css` | 6701 | `7cdfc1cf1aee4b5ebfc6122fec43c75e9045483240bff046ef85e2df090c9988` |
+| `assets/index-D6JxlyjY.js` | 294502 | `56bf45a2abf3e8849b680c98328023c8b91ef9c71e82895306358ea39a38a8a3` |
+| `background.js` | 79181 | `ce168cccdfd589e415afaf4856fe8035177005210a9973b22775c756acd9641a` |
+| `clipboard-probe.css` | 455 | `8d33028ae7bf6df78623bea5ca5658676c74c3a2c5aadcaf57150eb8c3caad19` |
+| `clipboard-probe.html` | 1418 | `977a0d32e4acea352f0f47766d34fae837857fc3df840b7e58a00b596c4b8f76` |
+| `clipboard-probe.js` | 8635 | `955eccdaa8828ea52a360d9851b8d4a9f58a018df9b00c7b9cfa4faadd09b60c` |
+| `content.js` | 430073 | `bf327d61ab9c7e01de6a48a1e9345cf0e708d5180b5615835cfe0427ffb502d8` |
+| `index.html` | 469 | `ba0cb89f4835fae131ece5f1bda15ea91da4c2eab4d62a5ca168789f156f31d2` |
+| `manifest.json` | 762 | `b1e0d5ba2de4ddf2745b263680499afe09b6f1ba1c7ba6c029d00841a06c3f72` |
+| `offscreen.html` | 203 | `da70320eef06462e7c45b661b857c98c8c9fb21cc7a8e1bd9904fbf87e8683a5` |
+| `offscreen.js` | 3635 | `2c7a28c4914fd38a4e9c4ddd8f9605ffd045af4dbc369faa249e469f1d32dd65` |

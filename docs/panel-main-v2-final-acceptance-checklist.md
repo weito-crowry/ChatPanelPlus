@@ -2,18 +2,18 @@
 
 ## 実施条件と記録方法
 
-- 対象はWindows 11上の既存Chromeプロファイルと、拡張機能に登録済みのrepo直下`dist/`。本チェックリスト作成時にChrome reload・画面操作はしていない。
+- 対象はWindows 11上の既存Chromeプロファイルと、拡張機能に登録済みのrepo直下`dist/`。Phase 6 build/配備後もChrome reload・画面操作はしていない。
 - Phase 1は2026-11-21にユーザーから「Chrome側で再読み込みし、動いた」と報告され、Phase全体の受入PASSを記録済み。個々の操作結果は未報告なので、本書の行を遡ってPASSにはしない。
 - Phase 2〜4の自動テスト・型検査・Lint・配備は各Phase記録を参照する。手動項目は行ごとの結果を使い、ユーザー報告で確認された項目だけPASSとする。
-- Phase 6の仕様は`docs/panel-main-phase6-visual-spec.md`に記録し、UIコードをcommit `3aca9ca05b52b0ca4232aee3b80d72dae6f62f70`に実装した。今回コードを登録済み`dist/`へbuild・配備しておらず、Chrome reloadもしていない。C31以降は自動検証とChrome実機受入を区別し、Chrome項目は**NOT_RUN**のままとする。
-- 実施時は同じChromeプロファイルを使い、Phase 5配備後の拡張を手動reloadしてから確認する。各行の結果を`PASS`／`FAIL`／`NOT_RUN`へ更新し、会話本文・秘密値を含めないスクリーンショット、簡潔な操作記録などの証跡を記入する。
+- Phase 6の仕様は`docs/panel-main-phase6-visual-spec.md`に記録し、UIコードcommit `3aca9ca05b52b0ca4232aee3b80d72dae6f62f70`をバックアップ照合後に登録済み`dist/`へbuild・配備した。Chrome reload・画面操作はしていない。C31以降は自動検証とChrome実機受入を区別し、Chrome項目は**NOT_RUN**のままとする。
+- 実施時は同じChromeプロファイルを使い、Phase 6配備済み拡張を手動reloadしてから確認する。各行の結果を`PASS`／`FAIL`／`NOT_RUN`へ更新し、会話本文・秘密値を含めないスクリーンショット、簡潔な操作記録などの証跡を記入する。
 - Bridgeの確認には利用許可のあるテスト用threadを使い、会話IDや本文を記録へ転記しない。自動送信しない。
 
 ## Chrome受入項目
 
 | ID | 環境・操作 | 期待結果 | 結果 | 証跡・メモ |
 |---|---|---|---|---|
-| C01 正式ロード元 | `chrome://extensions`で登録済み拡張のロード元がrepo直下`dist/`であることを確認し、今回のPhase 4配備後に手動reloadする。 | 正しい拡張が起動し、別のProbeフォルダを読み込んでいない。 | NOT_RUN | |
+| C01 正式ロード元 | `chrome://extensions`で登録済み拡張のロード元がrepo直下`dist/`であることを確認し、Phase 6配備後の拡張を手動reloadする。 | 正しい拡張が起動し、別のProbeフォルダを読み込んでいない。 | NOT_RUN | Phase 6のbuildは完了。reloadはユーザー実施待ち。 |
 | C02 通常画面 | 任意の会話を開き、パネル通常表示を見る。 | ヘッダー、作業中toggle、既存音声・統計操作、Optionsで解決した常時ボタンとタブ／promptボタンが保たれる。Bridge件数欄は2項目だけ。 | PASS（ユーザー報告） | 2026-11-21、通常画面の構成・ボタン類・Bridge件数欄2項目をChrome実機で確認し問題なしとの報告。 |
 | C03 Optionsボタン定義 | Optionsで設定済みのラベル、文面、表示、順序、グループを確認し、4つの既定prompt（全文／要約／翻訳／調べて）を確認する。 | Options設定が優先され、非表示ボタンを強制表示せず、重複表示しない。自動送信しない。 | PASS（ユーザー報告） | 2026-11-21、Options画面を開いて目視確認し問題なしとの報告。個別prompt操作結果は主張しない。 |
 | C04 既存入力操作 | 既存prompt／カスタムボタンを選択し、入力先のcaret・選択位置、paste/manual paste、clear、copyを操作する。 | 既存の挿入・clipboard・focus動作を保ち、不要な本文置換や自動送信をしない。 | NOT_RUN | |
@@ -43,12 +43,12 @@
 | C28 B/C選択の会話別復元 | 会話AでB監視対象とC終了eventを選ぶ。同じ会話の別tab/reload、別会話B、A thread探索の選択をそれぞれ確認する。watch解除またはevent一覧からの消失後も確認する。 | B/C選択だけが同一conversation ID内で共有・復元される。A探索選択とは独立し、別会話には漏れない。owner一覧にない選択は解除され、最終回答本文は保存・越境表示されない。 | NOT_RUN | 自動ではconversation state、旧schema、owner filterを検証済み |
 | C29 実行中優先・読み込み済みfilter | thread一覧を更新し、確定実行中・推定実行中・不明・非実行中を含む状態を確認する。checkboxをON/OFFし、次ページ取得前後も見る。選択中threadがfilterで隠れるケースも確認する。 | 確定中（`in_progress`／`running`）が先頭、推定中はその次に推定ラベル付きで表示。各群は有効な`updatedAt`新しい順、欠損/不正時刻は末尾で安定順。不明とlast_turnだけでは実行中扱いしない。Phase6の初期値はON。ON/OFFは取得済みページだけをclient側で絞り、次ページ操作を維持する。全threadを含むとは表示しない。空結果・未読込・失敗を区別し、非表示選択と監視操作を維持する。 | NOT_RUN | Bridgeのserver-side `running_only`未接続。自動検証は全552/552 PASS、typecheck/lint PASS。Chromeでの確認待ち。 |
 | C30 スピーカー操作の統合 | Optionsで全体音声をON/OFFし、統計隣のスピーカー1個を操作して同一会話のtab別muteを確認する。 | パネルのスピーカーは会話別muteだけを切替え、共有の有効化・音量等はOptionsに残る。全体OFFでも会話別mute操作を使える。iconは実効消音（全体OFFまたは会話別mute中）を示し、ARIA/titleは全体状態と会話別mute状態を別々に説明する。`aria-pressed`は会話別muteだけを表し、全体設定やmute値を相互変更しない。 | FAIL（修正前の実機指摘）／修正後再確認NOT_RUN | 2026-11-21ユーザー実機報告：会話統計の隣に同じ見た目の全体音声／会話別muteボタンが2個並ぶ。修正commit `82c0dd7fc131dec320a47c4cd16b9c8a22e6b454`、自動検証・dist配備は完了。Chrome再確認待ち。 |
-| C31 Phase 6 B表示名fallback・ID tooltip | Bの監視対象でtitle/nameあり、null、空白、不使用ラベルを用意する。ラベルへmouse hoverし、Tab等でkeyboard focusしてIDを確認する。異なるtarget/ownerでも確認する。 | usableなtitle/nameを主表示。取得不可・空白・不使用ならthread IDを仮主ラベル。全行のhover tooltipでthread IDを表示し、keyboard focusでも説明を取得可能。名前がある行にIDを常時併記しない。内部identity/owner認可は表示名で置換せず、別会話情報を出さない。 | NOT_RUN | 自動回帰でfallback/tooltip/keyboard説明を確認。コードcommit `3aca9ca`。dist未配備、Chrome実機は未確認。 |
-| C32 Phase 6通常画面とBridge bar | 正式ロード元で通常画面を開き、header、utility、tab、prompt、Bridge barを確認する。Optionsの表示順/非表示/labelも使う。 | 動的project名、Codex作業中、会話別speaker、統計、Options、最小化をheaderに整理。設定済みutility/tab/promptのみ表示。Bridge barに「実行中」「監視中」「通知」を表示する。API未取得の実行中は`—`。注釈や固定例示buttonをUIに含めない。 | NOT_RUN | UI構造の自動回帰はPASS。server-side実行件数は未接続で`—`表示。dist未配備、Chrome未確認。 |
-| C33 Phase 6 Bridge値と未取得 | 会話A/B、複数target、接続中・失敗・未取得、20件ページとrunning_only応答を比較する。 | 実行中はBridge running_only結果の件数。監視中と通知は現在owner会話の既存summary。通知は未確認終了通知を持つ一意watch件数。未取得は`—`と説明し0や20件を全件と誤表示しない。他会話件数を出さない。 | NOT_RUN | 既存owner summaryと未取得表示を自動回帰で確認。running_only backendは別repo依存、未接続。dist未配備。 |
-| C34 Phase 6 Bridge詳細A/B/C | 十分な幅で展開し、A一覧/B選択・監視/C通知・最終回答と技術情報の折りたたみを確認する。 | Aの更新・filter・pagination・machine選択を維持。Bの監視開始/解除とthread identityを維持。Cのowner filter、ACK、最終回答copy/挿入、SPA保護を維持。通常行に診断IDやcwdを並べず、必要時だけ表示する。 | NOT_RUN | A/B/C構成と既存callback/認可経路を自動回帰で確認。Chrome操作・Bridge実データは未確認。 |
-| C35 Phase 6 responsive・dark・keyboard | 幅900px/640px付近、ライト/ダーク、Tab/Enter、hover tooltip、focus説明を確認する。 | 3列から2列/縦積みへ変化し横scrollなし。操作とlabelが隠れず、focus ring/ARIA/tooltip説明が使える。 | NOT_RUN | CSS breakpoint、dark palette、focus/ARIA契約は自動検査済み。実機の幅・色・tooltip表示は未確認。 |
-| C36 Phase 6最小化bar | 通常/展開から最小化・復帰し、未取得値、別会話への移動、再読込も確認する。 | 本文buttonを隠した1行にChatPanelPlus、既存作業中状態、3つのBridge表示値、復帰操作を保つ。未取得を0とせず他会話データを混ぜない。 | NOT_RUN | minimized markup/CSSと既存切替操作を自動回帰で確認。dist未配備、Chrome実機は未確認。 |
+| C31 Phase 6 B表示名fallback・ID tooltip | Bの監視対象でtitle/nameあり、null、空白、不使用ラベルを用意する。ラベルへmouse hoverし、Tab等でkeyboard focusしてIDを確認する。異なるtarget/ownerでも確認する。 | usableなtitle/nameを主表示。取得不可・空白・不使用ならthread IDを仮主ラベル。全行のhover tooltipでthread IDを表示し、keyboard focusでも説明を取得可能。名前がある行にIDを常時併記しない。内部identity/owner認可は表示名で置換せず、別会話情報を出さない。 | NOT_RUN | 自動回帰でfallback/tooltip/keyboard説明を確認。コードcommit `3aca9ca`を登録済みdistへ配備済み。Chrome実機は未確認。 |
+| C32 Phase 6通常画面とBridge bar | 正式ロード元で通常画面を開き、header、utility、tab、prompt、Bridge barを確認する。Optionsの表示順/非表示/labelも使う。 | 動的project名、Codex作業中、会話別speaker、統計、Options、最小化をheaderに整理。設定済みutility/tab/promptのみ表示。Bridge barに「実行中」「監視中」「通知」を表示する。API未取得の実行中は`—`。注釈や固定例示buttonをUIに含めない。 | NOT_RUN | UI構造の自動回帰PASS、Phase6 bundleを配備済み。server-side実行件数は未接続で`—`表示。Chrome未確認。 |
+| C33 Phase 6 Bridge値と未取得 | 会話A/B、複数target、接続中・失敗・未取得、20件ページとrunning_only応答を比較する。 | 実行中はBridge running_only結果の件数。監視中と通知は現在owner会話の既存summary。通知は未確認終了通知を持つ一意watch件数。未取得は`—`と説明し0や20件を全件と誤表示しない。他会話件数を出さない。 | NOT_RUN | 既存owner summaryと未取得表示を自動回帰で確認。bundle配備済み。running_only backendは別repo依存、未接続。 |
+| C34 Phase 6 Bridge詳細A/B/C | 十分な幅で展開し、A一覧/B選択・監視/C通知・最終回答と技術情報の折りたたみを確認する。 | Aの更新・filter・pagination・machine選択を維持。Bの監視開始/解除とthread identityを維持。Cのowner filter、ACK、最終回答copy/挿入、SPA保護を維持。通常行に診断IDやcwdを並べず、必要時だけ表示する。 | NOT_RUN | A/B/C構成と既存callback/認可経路は自動回帰確認済み。bundle配備済みだが、Chrome操作・Bridge実データは未確認。 |
+| C35 Phase 6 responsive・dark・keyboard | 幅900px/640px付近、ライト/ダーク、Tab/Enter、hover tooltip、focus説明を確認する。 | 3列から2列/縦積みへ変化し横scrollなし。操作とlabelが隠れず、focus ring/ARIA/tooltip説明が使える。 | NOT_RUN | CSS breakpoint、dark palette、focus/ARIA契約は自動検査済み、bundle配備済み。実機の幅・色・tooltip表示は未確認。 |
+| C36 Phase 6最小化bar | 通常/展開から最小化・復帰し、未取得値、別会話への移動、再読込も確認する。 | 本文buttonを隠した1行にChatPanelPlus、既存作業中状態、3つのBridge表示値、復帰操作を保つ。未取得を0とせず他会話データを混ぜない。 | NOT_RUN | minimized markup/CSSと既存切替操作を自動回帰確認済み、bundle配備済み。Chrome実機は未確認。 |
 
 ## 判断待ち・実装上の保留
 
@@ -70,5 +70,5 @@
 - Phase 4初回: 527/527 PASS。最終レビュー修正commit `048953c3bd44298a9261048209c433eb9acc2d40` 後: 539/539 PASS、修正焦点suite 29/29 PASS、typecheck/lint PASS、隔離テスト前後のlive `dist/` 11ファイルSHA-256 manifest一致。新規兄弟バックアップ11/11一致後に`pnpm build` exit 0で登録済み`dist/`を更新し、配備後11ファイル・Manifest V3/version 0.1.5・必須6ファイル・7参照・hashを確認。Chrome reload・実機受入は**NOT_RUN**。総保持方針の判断は未完了。
 - C12 thread表示 follow-up commit `c528acd37e9b0d907175f4e19019c6913f027eca`: 全548/548 PASS、typecheck/lint PASS。隔離テスト前後でlive `dist/` 11/11 hash一致。新規兄弟バックアップの全件照合後に`pnpm build` exit 0、Manifest V3/version 0.1.5、必須6ファイル・参照・C12表示markerを確認。Chrome C12再試験はNOT_RUN。
 - C30 speaker UI follow-up commit `82c0dd7fc131dec320a47c4cd16b9c8a22e6b454`: 全548/548 PASS、typecheck/lint PASS。隔離テスト前後でlive `dist/` 11/11 hash一致。配備前バックアップ `ChatPanelPlus-dist-c30-predeploy-backup-20261121-220527-c5308142b8dd48208b4c600962dee589` 11/11一致後、登録済み`dist/`へ`pnpm build` exit 0。Manifest V3/version 0.1.5、必須6ファイル・参照整合、C12/C30 bundle markerを確認。Chrome C30再試験はNOT_RUN。
-- Phase 6 UI code commit `3aca9ca05b52b0ca4232aee3b80d72dae6f62f70`: 全552/552 PASS、Phase6/Bridge/音声/統計focused tests 34/34 PASS、typecheck/lint PASS、サイズ検査200 files PASS。隔離したソースコピーの全テスト前後でlive `dist/` 11ファイルの相対path・size・SHA-256が一致。今回のコードは登録済み`dist/`へbuild・配備しておらず、Chrome reload・実機表示確認もしていない。running_only server APIは未接続で、実行中件数は`—`。
+- Phase 6 UI code commit `3aca9ca05b52b0ca4232aee3b80d72dae6f62f70`: 全552/552 PASS、Phase6/Bridge/音声/統計focused tests 34/34 PASS、typecheck/lint PASS、サイズ検査200 files PASS。隔離ソースコピーでの全テスト前後、live `dist/` 11ファイルの相対path・size・SHA-256が一致。配備前バックアップ `D:\weito\Documents\src\codexapp\ChatPanelPlus-dist-phase6-predeploy-backup-20261122-012236-b904e2364297495daf438482a97522f8` は11/11一致後、`pnpm build` exit 0で登録済みrepo直下`dist/`へ配備。配備後11ファイル、Manifest V3/version 0.1.5、必須6ファイル、HTML/CSS参照5件、Phase6 bundle marker 10/10を確認。変更pathは`content.js`のみ。SHA-256一覧はPhase6仕様書に記録。Chrome reload・実機表示確認はNOT_RUN。running_only server APIは未接続で、実行中件数は`—`。
 - Phase 5はこのチェックリスト作成のみでコードを変更していないため、追加build・dist配備は不要。Chrome実機受入は**NOT_RUN**。
