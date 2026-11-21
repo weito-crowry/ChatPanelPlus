@@ -7,7 +7,7 @@
 | 0 調査・計画 | COMPLETE | `63a48805601460a5d8e5a07d7cf3b66e8c28bf7e` | 計画・監査docs。typecheck/lint PASS、全テストは未実施。 |
 | 1 UIとコアの分離 | ACCEPTED | `efe5b26aa3a37cab7db94c7c6d2fe0969f099e1b` | 496/496、typecheck/lint PASS。ユーザーのChrome動作確認報告でPhase全体PASS。項目別の結果は未報告。 |
 | 2 3画面構成 | AUTO_ACCEPTED / CHROME_SMOKE_DEFERRED | 実装 `4eb037a3fa04ddcb47afb1bc724b81d296fa19ec`、受入記録 `5d5cfce054c3f14b19eed456311b3bddded1874c` | 501/501、typecheck/lint PASS。登録済み `dist/` へ `pnpm build` 済み。Chrome実機項目はPhase 5へ延期。 |
-| 3 会話別UI状態・タブ別ミュート | 自動検証PASS / 配備記録保留 | 実装コミット作成後に記録 | 隔離全テスト、typecheck、lint PASS。配備とChrome実機項目は後続へ記録する。仕様未決定事項は受入docsに列挙。 |
+| 3 会話別UI状態・タブ別ミュート | AUTO_ACCEPTED / CHROME_SMOKE_DEFERRED | 実装 `132218761d66a566c1e91d2831a5d292ffa6aa74` | 518/518、typecheck/lint PASS。登録済み `dist/` を `pnpm build` exit 0で更新。Chrome操作は未実施。 |
 
 ## 継続中
 

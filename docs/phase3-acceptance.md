@@ -6,7 +6,10 @@
 - 基準: Phase 2 全テスト501/501 PASS。Phase 3変更後は隔離コピーで `pnpm test` を実行し、518/518 PASSを確認した。
 - `pnpm typecheck`: PASS。`pnpm lint`: PASS（サイズ検査を含む）。
 - 全テストはrepoの `dist/` を除外した一時コピーで実行し、`node_modules` のみrepoからリンクした。実行前後でライブ `dist/` の11ファイルの相対パス・サイズ・SHA-256が一致した。
-- Phase 3実装コミットと登録済み `dist/` への直接ビルド・配備記録は、検証完了後に追記する。
+- Phase 3実装コミット: `132218761d66a566c1e91d2831a5d292ffa6aa74`。
+- 登録済みrepo直下 `dist/` へ `pnpm build` で直接配備。終了コード0、Manifest V3/version `0.1.5`、必須6ファイル、manifest/HTML参照、Phase 3ミュートUI文字列を確認した。配備後11ファイル。
+- 配備前にrepo兄弟 `ChatPanelPlus-dist-phase3-predeploy-backup-20261121-115030-360-81eb8352` へ全ファイルを複製し、11ファイルの相対パス・サイズ・SHA-256一致を確認。照合用一覧も兄弟の `.sha256.txt` に保存した。
+- ビルド後もbranch/HEADは不変、Git clean。Chromeの再読み込み・操作は行っていない。
 
 ## 変更した保存境界
 
