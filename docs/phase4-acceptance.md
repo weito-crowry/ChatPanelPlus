@@ -2,12 +2,19 @@
 
 ## 自動受入結果
 
-- 状態: **自動検証PASS／dist配備待ち**。登録済みdist配備が成功したら自動受入を確定する。Chrome実機操作はPhase 5の統合チェックリストへ延期し、未実施項目をPASSとしていない。
+- 状態: **PARTIAL／自動検証・配備PASS、総保持方針とChrome実機確認は保留**。未実施項目をPASSとしていない。
 - Phase 3の全テスト518件を基準に、Phase 4変更後は隔離コピーで全テスト527/527 PASS（9件追加）。Bridge関連の焦点テストは39/39 PASS。
 - `pnpm typecheck`: PASS。`pnpm lint`: PASS（500行／32 KiB検査を含む）。`git diff --check`: PASS。
 - 全テストは`dist/`を除いた一時ソースコピーで実行し、`node_modules`のみリンクした。実行前後で登録済みrepo直下`dist/`の11ファイルについて相対パス・サイズ・SHA-256が一致した。
 - MCP APIを追加せず、既存Chrome runtime messageと共有watch/event保存形式を内部拡張した。
-- 配備前記録。実装コミット後に、repo直下の登録済み`dist/`をバックアップ・全件ハッシュ照合してから`pnpm build`で更新し、配備結果をこの記録へ追記する。
+
+## 登録済みdistへの配備記録
+
+- Phase 4実装コミット: `f321cf50f6f81a2fd38975dda79a8e5d1a0cff26`。
+- repo直下のChrome登録済み`dist/`へ`pnpm build`で直接配備、exit code 0。`pnpm deploy:chrome`は使用していない。
+- 配備前バックアップ（repo兄弟）: `ChatPanelPlus-dist-phase4-predeploy-backup-20261121-122238-938-761563`。11ファイルすべての相対パス・サイズ・SHA-256が配備前`dist/`と一致し、照合一覧は隣接する`.sha256.txt`に保存した。
+- 配備後は11ファイル。Manifest V3、version `0.1.5`、必須6ファイル、Manifest/HTML参照、Phase 4のowner conflict・終了通知確認表示を確認した。Phase 3バックアップから`background.js`と`content.js`が更新された。
+- branch/HEADは実装commitから不変、Git clean。Chrome reloadは未実施。実機確認はPhase 5へ延期。
 
 ## 変更した境界
 
