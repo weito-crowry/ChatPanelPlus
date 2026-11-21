@@ -16,6 +16,13 @@
 - 配備後は11ファイル。Manifest V3、version `0.1.5`、必須6ファイル、Manifest/HTML参照、Phase 4のowner conflict・終了通知確認表示を確認した。Phase 3バックアップから`background.js`と`content.js`が更新された。
 - branch/HEADは実装commitから不変、Git clean。Chrome reloadは未実施。実機確認はPhase 5へ延期。
 
+### 最終レビュー修正の配備
+
+- 修正commit: `048953c3bd44298a9261048209c433eb9acc2d40`。登録済みrepo直下`dist/`へ`pnpm build`を実行し、exit code 0。`pnpm deploy:chrome`は使用していない。
+- 配備前バックアップ: `ChatPanelPlus-dist-phase4-review-predeploy-backup-20261121-131345-babd0e04`。11/11ファイルの相対path・size・SHA-256が一致。完全manifestは隣接する`.manifest.json`へ保存した。
+- 配備後11ファイル。Manifest V3、version `0.1.5`、必須6ファイル、Manifest/HTMLの7参照、ACK部分結果文言・conversation state key・background ACK handler markerを確認。配備前から変更したartifactは`content.js`の1/11件。全配備後hashは隣接するpostdeploy manifestに保存した。
+- HEADは修正commit、Git clean。Chrome reload・実画面操作は未実施。ユーザーの最終Chrome受入に残す。
+
 ## 変更した境界
 
 - 監視開始時にbackgroundが信頼済みsenderのtab IDと検証済みconversation IDをownerとして記録する。同一watch identityのownerは単一・不変。別会話からの重複開始はowner conflict、owner変更は解除後の再登録とする。
@@ -43,7 +50,7 @@
 
 ## 最終レビュー修正（2026-11-21）
 
-- この修正は初回Phase 4配備の後に追加した。修正commit後、登録済みrepo直下`dist/`を新しい兄弟バックアップへ照合してから再配備する。
+- この修正は初回Phase 4配備の後に追加し、新規兄弟バックアップの全件hash照合後に登録済み`dist/`へ配備した（上記記録）。
 - **未確認event 129件以上のACK:** UIでowner会話に表示中のevent IDを一度snapshotし、最大128件ずつ重複除外・直列送信する。部分失敗では成功応答件数を示して一覧を再取得し、再試行可能な未確認分を残す。SPA route変更時は次batchを送らない。backgroundのsender/owner認可、冪等ACK、event ID単位のrace保護は維持した。
 - **会話別B/C選択:** 監視watch identityと終了event IDを既存versioned conversation stateへ追加。同じconversationの複数Chrome tabで共有し、別conversationでは分離する。schemaVersion 1の旧状態は新項目を`null`補完し、owner一致の保存済み一覧に存在しない選択は解除する。Aの一般thread探索選択とは別状態。最終回答本文は永続化せず、event ownerと現在routeの一致を従来どおり要求する。
 - 自動確認: 129/256件batch、実background handler上限、途中失敗、新規event並行発生、route中止、owner認可、conversation A/B選択分離、旧schema互換を含む539/539 PASS。`pnpm typecheck`、`pnpm lint`、500行／32 KiB検査もPASS。

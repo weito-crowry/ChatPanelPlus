@@ -56,5 +56,5 @@
 
 - Phase 2: 501/501 PASS、typecheck/lint PASS、登録済みrepo直下`dist/`へ配備済み。Phase 2 Chrome確認は延期。
 - Phase 3: 518/518 PASS、typecheck/lint PASS、登録済み`dist/`へ配備済み。live `dist/`は隔離テスト前後で11ファイルの相対path・size・SHA-256一致。
-- Phase 4初回: 527/527 PASS。最終レビュー修正後: 539/539 PASS、修正焦点suite 29/29 PASS、typecheck/lint PASS、隔離テスト前後のlive `dist/` 11ファイルSHA-256 manifest一致。既存のPhase 4配備記録は前回commitの結果。今回の修正版配備はレビュー修正commit後に別バックアップを取得して行う。総保持方針の判断は未完了。
+- Phase 4初回: 527/527 PASS。最終レビュー修正commit `048953c3bd44298a9261048209c433eb9acc2d40` 後: 539/539 PASS、修正焦点suite 29/29 PASS、typecheck/lint PASS、隔離テスト前後のlive `dist/` 11ファイルSHA-256 manifest一致。新規兄弟バックアップ11/11一致後に`pnpm build` exit 0で登録済み`dist/`を更新し、配備後11ファイル・Manifest V3/version 0.1.5・必須6ファイル・7参照・hashを確認。Chrome reload・実機受入は**NOT_RUN**。総保持方針の判断は未完了。
 - Phase 5はこのチェックリスト作成のみでコードを変更していないため、追加build・dist配備は不要。Chrome実機受入は**NOT_RUN**。
