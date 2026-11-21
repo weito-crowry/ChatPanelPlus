@@ -57,7 +57,7 @@ Phase 6では通常、Bridge詳細展開、最小化の3状態を扱う。白〜
 
 ## Phase 6受入
 
-最終Chrome受入のC31以降を本仕様の受入項目とする。先行Phase6 UIのdist配備後も通常／展開／最小化・tooltip・responsiveの実機報告がなくC31–C36は`NOT_RUN`。今回のrunning_only CPP実装はcommit `4cee26e980e2bfaf32e0f2a299c86a0c4082073d`・自動検証済みだがdist未配備で、Bridgeサービスも未反映のためC38を含む実機確認は後日。別項目C37は2026-11-22のユーザー報告でfinal-answer取得失敗となった。native `codex_threads(include_history=true)`の別経路応答には同じTurnの`agentMessage`/`final_answer` itemがあるとの確認がある一方、CPP失敗時の応答は未取得で原因未特定。C37は未解決のままとし、C12/C30等の既存判定も変更しない。
+最終Chrome受入のC31以降を本仕様の受入項目とする。先行Phase6 UIのdist配備後も通常／展開／最小化・tooltip・responsiveの実機報告がなくC31–C36は`NOT_RUN`。今回のrunning_only CPP実装はcommit `4cee26e980e2bfaf32e0f2a299c86a0c4082073d`・自動検証済みだがdist未配備で、Bridgeサービスも未反映のためC38を含む実機確認は後日。別項目C37は2026-11-22のユーザー報告でfinal-answer取得失敗となった。native `codex_threads(include_history=true)`の別経路応答には同じTurnの`agentMessage`/`final_answer` itemがあるとの確認がある一方、CPP失敗時の応答は未取得で原因未特定。C37は未解決のままとし、C12/C30等の既存判定も変更しない。04:00 JSTの再発報告では、03:41完了Turnの終了event検出と音声は成功したがCPPはno-final-answer。後刻native historyの41 itemsにはphase=final_answerのagentMessageがなく、`codex_status.latest_agent_message`には最終報告があった。前回01:29対象Turnのnative historyにはfinal_answer itemがあった。CPP失敗時のraw応答は未取得で、原因は未特定。
 
 ## 配備記録（2026-11-22）
 
