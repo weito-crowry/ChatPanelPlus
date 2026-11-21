@@ -41,7 +41,7 @@
 | C27 大量ACKと部分失敗 | owner会話に129件以上（可能なら256件）の未確認終了eventがあるテスト環境で一括確認する。通信失敗を挿入できる場合は2回目のbatchを失敗させ、その間に新eventを発生させる。 | 最大128 IDsずつ直列処理し、全件成功時は未確認数が減る。部分失敗は応答件数と一覧再取得を表示し、成功済み以外を未確認のまま残す。操作開始時snapshot外の新eventは確認済みにしない。 | NOT_RUN | 自動では129/256、途中失敗、新event並行を検証済み |
 | C28 B/C選択の会話別復元 | 会話AでB監視対象とC終了eventを選ぶ。同じ会話の別tab/reload、別会話B、A thread探索の選択をそれぞれ確認する。watch解除またはevent一覧からの消失後も確認する。 | B/C選択だけが同一conversation ID内で共有・復元される。A探索選択とは独立し、別会話には漏れない。owner一覧にない選択は解除され、最終回答本文は保存・越境表示されない。 | NOT_RUN | 自動ではconversation state、旧schema、owner filterを検証済み |
 | C29 実行中優先・読み込み済みfilter | thread一覧を更新し、確定実行中・推定実行中・不明・非実行中を含む状態を確認する。checkboxをON/OFFし、次ページ取得前後も見る。選択中threadがfilterで隠れるケースも確認する。 | 確定中（`in_progress`／`running`）が先頭、推定中はその次に推定ラベル付きで表示。各群は有効な`updatedAt`新しい順、欠損/不正時刻は末尾で安定順。不明とlast_turnだけでは実行中扱いしない。filterは初期OFF、ONでは読み込み済みの確定/推定のみ表示し、対象範囲を明記。次ページは常に取得可能で再取得後に順位再評価。空結果・未読込・失敗を区別し、非表示選択と監視操作を維持する。 | NOT_RUN | ページ外threadの状態は本APIでは不明。自動:追加4ロジック＋5 UI契約テスト、全548/548 PASS。Chromeで再確認待ち。 |
-| C30 スピーカー操作の統合 | Optionsで全体音声をON/OFFし、統計隣のスピーカー1個を操作して同一会話のtab別muteを確認する。 | パネルのスピーカーは会話別muteだけを切替え、共有の有効化・音量等はOptionsに残る。全体OFFはボタン状態/ARIA/titleで示し、会話別mute値を変更しない。 | FAIL（修正前の実機指摘）／修正後再確認NOT_RUN | 2026-11-21ユーザー実機報告：会話統計の隣に同じ見た目の全体音声／会話別muteボタンが2個並ぶ。 |
+| C30 スピーカー操作の統合 | Optionsで全体音声をON/OFFし、統計隣のスピーカー1個を操作して同一会話のtab別muteを確認する。 | パネルのスピーカーは会話別muteだけを切替え、共有の有効化・音量等はOptionsに残る。全体OFFでも会話別mute操作を使える。iconは実効消音（全体OFFまたは会話別mute中）を示し、ARIA/titleは全体状態と会話別mute状態を別々に説明する。`aria-pressed`は会話別muteだけを表し、全体設定やmute値を相互変更しない。 | FAIL（修正前の実機指摘）／修正後再確認NOT_RUN | 2026-11-21ユーザー実機報告：会話統計の隣に同じ見た目の全体音声／会話別muteボタンが2個並ぶ。修正commit `82c0dd7fc131dec320a47c4cd16b9c8a22e6b454`、自動検証・dist配備は完了。Chrome再確認待ち。 |
 
 ## 判断待ち・実装上の保留
 
@@ -60,4 +60,5 @@
 - Phase 3: 518/518 PASS、typecheck/lint PASS、登録済み`dist/`へ配備済み。live `dist/`は隔離テスト前後で11ファイルの相対path・size・SHA-256一致。
 - Phase 4初回: 527/527 PASS。最終レビュー修正commit `048953c3bd44298a9261048209c433eb9acc2d40` 後: 539/539 PASS、修正焦点suite 29/29 PASS、typecheck/lint PASS、隔離テスト前後のlive `dist/` 11ファイルSHA-256 manifest一致。新規兄弟バックアップ11/11一致後に`pnpm build` exit 0で登録済み`dist/`を更新し、配備後11ファイル・Manifest V3/version 0.1.5・必須6ファイル・7参照・hashを確認。Chrome reload・実機受入は**NOT_RUN**。総保持方針の判断は未完了。
 - C12 thread表示 follow-up commit `c528acd37e9b0d907175f4e19019c6913f027eca`: 全548/548 PASS、typecheck/lint PASS。隔離テスト前後でlive `dist/` 11/11 hash一致。新規兄弟バックアップの全件照合後に`pnpm build` exit 0、Manifest V3/version 0.1.5、必須6ファイル・参照・C12表示markerを確認。Chrome C12再試験はNOT_RUN。
+- C30 speaker UI follow-up commit `82c0dd7fc131dec320a47c4cd16b9c8a22e6b454`: 全548/548 PASS、typecheck/lint PASS。隔離テスト前後でlive `dist/` 11/11 hash一致。配備前バックアップ `ChatPanelPlus-dist-c30-predeploy-backup-20261121-220527-c5308142b8dd48208b4c600962dee589` 11/11一致後、登録済み`dist/`へ`pnpm build` exit 0。Manifest V3/version 0.1.5、必須6ファイル・参照整合、C12/C30 bundle markerを確認。Chrome C30再試験はNOT_RUN。
 - Phase 5はこのチェックリスト作成のみでコードを変更していないため、追加build・dist配備は不要。Chrome実機受入は**NOT_RUN**。
