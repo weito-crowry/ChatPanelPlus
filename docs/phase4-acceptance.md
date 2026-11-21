@@ -56,3 +56,12 @@
 - 自動確認: 129/256件batch、実background handler上限、途中失敗、新規event並行発生、route中止、owner認可、conversation A/B選択分離、旧schema互換を含む539/539 PASS。`pnpm typecheck`、`pnpm lint`、500行／32 KiB検査もPASS。
 - 初回全回帰の538/539では`PanelView`が新しい選択propsを`CodexBridgeList`へ渡す契約テストが旧JSX形を固定して失敗した。テストを新props（watch/event selectionとcallbackを含む）へ更新し、UI契約を維持した上で全539 PASSを確認した。機能テストを削除・緩和していない。
 - 総event保持数上限は引き続き未決定で、未確認eventの保持方針を変更していない。Chrome実機の大量ACK、途中通信失敗、同一会話別tab／SPA／reload後の選択復元は未実施のまま最終チェックリストに残す。
+
+## C12 thread表示 follow-up（2026-11-21）
+
+- ユーザーのChrome実機指摘では、thread一覧で実行中が先頭に表示されなかった（修正前FAIL）。修正commit: `c528acd37e9b0d907175f4e19019c6913f027eca`。
+- 取得済みthreadだけを、`currentExecution.state`が`in_progress`／`running`の確定実行中、`estimated_running`の推定、その他の順で表示する。各群は有効な`updatedAt`新しい順、日時欠損・不正は安定した元順で末尾。`lastTurn.status`だけでは実行中と判定しない。配列・選択・監視・ページングは変更しない。
+- 「実行中のみ」checkboxは初期OFF。ONでも確定／推定を表示し、対象は読み込み済み一覧のみと説明する。次ページ取得を保ち、選択中threadや監視状態を変更しない。新API・自動fetchは追加していない。
+- 全548/548 PASS（C12追加分は4ロジック＋5 UI契約テスト）、`pnpm typecheck`・`pnpm lint` PASS。隔離テスト前後でlive `dist/`の11ファイル相対path・size・SHA-256一致を確認した。
+- 配備前バックアップ: `ChatPanelPlus-dist-c12-predeploy-backup-20261121-215034-e7f2d76cca0346e5a440171dffb49bda`（11/11照合PASS）。登録済みrepo直下`dist/`へ`pnpm build`を実行しexit 0。配備後11ファイル、Manifest V3/version `0.1.5`、必須6ファイル、参照整合とC12表示markerを確認。`pnpm deploy:chrome`は未使用。
+- Chrome reloadとC12の修正後実機再確認はNOT_RUN。C12受入は再確認待ち。event総保持数上限が未決定のためPhase 4は引き続きPARTIAL。
