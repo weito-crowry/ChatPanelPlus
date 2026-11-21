@@ -84,5 +84,5 @@ test('Bridge件数は既存の900pxパネルに合わせ、狭い幅で1列へ�
   assert.match(styles, /\.panel-bridge-summary-list\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s);
   assert.match(styles, /@container\s*\(max-width:\s*640px\)[\s\S]*?\.panel-bridge-summary-list\s*\{[^}]*grid-template-columns:\s*1fr/s);
   assert.match(main, /import panelMainViewsStyles from '\.\/panel-main-views\.css\?inline'/);
-  assert.match(main, /style\.textContent = `\$\{panelStyles\}\\n\$\{panelMainViewsStyles\}\\n\$\{codexBridgeWatchStyles\}`/);
+  assert.match(main, /style\.textContent = `\$\{panelStyles\}\\n\$\{panelMainViewsStyles\}\\n\$\{codexBridgeWatchStyles\}\\n\$\{codexBridgeThreadFilterStyles\}`/);
 });

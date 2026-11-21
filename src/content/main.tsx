@@ -7,6 +7,7 @@ import { startPanelLifecycle, type PlacementTarget } from './lifecycle';
 import panelStyles from './panel.css?inline';
 import panelMainViewsStyles from './panel-main-views.css?inline';
 import codexBridgeWatchStyles from './codexbridge-watch.css?inline';
+import codexBridgeThreadFilterStyles from './codexbridge-thread-filter.css?inline';
 
 const HOST_ID = 'chatpanelplus-extension-root';
 
@@ -36,7 +37,7 @@ startPanelLifecycle({
     host.setAttribute('aria-label', 'ChatPanelPlus');
     const shadowRoot = host.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
-    style.textContent = `${panelStyles}\n${panelMainViewsStyles}\n${codexBridgeWatchStyles}`;
+    style.textContent = `${panelStyles}\n${panelMainViewsStyles}\n${codexBridgeWatchStyles}\n${codexBridgeThreadFilterStyles}`;
     const appRoot = document.createElement('div');
     shadowRoot.append(style, appRoot);
     createRoot(appRoot).render(

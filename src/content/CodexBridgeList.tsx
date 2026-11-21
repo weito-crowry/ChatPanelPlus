@@ -13,6 +13,7 @@ import {
   type CodexBridgeThreadStatus,
 } from '../shared/codexbridge-mcp-protocol.ts';
 import { CodexBridgeRequestTracker, mergeCodexBridgeThreads } from './codexbridge-request-tracker.ts';
+import { classifyCodexBridgeThreadActivity, filterCodexBridgeThreads } from './codexbridge-thread-order.ts';
 import { CodexBridgeWatchPanel } from './CodexBridgeWatchPanel.tsx';
 import type { ConversationPanelWatchSelection } from '../shared/conversation-panel-state-repository.ts';
 
@@ -56,6 +57,7 @@ function stateLabel(value: string | null | undefined): string {
   if (!value) return '不明（未取得）';
   if (value === 'not_loaded') return '未読込';
   if (value === 'unknown') return '不明';
+  if (value === 'in_progress' || value === 'running') return '実行中';
   if (value === 'estimated_running') return '実行中の推定';
   return value;
 }
@@ -112,6 +114,7 @@ export function CodexBridgeList({
   const [threadsLoaded, setThreadsLoaded] = useState(false);
   const [threadsBusy, setThreadsBusy] = useState(false);
   const [threadsError, setThreadsError] = useState('');
+  const [runningOnly, setRunningOnly] = useState(false);
   const [selected, setSelected] = useState<CodexBridgeThread | null>(null);
   const [selectedMissing, setSelectedMissing] = useState(false);
   const [status, setStatus] = useState<CodexBridgeThreadStatus | null>(null);
@@ -279,6 +282,7 @@ export function CodexBridgeList({
   const selectedStatus = selected && status?.targetId === selected.targetId && status.threadId === selected.id ? status : null;
   const selectedTarget = selected ? targets.find((target) => target.id === selected.targetId) : null;
   const selectedListRow = selected && threadsLoaded && !selectedMissing ? selected : null;
+  const displayedThreads = filterCodexBridgeThreads(threads, runningOnly);
 
   return (
     <section className="codex-bridge" aria-label="CodexBridge一覧">
@@ -329,13 +333,26 @@ export function CodexBridgeList({
               </button>
             )}
           </div>
+          <div className="codex-bridge-running-filter">
+            <label>
+              <input type="checkbox" checked={runningOnly}
+                onChange={(event) => setRunningOnly(event.currentTarget.checked)}
+                aria-label="読み込み済みthreadを実行中だけ表示"
+                aria-describedby="codex-bridge-running-filter-note" />
+              <span>実行中のみ</span>
+            </label>
+            <small id="codex-bridge-running-filter-note">読み込み済みthreadが対象です。次ページを取得すると再判定します。</small>
+          </div>
           {threadsError && <p className="codex-bridge-error" role="alert">{threadsError}</p>}
           {!threadsLoaded && <p className="codex-bridge-empty">thread一覧は未読込です。</p>}
           {threadsLoaded && threads.length === 0 && <p className="codex-bridge-empty">threadはありません。状態確認は行われていません。</p>}
-          {threads.length > 0 && (
+          {threadsLoaded && threads.length > 0 && runningOnly && displayedThreads.length === 0
+            && <p className="codex-bridge-empty">読み込み済みthreadに実行中または推定実行中はありません。</p>}
+          {displayedThreads.length > 0 && (
             <ul className="codex-bridge-thread-list" aria-label="thread一覧">
-              {threads.map((thread) => {
+              {displayedThreads.map((thread) => {
                 const isSelected = selected?.targetId === thread.targetId && selected.id === thread.id;
+                const activity = classifyCodexBridgeThreadActivity(thread);
                 return (
                   <li key={`${thread.targetId}:${thread.id}`}>
                     <button type="button" className={`codex-bridge-thread${isSelected ? ' is-selected' : ''}`} onClick={() => {
@@ -347,6 +364,7 @@ export function CodexBridgeList({
                       setStatusError('');
                     }}>
                       <span>{thread.title ?? thread.preview ?? thread.id}</span>
+                      {activity === 'estimated' && <small className="codex-bridge-thread-estimated">実行中の推定</small>}
                       <small>current_execution: {observationLabel(thread.currentExecution)}</small>
                       <small>last_turn: {lastTurnLabel(thread.lastTurn)} · needs_attention: {attentionLabel(thread.needsAttention)}</small>
                     </button>

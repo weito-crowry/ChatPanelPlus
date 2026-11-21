@@ -1,0 +1,4 @@
+.codex-bridge-running-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; }
+.codex-bridge-running-filter label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.codex-bridge-running-filter input { margin: 0; accent-color: #3157a4; }
+.codex-bridge-running-filter small, .codex-bridge-thread-estimated { color: var(--text-secondary, #565869); line-height: 1.4; }

@@ -23,7 +23,7 @@
 | C09 Codex作業中mode | A/Bと同一会話別tabで既存作業中状態を切替・reloadする。 | 既存のtab×conversation保存に従い、パネルUI状態・音声mute変更が干渉しない。 | NOT_RUN | |
 | C10 mute分離 | 同一会話を2つのChrome tabで開き、片方だけmute。続いて別会話でも切替。 | muteはChrome tab ID＋conversation ID単位。同じ会話の別tabと別会話の状態を上書きしない。 | NOT_RUN | |
 | C11 共通音声設定 | Optionsで共通音声有効化、音量、音色、出力先を確認・変更し、別会話へ移動する。 | これらはブラウザ共通のまま。会話別muteは共有有効化を変更しない。実効可聴条件は共有ONかつowner mute OFF。 | NOT_RUN | |
-| C12 Bridge discovery | 会話A/BでBridge詳細のthread候補を確認する。 | Aの一般Codex thread探索は共有でよい。候補に監視のowner会話や終了件数を混ぜない。 | NOT_RUN | |
+| C12 Bridge discovery | 会話A/BでBridge詳細のthread候補を確認し、実行状態順とowner分離を再確認する。 | Aの一般Codex thread探索は共有でよい。読み込み済みの確定実行中が先頭、推定中が次、その他は後。候補に監視owner会話や終了件数を混ぜない。 | FAIL（修正前の実機指摘）／修正後再確認NOT_RUN | 2026-11-21ユーザー実機報告：実行中threadが先頭でなかった。 |
 | C13 owner監視と表示分離 | 会話Aからthreadを監視登録し、Bを開いて同じthreadを確認する。Aの別tabも開く。 | BはAのwatch名・件数・event有無を一切表示しない。Aの別tabはAのwatchとeventを共有する。登録元muteはAの元tab設定を使う。 | NOT_RUN | |
 | C14 owner conflictと履歴帰属 | Aで登録済みの同一watch identityをBから登録しようとし、Aで解除後Bから再登録する。 | Bの重複登録はowner conflictとして拒否。解除・再登録後も過去eventの所有会話は変更しない。 | NOT_RUN | |
 | C15 件数とTurn重複 | owner会話で同じthreadの複数terminal Turn、重複refresh、他会話のwatchを含む状況を作る。 | 「監視中」は現在会話のwatch数。「監視スレッドが終了した未確認」は未確認Turn eventを持つ一意watch identity数。別会話・ownerlessは除外。 | NOT_RUN | |
@@ -40,6 +40,7 @@
 | C26 deployコマンドの宛先 | 配備手順を記録で確認する。`pnpm deploy:chrome`は実行しない。 | 実際の登録元はrepo直下`dist/`。現行`deploy:chrome`は兄弟Probeへコピーする宛先不一致を未修正として認識し、今後も登録元へは`pnpm build`を使う。 | NOT_RUN | スクリプト修正は本Phase外 |
 | C27 大量ACKと部分失敗 | owner会話に129件以上（可能なら256件）の未確認終了eventがあるテスト環境で一括確認する。通信失敗を挿入できる場合は2回目のbatchを失敗させ、その間に新eventを発生させる。 | 最大128 IDsずつ直列処理し、全件成功時は未確認数が減る。部分失敗は応答件数と一覧再取得を表示し、成功済み以外を未確認のまま残す。操作開始時snapshot外の新eventは確認済みにしない。 | NOT_RUN | 自動では129/256、途中失敗、新event並行を検証済み |
 | C28 B/C選択の会話別復元 | 会話AでB監視対象とC終了eventを選ぶ。同じ会話の別tab/reload、別会話B、A thread探索の選択をそれぞれ確認する。watch解除またはevent一覧からの消失後も確認する。 | B/C選択だけが同一conversation ID内で共有・復元される。A探索選択とは独立し、別会話には漏れない。owner一覧にない選択は解除され、最終回答本文は保存・越境表示されない。 | NOT_RUN | 自動ではconversation state、旧schema、owner filterを検証済み |
+| C29 実行中優先・読み込み済みfilter | thread一覧を更新し、確定実行中・推定実行中・不明・非実行中を含む状態を確認する。checkboxをON/OFFし、次ページ取得前後も見る。選択中threadがfilterで隠れるケースも確認する。 | 確定中（`in_progress`／`running`）が先頭、推定中はその次に推定ラベル付きで表示。各群は有効な`updatedAt`新しい順、欠損/不正時刻は末尾で安定順。不明とlast_turnだけでは実行中扱いしない。filterは初期OFF、ONでは読み込み済みの確定/推定のみ表示し、対象範囲を明記。次ページは常に取得可能で再取得後に順位再評価。空結果・未読込・失敗を区別し、非表示選択と監視操作を維持する。 | NOT_RUN | ページ外threadの状態は本APIでは不明。自動では優先度、merge、filter、checkbox/ARIA、選択維持を検証 |
 
 ## 判断待ち・実装上の保留
 
