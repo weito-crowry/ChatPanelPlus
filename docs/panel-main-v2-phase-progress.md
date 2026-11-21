@@ -26,3 +26,5 @@
 - Optionsの「既定値に戻す」が会話別パネル表示状態へ及ぼす範囲。
 - Bridge event保持方針。確認済み履歴は最新128件、未確認eventは件数保護のため保持する。総保持件数上限は未決定で、Phase 4をPARTIALとする。
 - Bridgeから取得できる最終回答本文の完全性。
+- CodexBridge `codex_threads`のserver-side running-first optionはこのCPP turnでは実装しない。active priority-listと通常paginationの併用、重複排除、cursor、remote targetをBridge側の別設計として検討する。
+- Phase 6の画像ベース外観調整は未実施。画像referenceの詳細を確認するまで見た目を推測しない。

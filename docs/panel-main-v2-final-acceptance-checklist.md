@@ -52,6 +52,8 @@
 | Options「既定値に戻す」 | 新しい会話別panel stateへの適用範囲は未決定。既存reset挙動は変更していない。 | 新規stateをreset対象に含める範囲を決める。 |
 | final-answer本文の完全性 | Bridgeのhistoryにfinal itemがない実例があり、完全性は未確認。推測選択はしない。 | Bridgeが正確な最終回答を返す条件と、取得不足時の受入方法を確認する。 |
 | ownerless legacy保守 | 通常panelに表示せず、ownerを推定しない。旧watchの解除・移行の管理導線は未設計。 | 他会話へ情報を漏らさない管理方法を決める。 |
+| CodexBridge server-side running-first | CPPは現在の取得済みページだけを並べ替える。通常の`codex_threads`ページ外の状態は不明で、このCPP turnではserver-side optionを追加していない。 | Bridge側でactive priority-listと通常paginationを併用する案を別途設計する。重複除外、cursor、remote targetを検討する。 |
+| Phase 6の画像ベース外観 | 今回はPhase 1〜4の機能構造を維持し、画像案に合わせる変更をしていない。画像referenceの詳細は未確認。 | referenceを確認してからReact/CSS外観を設計する。見た目を推測して変更しない。 |
 | 実機受入 | Phase 2〜5のChrome操作・実音声・実ジョブ・復旧は未実施。 | 本書の項目をユーザーが同一Chrome環境で実施し、証跡と判定を記録する。 |
 
 ## 自動検証の既知記録
