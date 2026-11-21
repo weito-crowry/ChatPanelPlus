@@ -28,3 +28,4 @@
 - Bridgeから取得できる最終回答本文の完全性。
 - CodexBridge `codex_threads`のserver-side running-first optionはこのCPP turnでは実装しない。active priority-listと通常paginationの併用、重複排除、cursor、remote targetをBridge側の別設計として検討する。
 - Phase 6の画像ベース外観調整は未実施。画像referenceの詳細を確認するまで見た目を推測しない。
+- Phase 6表示名fallback/ID tooltipと画面構成を`docs/panel-main-phase6-visual-spec.md`に記録。C31–C36を追加し、すべてNOT_RUN。仕様文書のみで、Phase 6 UIは未実装。

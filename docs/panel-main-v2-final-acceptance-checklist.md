@@ -5,6 +5,7 @@
 - 対象はWindows 11上の既存Chromeプロファイルと、拡張機能に登録済みのrepo直下`dist/`。本チェックリスト作成時にChrome reload・画面操作はしていない。
 - Phase 1は2026-11-21にユーザーから「Chrome側で再読み込みし、動いた」と報告され、Phase全体の受入PASSを記録済み。個々の操作結果は未報告なので、本書の行を遡ってPASSにはしない。
 - Phase 2〜4の自動テスト・型検査・Lint・配備は各Phase記録を参照する。手動項目は行ごとの結果を使い、ユーザー報告で確認された項目だけPASSとする。
+- Phase 6の画面仕様は`docs/panel-main-phase6-visual-spec.md`に記録した。仕様記録とUI実装は別であり、Phase 6専用C31以降はUIが実装されるまで**NOT_RUN**とする。現行Chromeの実装済み状態を示すものではない。
 - 実施時は同じChromeプロファイルを使い、Phase 5配備後の拡張を手動reloadしてから確認する。各行の結果を`PASS`／`FAIL`／`NOT_RUN`へ更新し、会話本文・秘密値を含めないスクリーンショット、簡潔な操作記録などの証跡を記入する。
 - Bridgeの確認には利用許可のあるテスト用threadを使い、会話IDや本文を記録へ転記しない。自動送信しない。
 
@@ -42,6 +43,12 @@
 | C28 B/C選択の会話別復元 | 会話AでB監視対象とC終了eventを選ぶ。同じ会話の別tab/reload、別会話B、A thread探索の選択をそれぞれ確認する。watch解除またはevent一覧からの消失後も確認する。 | B/C選択だけが同一conversation ID内で共有・復元される。A探索選択とは独立し、別会話には漏れない。owner一覧にない選択は解除され、最終回答本文は保存・越境表示されない。 | NOT_RUN | 自動ではconversation state、旧schema、owner filterを検証済み |
 | C29 実行中優先・読み込み済みfilter | thread一覧を更新し、確定実行中・推定実行中・不明・非実行中を含む状態を確認する。checkboxをON/OFFし、次ページ取得前後も見る。選択中threadがfilterで隠れるケースも確認する。 | 確定中（`in_progress`／`running`）が先頭、推定中はその次に推定ラベル付きで表示。各群は有効な`updatedAt`新しい順、欠損/不正時刻は末尾で安定順。不明とlast_turnだけでは実行中扱いしない。filterは初期OFF、ONでは読み込み済みの確定/推定のみ表示し、対象範囲を明記。次ページは常に取得可能で再取得後に順位再評価。空結果・未読込・失敗を区別し、非表示選択と監視操作を維持する。 | NOT_RUN | ページ外threadの状態は本APIでは不明。自動:追加4ロジック＋5 UI契約テスト、全548/548 PASS。Chromeで再確認待ち。 |
 | C30 スピーカー操作の統合 | Optionsで全体音声をON/OFFし、統計隣のスピーカー1個を操作して同一会話のtab別muteを確認する。 | パネルのスピーカーは会話別muteだけを切替え、共有の有効化・音量等はOptionsに残る。全体OFFでも会話別mute操作を使える。iconは実効消音（全体OFFまたは会話別mute中）を示し、ARIA/titleは全体状態と会話別mute状態を別々に説明する。`aria-pressed`は会話別muteだけを表し、全体設定やmute値を相互変更しない。 | FAIL（修正前の実機指摘）／修正後再確認NOT_RUN | 2026-11-21ユーザー実機報告：会話統計の隣に同じ見た目の全体音声／会話別muteボタンが2個並ぶ。修正commit `82c0dd7fc131dec320a47c4cd16b9c8a22e6b454`、自動検証・dist配備は完了。Chrome再確認待ち。 |
+| C31 Phase 6 B表示名fallback・ID tooltip | Bの監視対象でtitle/nameあり、null、空白、不使用ラベルを用意する。ラベルへmouse hoverし、Tab等でkeyboard focusしてIDを確認する。異なるtarget/ownerでも確認する。 | usableなtitle/nameを主表示。取得不可・空白・不使用ならthread IDを仮主ラベル。全行のhover tooltipでthread IDを表示し、keyboard focusでも説明を取得可能。名前がある行にIDを常時併記しない。内部identity/owner認可は表示名で置換せず、別会話情報を出さない。 | NOT_RUN | Phase 6仕様記録済み。UI未実装。 |
+| C32 Phase 6通常画面とBridge bar | 正式ロード元で通常画面を開き、header、utility、tab、prompt、Bridge barを確認する。Optionsの表示順/非表示/labelも使う。 | 動的project名、Codex作業中、会話別speaker、統計、Options、最小化をheaderに整理。設定済みutility/tab/promptのみ表示。Bridge barに「実行中 N」「監視中 N」「通知 N」。注釈や固定例示buttonをUIに含めない。 | NOT_RUN | Phase 6仕様記録済み。UI未実装。 |
+| C33 Phase 6 Bridge値と未取得 | 会話A/B、複数target、接続中・失敗・未取得、20件ページとrunning_only応答を比較する。 | 実行中はBridge running_only結果の件数。監視中と通知は現在owner会話の既存summary。通知は未確認終了通知を持つ一意watch件数。未取得は`—`と説明し0や20件を全件と誤表示しない。他会話件数を出さない。 | NOT_RUN | running_only backendはCodexBridge別repo依存。新APIなしでの実機連携は未確認。 |
+| C34 Phase 6 Bridge詳細A/B/C | 十分な幅で展開し、A一覧/B選択・監視/C通知・最終回答と技術情報の折りたたみを確認する。 | Aの更新・filter・pagination・machine選択を維持。Bの監視開始/解除とthread identityを維持。Cのowner filter、ACK、最終回答copy/挿入、SPA保護を維持。通常行に診断IDやcwdを並べず、必要時だけ表示する。 | NOT_RUN | Phase 6仕様記録済み。新APIを要する動作は連携後に確認。 |
+| C35 Phase 6 responsive・dark・keyboard | 幅900px/640px付近、ライト/ダーク、Tab/Enter、hover tooltip、focus説明を確認する。 | 3列から2列/縦積みへ変化し横scrollなし。操作とlabelが隠れず、focus ring/ARIA/tooltip説明が使える。 | NOT_RUN | 実機の色・幅・tooltip表示は未確認。 |
+| C36 Phase 6最小化bar | 通常/展開から最小化・復帰し、未取得値、別会話への移動、再読込も確認する。 | 本文とbuttonを隠し1行だけを表示。ChatPanelPlus、既存作業中状態、3つのBridge表示値、復帰操作を保ち、未取得を0とせず他会話データを混ぜない。 | NOT_RUN | Phase 6仕様記録済み。UI未実装。 |
 
 ## 判断待ち・実装上の保留
 
