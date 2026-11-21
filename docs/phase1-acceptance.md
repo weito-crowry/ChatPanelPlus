@@ -2,13 +2,16 @@
 
 ## Current result
 
-- Status: **NEEDS_HUMAN_SMOKE**. The refactor has not been deployed to or reloaded in Chrome.
+- Phase 1 overall acceptance: **PASS**, based on the user's Chrome acceptance report on 2026-11-21.
 - Automated baseline: isolated pnpm test on the pre-change source copy — 495 passed, 0 failed.
 - Changed-source automated suite: isolated pnpm test — 496 passed, 0 failed.
 - Static checks: pnpm typecheck PASS; pnpm lint PASS (including the 500-line / 32 KiB source-size check).
+- Phase 1 implementation commit: `efe5b26aa3a37cab7db94c7c6d2fe0969f099e1b`.
 - The initial 8 changed-source failures were source-structure assertions still reading Panel.tsx. Their assertions now inspect PanelView.tsx and usePanelController.ts while retaining DOM, ARIA, event, and state-flow checks.
-- Live repo-root dist/ SHA-256 file manifest was identical before and after the isolated build/test run.
-- The repo-root dist/ is the live Chrome load source. Phase 1 tests must build only in the isolated source copy and verify the live dist/ manifest before and after.
+- The user confirmed the registered Chrome extension load source is the repository's `dist/`. An earlier `pnpm deploy:chrome` copied to the sibling `ChatPanelPlus-Content-Probe-20261021`; this was the wrong folder for the registered extension. The repository `dist/` was then backed up and rebuilt directly with `pnpm build`; its post-build files and hashes were verified before the user's Chrome reload.
+- On 2026-11-21, the user reported reloading the extension from `dist/`, completing Phase 1 checks, and that it worked. This supports the overall PASS. The report did not provide item-by-item observations, so no individual manual checklist item below is marked PASS.
+- The fixed destination in `scripts/deploy-chrome.mjs` still names the sibling Probe folder; that mismatch is recorded for follow-up and was not changed as part of Phase 1 acceptance.
+- Phase 1's isolated test run kept the live repo-root `dist/` unchanged by comparing its SHA-256 file manifest before and after.
 
 ## Manual checks after an approved Chrome reload
 
@@ -26,4 +29,4 @@ Record each result as PASS, FAIL, or NOT_RUN. Do not treat an unrun browser chec
 
 ## Phase 1 gate
 
-**PENDING** until the required Chrome checks have recorded their outcomes. Phase 2 must not start while this gate is pending.
+**PASS** for Phase 1 overall, based on the user's 2026-11-21 Chrome acceptance report. The unchecked manual items remain unverified individually because the report was not itemized.
