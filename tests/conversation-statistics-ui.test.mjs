@@ -58,7 +58,7 @@ test('詳細小窓はIME中のEscapeを奪わず、画面に合わせて配置�
   assert.match(component, /event\.nativeEvent\.isComposing/);
   assert.match(component, /setDetailsOpen\(false\)/);
   assert.match(panel, /<div className="panel-content" hidden=\{currentViewState\.minimized\}>[\s\S]*?<ConversationStatistics[\s\S]*?answerCompletionSoundEnabled=\{answerCompletionSoundEnabled\}[\s\S]*?answerCompletionSoundId=\{answerCompletionSoundId\}/);
-  assert.match(panelController, /answerCompletionSoundEnabled: soundToggleOptimistic \?\? settings\.answerCompletionSoundEnabled === true/);
+  assert.match(panelController, /answerCompletionSoundEnabled: settings\.answerCompletionSoundEnabled === true/);
   assert.match(panelController, /answerCompletionSoundId: settings\.answerCompletionSoundId \?\? 'tone-660'/);
   assert.match(component, /getBoundingClientRect\(\)/);
   assert.match(component, /findComposerForm/);

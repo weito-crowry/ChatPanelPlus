@@ -4,38 +4,45 @@ import test from 'node:test';
 
 const read = (path) => readFile(new URL(path, import.meta.url), 'utf8');
 
-test('共有音声切替と会話別ミュートは独立し、状態・操作名・フォーカスを持つ', async () => {
-  const [component, panel, controller, styles, baseStyles, muteHook] = await Promise.all([
+test('パネルのスピーカー1個は実効音声状態を示し、会話別muteだけを操作する', async () => {
+  const [component, panel, controller, styles, baseStyles, muteHook, options] = await Promise.all([
     read('../src/content/ConversationStatistics.tsx'),
     read('../src/content/PanelView.tsx'),
     read('../src/content/usePanelController.ts'),
     read('../src/content/panel-main-views.css'),
     read('../src/content/panel.css'),
     read('../src/content/useConversationAudioMute.ts'),
+    read('../options/src/OptionsPage.tsx'),
   ]);
-  const soundPosition = component.indexOf('className="statistics-sound-toggle"');
   const mutePosition = component.indexOf('className="statistics-conversation-mute-toggle"');
   const turnsPosition = component.indexOf('className="statistics-trigger"');
-  assert.ok(soundPosition >= 0 && soundPosition < mutePosition && mutePosition < turnsPosition);
-  assert.match(component, /aria-label=\{`回答完了音を\$\{displayedSoundEnabled \? 'オフ' : 'オン'\}にする`\}/);
-  assert.match(component, /aria-pressed=\{displayedSoundEnabled\}/);
-  assert.match(component, /title=\{`回答完了音を/);
-  assert.match(component, /onClick=\{\(\) => \{ void toggleSound\(\); \}\}/);
-  assert.match(component, /aria-label=\{`この会話の回答完了音を\$\{conversationMuted \? 'ミュート解除' : 'ミュート'\}する`\}/);
+  assert.ok(mutePosition >= 0 && mutePosition < turnsPosition);
+  assert.equal((component.match(/className="statistics-conversation-mute-toggle"/g) ?? []).length, 1);
+  assert.doesNotMatch(component, /statistics-sound-toggle|toggleSound|onToggleAnswerCompletionSound|soundTogglePending/);
+  assert.match(component, /const speakerMuted = !answerCompletionSoundEnabled \|\| conversationMuted/);
+  assert.match(component, /const speakerStatus = `全体の回答完了音は\$\{answerCompletionSoundEnabled \? 'ON' : 'OFF'\}です。このタブ・会話のミュートは\$\{conversationMuted \? 'ON' : 'OFF'\}です。`/);
+  assert.match(component, /aria-label=\{conversationSpeakerLabel\}/);
+  assert.match(component, /aria-pressed=\{conversationMuted\}/);
+  assert.match(component, /title=\{conversationSpeakerTitle\}/);
+  assert.match(component, /speakerMuted \? <path d="m16 9/);
+  assert.match(component, /onClick=\{\(\) => \{ void onToggleConversationMute\?\.\(!conversationMuted\); \}\}/);
   assert.match(component, /disabled=\{!conversationId \|\| !conversationMuteLoaded \|\| conversationMutePending/);
   assert.match(component, /getMuteSnapshotRef\.current\?\.\(\)/);
   assert.match(component, /conversationIdFromPath\(window\.location\.pathname\) !== eventConversationId/);
   assert.match(component, /onClick=\{\(\) => setDetailsOpen\(\(open\) => !open\)\}/);
-  assert.match(baseStyles, /\.statistics-sound-toggle:focus-visible\s*\{/);
+  assert.doesNotMatch(baseStyles, /\.statistics-sound-toggle/);
   assert.match(styles, /\.statistics-conversation-mute-toggle:focus-visible\s*\{/);
   assert.ok(panel.includes('answerCompletionSoundId={answerCompletionSoundId}'));
   assert.ok(panel.includes('answerCompletionSoundEnabled={answerCompletionSoundEnabled}'));
+  assert.doesNotMatch(panel, /onToggleAnswerCompletionSound|soundTogglePending|soundToggleError/);
   assert.ok(panel.includes('conversationMuted={conversationMuted}'));
   assert.ok(panel.includes('onToggleConversationMute={onToggleConversationMute}'));
   assert.ok(controller.includes("answerCompletionSoundId: settings.answerCompletionSoundId ?? 'tone-660'"));
-  assert.ok(controller.includes('answerCompletionSoundEnabled: soundToggleOptimistic ?? settings.answerCompletionSoundEnabled === true'));
+  assert.ok(controller.includes('answerCompletionSoundEnabled: settings.answerCompletionSoundEnabled === true'));
+  assert.doesNotMatch(controller, /toggleAnswerCompletionSound|soundToggleOptimistic|answerCompletionSoundEnabled: enabled/);
   assert.ok(controller.includes('getConversationMuteSnapshot: conversationMute.getSnapshot'));
   assert.ok(muteHook.includes('setMuted(id, nextMuted)'));
+  assert.ok(options.includes('enabled={draft.answerCompletionSoundEnabled === true}'));
 });
 
 test('Optionsで通知音と出力先を試聴・選択し、音源管理と上限を説明する', async () => {

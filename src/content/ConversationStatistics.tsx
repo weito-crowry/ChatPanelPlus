@@ -67,9 +67,6 @@ export interface ConversationStatisticsProps {
   readonly answerCompletionSoundEnabled?: boolean;
   readonly answerCompletionSoundId?: string;
   readonly answerCompletionSoundVolumePercent?: number;
-  readonly soundTogglePending?: boolean;
-  readonly soundToggleError?: string;
-  readonly onToggleAnswerCompletionSound?: (enabled: boolean) => Promise<void>;
   readonly onToggleConversationMute?: (muted: boolean) => Promise<void>;
 }
 
@@ -83,9 +80,6 @@ export function ConversationStatistics({
   answerCompletionSoundEnabled = false,
   answerCompletionSoundId = DEFAULT_COMPLETION_SOUND_ID,
   answerCompletionSoundVolumePercent = DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT,
-  soundTogglePending = false,
-  soundToggleError = '',
-  onToggleAnswerCompletionSound,
   onToggleConversationMute,
 }: ConversationStatisticsProps) {
   const [state, setState] = useState(EMPTY_STATE);
@@ -105,11 +99,7 @@ export function ConversationStatistics({
   conversationMuteRevisionRef.current = conversationMuteRevision;
   const getMuteSnapshotRef = useRef(getConversationMuteSnapshot);
   getMuteSnapshotRef.current = getConversationMuteSnapshot;
-  const togglePending = useRef(false);
-  const [localToggleError, setLocalToggleError] = useState('');
   const [playbackError, setPlaybackError] = useState('');
-  const [optimisticEnabled, setOptimisticEnabled] = useState<boolean | null>(null);
-  const displayedSoundEnabled = optimisticEnabled ?? answerCompletionSoundEnabled;
   const trigger = useRef<HTMLButtonElement>(null);
   const popover = useRef<HTMLDivElement>(null);
 
@@ -183,23 +173,6 @@ export function ConversationStatistics({
     soundPlayer.current?.setVolumePercent(answerCompletionSoundVolumePercent);
   }, [answerCompletionSoundVolumePercent]);
 
-  async function toggleSound() {
-    if (togglePending.current || soundTogglePending || !onToggleAnswerCompletionSound) return;
-    const next = !displayedSoundEnabled;
-    togglePending.current = true;
-    setOptimisticEnabled(next);
-    setLocalToggleError('');
-    try {
-      await onToggleAnswerCompletionSound(next);
-    } catch {
-      setOptimisticEnabled(answerCompletionSoundEnabled);
-      setLocalToggleError('回答完了音の設定を保存できませんでした。表示は保存済みの状態へ戻しました。');
-    } finally {
-      togglePending.current = false;
-      setOptimisticEnabled(null);
-    }
-  }
-
   useLayoutEffect(() => {
     if (!detailsOpen) {
       setPlacement(null);
@@ -236,36 +209,32 @@ export function ConversationStatistics({
   const status = scanMessage(state) ?? defaultStatus;
   const scanDisabled = !state.conversationId || state.loading || state.recounting
     || (state.historyScan.scanning && state.historyScan.cancelRequested);
+  const speakerMuted = !answerCompletionSoundEnabled || conversationMuted;
+  const speakerStatus = `全体の回答完了音は${answerCompletionSoundEnabled ? 'ON' : 'OFF'}です。このタブ・会話のミュートは${conversationMuted ? 'ON' : 'OFF'}です。`;
+  const muteAction = conversationMuted ? '解除' : '設定';
+  const conversationSpeakerLabel = `${speakerStatus}${conversationId
+    ? `クリックするとこのタブ・会話のミュートを${muteAction}します。`
+    : '会話IDが不明のため変更できません。'}`;
+  const conversationSpeakerTitle = `${speakerStatus}${!answerCompletionSoundEnabled
+    ? '全体音声はOptionsの設定画面で変更できます。'
+    : ''}${conversationId
+      ? `クリックでこのタブ・会話のミュートを${muteAction}します。`
+      : '会話IDが不明のため変更できません。'}`;
 
   return (
     <section className="conversation-statistics" aria-label="会話統計">
       <button
         type="button"
-        className="statistics-sound-toggle"
-        aria-label={`回答完了音を${displayedSoundEnabled ? 'オフ' : 'オン'}にする`}
-        aria-pressed={displayedSoundEnabled}
-        title={`回答完了音を${displayedSoundEnabled ? 'オフ' : 'オン'}にする`}
-        disabled={soundTogglePending || togglePending.current || !onToggleAnswerCompletionSound}
-        onClick={() => { void toggleSound(); }}
-      >
-        {displayedSoundEnabled ? (
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z" /><path d="M16 9a5 5 0 0 1 0 6M18.5 6.5a8.5 8.5 0 0 1 0 11" /></svg>
-        ) : (
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z" /><path d="m17 9 5 6m0-6-5 6" /></svg>
-        )}
-      </button>
-      <button
-        type="button"
         className="statistics-conversation-mute-toggle"
-        aria-label={`この会話の回答完了音を${conversationMuted ? 'ミュート解除' : 'ミュート'}する`}
+        aria-label={conversationSpeakerLabel}
         aria-pressed={conversationMuted}
-        title={conversationId ? `このタブの「${conversationMuted ? 'ミュート解除' : 'ミュート'}」` : '会話IDが取得できないため変更できません'}
+        title={conversationSpeakerTitle}
         disabled={!conversationId || !conversationMuteLoaded || conversationMutePending || !onToggleConversationMute}
         onClick={() => { void onToggleConversationMute?.(!conversationMuted); }}
       >
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M4 9v6h4l5 4V5L8 9H4z" />
-          {conversationMuted ? <path d="m16 9 5 6m0-6-5 6" /> : <path d="M16 9a5 5 0 0 1 0 6M18.5 6.5a8.5 8.5 0 0 1 0 11" />}
+          {speakerMuted ? <path d="m16 9 5 6m0-6-5 6" /> : <path d="M16 9a5 5 0 0 1 0 6M18.5 6.5a8.5 8.5 0 0 1 0 11" />}
         </svg>
       </button>
       <button
@@ -280,7 +249,7 @@ export function ConversationStatistics({
       >
         {formatCount(state.aggregate.turns)} Turns
       </button>
-      {(soundToggleError || localToggleError || playbackError) && <p className="statistics-sound-error" role="alert">{soundToggleError || localToggleError || playbackError}</p>}
+      {playbackError && <p className="statistics-sound-error" role="alert">{playbackError}</p>}
       {detailsOpen && (
         <div
           ref={popover}

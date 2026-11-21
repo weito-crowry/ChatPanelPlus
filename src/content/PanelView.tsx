@@ -35,8 +35,6 @@ export function PanelView({
   answerCompletionSoundEnabled,
   answerCompletionSoundId,
   answerCompletionSoundVolumePercent,
-  soundTogglePending,
-  soundToggleError,
   manualPasteOpen,
   manualPasteText,
   onButtonPointerDown,
@@ -48,7 +46,6 @@ export function PanelView({
   onSelectBridgeEvent,
   onToggleConversationMute,
   onOpenSettings,
-  onToggleAnswerCompletionSound,
   onManualPasteTextChange,
   onSubmitManualPaste,
   onCancelManualPaste,
@@ -74,9 +71,6 @@ export function PanelView({
           answerCompletionSoundEnabled={answerCompletionSoundEnabled}
           answerCompletionSoundId={answerCompletionSoundId}
           answerCompletionSoundVolumePercent={answerCompletionSoundVolumePercent}
-          soundTogglePending={soundTogglePending}
-          soundToggleError={soundToggleError}
-          onToggleAnswerCompletionSound={onToggleAnswerCompletionSound}
           conversationId={conversationId}
           conversationMuted={conversationMuted}
           conversationMuteLoaded={muteLoaded}

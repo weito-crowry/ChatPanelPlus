@@ -68,8 +68,6 @@ export interface PanelControllerState {
   readonly answerCompletionSoundEnabled: boolean;
   readonly answerCompletionSoundId: string;
   readonly answerCompletionSoundVolumePercent: number;
-  readonly soundTogglePending: boolean;
-  readonly soundToggleError: string;
   readonly manualPasteOpen: boolean;
   readonly manualPasteText: string;
   readonly onButtonPointerDown: (buttonId: ResolvedButton['id']) => void;
@@ -81,7 +79,6 @@ export interface PanelControllerState {
   readonly onSelectBridgeEvent: (eventId: string | null) => void;
   readonly onToggleConversationMute: (muted: boolean) => Promise<void>;
   readonly onOpenSettings: () => void;
-  readonly onToggleAnswerCompletionSound: (enabled: boolean) => Promise<void>;
   readonly onManualPasteTextChange: (value: string) => void;
   readonly onSubmitManualPaste: () => void;
   readonly onCancelManualPaste: () => void;
@@ -91,16 +88,10 @@ export function usePanelController(): PanelControllerState {
   const repository = useRef<SettingsRepository | null>(null);
   if (!repository.current) repository.current = createChromeSettingsRepository();
   const [settings, setSettings] = useState<ExtensionSettings>(DEFAULT_SETTINGS);
-  const settingsRef = useRef(settings);
-  settingsRef.current = settings;
   const model = createPanelViewModel(settings);
   const conversationPanel = useConversationPanelState(model.tabs);
   const conversationMute = useConversationAudioMute(conversationPanel.conversationId);
   const [error, setError] = useState('');
-  const [soundToggleError, setSoundToggleError] = useState('');
-  const [soundTogglePending, setSoundTogglePending] = useState(false);
-  const [soundToggleOptimistic, setSoundToggleOptimistic] = useState<boolean | null>(null);
-  const soundTogglePendingRef = useRef(false);
   const [manualPasteOpen, setManualPasteOpen] = useState(false);
   const [manualPasteText, setManualPasteText] = useState('');
   const pointerSnapshot = useRef<{ buttonId: ResolvedButton['id']; snapshot: SelectionSnapshot } | null>(null);
@@ -141,13 +132,11 @@ export function usePanelController(): PanelControllerState {
     let configRevision = 0;
     const unsubscribeSettings = repo.subscribeSettings((next) => {
       configRevision += 1;
-      settingsRef.current = next;
       setSettings(next);
     });
     void repo.loadSettings().then((settingsResult) => {
       if (!active) return;
       if (configRevision === 0 && settingsResult.ok) {
-        settingsRef.current = settingsResult.settings;
         setSettings(settingsResult.settings);
       }
     });
@@ -218,36 +207,6 @@ export function usePanelController(): PanelControllerState {
     finishManualPaste(result);
   }
 
-  async function toggleAnswerCompletionSound(enabled: boolean): Promise<void> {
-    if (soundTogglePendingRef.current) return;
-    soundTogglePendingRef.current = true;
-    setSoundTogglePending(true);
-    setSoundToggleOptimistic(enabled);
-    setSoundToggleError('');
-    const repo = repository.current!;
-    const base = settingsRef.current;
-    const result = await repo.saveSettings(base, { ...base, answerCompletionSoundEnabled: enabled });
-    if (result.ok) {
-      settingsRef.current = result.settings;
-      setSettings(result.settings);
-      setSoundToggleOptimistic(null);
-    } else {
-      const latest = await repo.loadSettings();
-      if (latest.ok) {
-        settingsRef.current = latest.settings;
-        setSettings(latest.settings);
-      }
-      setSoundToggleOptimistic(null);
-      setSoundToggleError(result.reason === 'conflict'
-        ? '別のOptions画面で回答完了音が変更されました。保存値を読み直してください。'
-        : result.reason === 'storage-failed'
-          ? '回答完了音の設定を保存できませんでした。表示を保存済みの状態へ戻しました。'
-          : '保存済み設定を確認できませんでした。回答完了音の表示を最後に読み込んだ状態へ戻しました。');
-    }
-    soundTogglePendingRef.current = false;
-    setSoundTogglePending(false);
-  }
-
   return {
     model,
     currentViewState,
@@ -264,11 +223,9 @@ export function usePanelController(): PanelControllerState {
     muteRevision: conversationMute.revision,
     getConversationMuteSnapshot: conversationMute.getSnapshot,
     error: error || conversationPanel.error || conversationMute.error,
-    answerCompletionSoundEnabled: soundToggleOptimistic ?? settings.answerCompletionSoundEnabled === true,
+    answerCompletionSoundEnabled: settings.answerCompletionSoundEnabled === true,
     answerCompletionSoundId: settings.answerCompletionSoundId ?? 'tone-660',
     answerCompletionSoundVolumePercent: settings.answerCompletionSoundVolumePercent ?? DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT,
-    soundTogglePending,
-    soundToggleError,
     manualPasteOpen,
     manualPasteText,
     onButtonPointerDown: captureSelectionPointer,
@@ -280,7 +237,6 @@ export function usePanelController(): PanelControllerState {
     onSelectBridgeEvent: conversationPanel.onSelectBridgeEvent,
     onToggleConversationMute: conversationMute.onToggle,
     onOpenSettings: () => { void chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS' }); },
-    onToggleAnswerCompletionSound: toggleAnswerCompletionSound,
     onManualPasteTextChange: setManualPasteText,
     onSubmitManualPaste: () => { void submitManualPaste(); },
     onCancelManualPaste: cancelManualPaste,
