@@ -115,6 +115,74 @@ test('既定出力は既存Content Script再生を選び、Offscreenを起動し
   assert.equal(offscreenCalls, 0);
 });
 
+test('会話別mute済みの回答完了音は既定・Offscreenどちらの経路も開始しない', async () => {
+  let offscreenCalls = 0;
+  let deviceLoads = 0;
+  const handler = createOutputDevicePlaybackMessageHandler({
+    loadOutputDevice: async () => { deviceLoads += 1; return { ok: true, device: DEFAULT_ANSWER_COMPLETION_OUTPUT_DEVICE }; },
+    loadAssets: async () => ({ ok: true, assets: [] }),
+    loadConversationMute: async (_sender, conversationId) => ({ ok: true, muted: conversationId === 'conversation-A' }),
+    playOffscreen: async () => { offscreenCalls += 1; return { ok: true }; },
+  });
+  assert.deepEqual(await handler({
+    type: ANSWER_COMPLETION_SOUND_ROUTE, conversationId: 'conversation-A', soundId: DEFAULT_COMPLETION_SOUND_ID, volumePercent: 50,
+  }, {
+    id: 'extension-id', url: 'https://chatgpt.com/c/conversation-A', frameId: 0,
+    tab: { url: 'https://chatgpt.com/c/conversation-A' },
+  }, 'extension-id'), { ok: true, route: 'skipped', reason: 'muted' });
+  assert.equal(deviceLoads, 0);
+  assert.equal(offscreenCalls, 0);
+});
+
+test('Offscreenの遅延assetロード中にmuteがONになれば再生直前にskipする', async () => {
+  let releaseAssets!: (value: { ok: true; assets: never[] }) => void;
+  const assets = new Promise<{ ok: true; assets: never[] }>((resolve) => { releaseAssets = resolve; });
+  let muteReads = 0;
+  let offscreenCalls = 0;
+  const handler = createOutputDevicePlaybackMessageHandler({
+    loadOutputDevice: async () => ({ ok: true, device: { deviceId: 'usb-headset-64', label: 'USB' } }),
+    loadAssets: () => assets,
+    loadConversationMute: async () => ({ ok: true, muted: ++muteReads > 1 }),
+    playOffscreen: async () => { offscreenCalls += 1; return { ok: true }; },
+  });
+  const request = handler({
+    type: ANSWER_COMPLETION_SOUND_ROUTE, conversationId: 'conversation-A',
+    soundId: DEFAULT_COMPLETION_SOUND_ID, volumePercent: 50,
+  }, {
+    id: 'extension-id', url: 'https://chatgpt.com/c/conversation-A', frameId: 0,
+    tab: { url: 'https://chatgpt.com/c/conversation-A' },
+  }, 'extension-id');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  releaseAssets({ ok: true, assets: [] });
+  assert.deepEqual(await request, { ok: true, route: 'skipped', reason: 'muted' });
+  assert.equal(muteReads, 2);
+  assert.equal(offscreenCalls, 0);
+});
+
+test('Offscreen直前のbackground mute guardがmute設定更新と直列化される', async () => {
+  let offscreenCalls = 0;
+  let guardCalls = 0;
+  const handler = createOutputDevicePlaybackMessageHandler({
+    loadOutputDevice: async () => ({ ok: true, device: { deviceId: 'usb-headset-64', label: 'USB' } }),
+    loadAssets: async () => ({ ok: true, assets: [] }),
+    loadConversationMute: async () => ({ ok: true, muted: false }),
+    playOffscreenWithMuteGuard: async (_sender, conversationId) => {
+      guardCalls += 1;
+      assert.equal(conversationId, 'conversation-A');
+      return { ok: false, reason: 'muted' };
+    },
+    playOffscreen: async () => { offscreenCalls += 1; return { ok: true }; },
+  });
+  assert.deepEqual(await handler({
+    type: ANSWER_COMPLETION_SOUND_ROUTE, conversationId: 'conversation-A', soundId: DEFAULT_COMPLETION_SOUND_ID, volumePercent: 50,
+  }, {
+    id: 'extension-id', url: 'https://chatgpt.com/c/conversation-A', frameId: 0,
+    tab: { id: 11, url: 'https://chatgpt.com/c/conversation-A' },
+  }, 'extension-id'), { ok: true, route: 'skipped', reason: 'muted' });
+  assert.equal(guardCalls, 1);
+  assert.equal(offscreenCalls, 0);
+});
+
 test('指定出力の試聴と回答完了音は同じOffscreen経路を使う', async () => {
   const storedDevice = { deviceId: 'usb-headset-64', label: 'USBヘッドセット' };
   const storedAsset = {

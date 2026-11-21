@@ -425,9 +425,9 @@ test('試聴音源のonendedとcleanup timerが競合してもContextを一度�
 });
 
 test('Conversation Statisticsの既存Observerから識別済み完了サイクルを一度だけ通知する', async () => {
-  const completions: Array<{ turnKey: string; assistantMessageId: string }> = [];
+  const completions: Array<{ turnKey: string; assistantMessageId: string; conversationId: string | null }> = [];
   const h = harness('/c/sound-conversation', false, createStatisticsStore(), {
-    onAnswerCompleted: (event) => completions.push(event),
+    onAnswerCompleted: (event, conversationId) => completions.push({ ...event, conversationId }),
   });
   const answer = turn('sound-turn', '質問', '回答', 'sound-answer');
   h.document.root.append(answer);
@@ -445,6 +445,6 @@ test('Conversation Statisticsの既存Observerから識別済み完了サイク�
   FakeMutationObserver.latest?.notify(state, state);
   await settle();
 
-  assert.deepEqual(completions, [{ turnKey: 'sound-turn', assistantMessageId: 'sound-answer' }]);
+  assert.deepEqual(completions, [{ turnKey: 'sound-turn', assistantMessageId: 'sound-answer', conversationId: 'sound-conversation' }]);
   h.controller.stop();
 });

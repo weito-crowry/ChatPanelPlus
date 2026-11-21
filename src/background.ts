@@ -2,12 +2,18 @@ import {
   createCodexWorkModeMessageHandler,
   removeCodexWorkModeEntriesForTab,
 } from './background/codex-work-mode.ts';
+import {
+  ConversationAudioMuteStore,
+  createConversationAudioMuteMessageHandler,
+  removeConversationAudioMuteEntriesForTab,
+} from './background/conversation-audio-mute.ts';
 import { createOutputDevicePlaybackMessageHandler } from './background/answer-completion-output-device.ts';
 import { createOffscreenAudioTransport } from './background/offscreen-audio-transport.ts';
 import { createChromeSoundAssetRepository } from './shared/answer-completion-sound-assets.ts';
 import { createChromeAnswerCompletionOutputDeviceRepository } from './shared/answer-completion-output-device.ts';
 import { ANSWER_COMPLETION_SOUND_PREVIEW, ANSWER_COMPLETION_SOUND_ROUTE } from './shared/answer-completion-output-device-protocol.ts';
 import { CODEX_WORK_MODE_GET, CODEX_WORK_MODE_SET } from './shared/codex-work-mode-protocol.ts';
+import { conversationAudioMuteRequestType } from './shared/conversation-audio-mute-protocol.ts';
 import {
   CODEX_BRIDGE_MCP_GET_STATUS,
   CODEX_BRIDGE_MCP_GET_TARGETS,
@@ -40,6 +46,10 @@ function isCodexWorkModeMessage(message: unknown): boolean {
     && (message.type === CODEX_WORK_MODE_GET || message.type === CODEX_WORK_MODE_SET);
 }
 
+function isConversationAudioMuteMessage(message: unknown): boolean {
+  return conversationAudioMuteRequestType(message) !== null;
+}
+
 function isCodexBridgeMcpTestMessage(message: unknown): boolean {
   return typeof message === 'object' && message !== null && 'type' in message
     && message.type === CODEX_BRIDGE_MCP_TEST_MESSAGE;
@@ -65,6 +75,8 @@ const handleCodexWorkModeMessage = createCodexWorkModeMessageHandler(
   chrome.runtime.id,
   (tabId, message) => chrome.tabs.sendMessage(tabId, message),
 );
+const conversationAudioMuteStore = new ConversationAudioMuteStore(chrome.storage.session);
+const handleConversationAudioMute = createConversationAudioMuteMessageHandler(conversationAudioMuteStore, chrome.runtime.id);
 const handleCodexBridgeMcpTest = createCodexBridgeMcpTestHandler({
   sessionStorage: chrome.storage.session,
   permissions: chrome.permissions,
@@ -82,6 +94,21 @@ const offscreenTransport = typeof chrome.offscreen?.createDocument === 'function
 const handleOutputDevicePlayback = createOutputDevicePlaybackMessageHandler({
   loadOutputDevice: () => outputDeviceRepository.load(),
   loadAssets: () => soundAssetRepository.loadAssets(),
+  loadConversationMute: async (sender, conversationId) => {
+    const tabId = sender.tab?.id;
+    if (!Number.isSafeInteger(tabId) || (tabId ?? -1) < 0) return { ok: false };
+    const loaded = await conversationAudioMuteStore.load(tabId!, conversationId);
+    return loaded.ok ? { ok: true, muted: loaded.value.muted } : { ok: false };
+  },
+  playOffscreenWithMuteGuard: async (sender, conversationId, request) => {
+    const tabId = sender.tab?.id;
+    if (!Number.isSafeInteger(tabId) || (tabId ?? -1) < 0 || !offscreenTransport) return { ok: false, reason: 'mute-unavailable' };
+    const result = await conversationAudioMuteStore.runIfUnmuted(tabId!, conversationId, () => offscreenTransport.play(request));
+    return result.ok ? { ok: true, result: result.value } : {
+      ok: false,
+      reason: result.reason === 'muted' ? 'muted' : 'mute-unavailable',
+    };
+  },
   playOffscreen: (request) => offscreenTransport
     ? offscreenTransport.play(request)
     : Promise.resolve({ ok: false, reason: 'playback-failed' }),
@@ -109,6 +136,7 @@ void codexBridgeThreadMonitor.monitor.restore().catch(() => {});
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   void removeCodexWorkModeEntriesForTab(chrome.storage.session, tabId);
+  void removeConversationAudioMuteEntriesForTab(chrome.storage.session, tabId).catch(() => {});
 });
 
 chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
@@ -131,6 +159,12 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   if (isCodexBridgeWatchMessage(message)) {
     void codexBridgeThreadMonitor.handleMessage(message, sender).then((response) => {
       sendResponse(response ?? { ok: false, reason: 'invalid-request' });
+    }).catch(() => sendResponse({ ok: false, reason: 'storage-error' }));
+    return true;
+  }
+  if (isConversationAudioMuteMessage(message)) {
+    void handleConversationAudioMute(message, sender).then((response) => {
+      sendResponse(response ?? { ok: false, reason: 'storage-error' });
     }).catch(() => sendResponse({ ok: false, reason: 'storage-error' }));
     return true;
   }

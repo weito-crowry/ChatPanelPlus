@@ -18,12 +18,13 @@ test('通常画面はBridgeの計画済み2件数だけを示し、未接続値�
   assert.doesNotMatch(summary, /0件|実行中|要対応|新着/);
 });
 
-test('Bridge詳細は既定で閉じ、開閉をARIAに反映し、共有一覧と明示する', async () => {
-  const [view, controller] = await Promise.all([
+test('Bridge詳細は会話stateで開閉し、ARIA・共有一覧・route raceを保つ', async () => {
+  const [view, controller, stateHook] = await Promise.all([
     read('../src/content/PanelView.tsx'),
     read('../src/content/usePanelController.ts'),
+    read('../src/content/useConversationPanelState.ts'),
   ]);
-  assert.match(view, /const \[bridgeExpanded, setBridgeExpanded\] = useState\(false\);/);
+  assert.match(view, /bridgeExpanded,/);
   const toggleMarker = view.indexOf('className="codex-bridge-button panel-bridge-details-toggle"');
   const toggleStart = view.lastIndexOf('<button', toggleMarker);
   const toggleEnd = view.indexOf('</button>', toggleMarker);
@@ -33,11 +34,15 @@ test('Bridge詳細は既定で閉じ、開閉をARIAに反映し、共有一覧�
   assert.match(toggle, /aria-expanded=\{bridgeExpanded\}/);
   assert.match(toggle, /aria-controls="panel-bridge-details"/);
   assert.match(view, /<div id="panel-bridge-details" className="panel-bridge-details" hidden=\{!bridgeExpanded\}>/);
-  assert.match(view, /onClick=\{\(\) => setBridgeExpanded\(\(open\) => !open\)\}/);
+  assert.match(view, /onClick=\{onToggleBridgeExpanded\}/);
   assert.match(view, /この一覧は現行の共有表示です。会話別の絞り込みはPhase 4で接続します。/);
   assert.equal([...view.matchAll(/<CodexBridgeList\b/g)].length, 1);
   assert.match(view, /<CodexBridgeList foregroundEnabled=\{!currentViewState\.minimized\} \/>/);
-  assert.doesNotMatch(controller, /bridgeExpanded|panel-bridge-details/);
+  assert.match(controller, /useConversationPanelState\(model\.tabs\)/);
+  assert.match(controller, /bridgeExpanded: conversationPanel\.bridgeExpanded/);
+  assert.doesNotMatch(controller, /loadViewState\(|saveViewState\(/);
+  assert.match(stateHook, /conversationIdFromPath\(window\.location\.pathname\) !== id/);
+  assert.match(stateHook, /routeGeneration\.current !== generation/);
 });
 
 test('Bridge詳細の順序はthread一覧、監視登録、終了通知を保つ', async () => {

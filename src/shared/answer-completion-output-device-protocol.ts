@@ -1,5 +1,6 @@
 import { isBuiltinCompletionSoundId, isUserCompletionSoundId } from './answer-completion-sound-definitions.ts';
 import type { SoundAsset } from './answer-completion-sound-assets.ts';
+import { isConversationId } from './conversation-route.ts';
 
 export const ANSWER_COMPLETION_SOUND_ROUTE = 'CPP_ANSWER_COMPLETION_SOUND_ROUTE';
 export const ANSWER_COMPLETION_SOUND_PREVIEW = 'CPP_ANSWER_COMPLETION_SOUND_PREVIEW';
@@ -9,6 +10,7 @@ export interface AnswerCompletionSoundRequest {
   readonly type: typeof ANSWER_COMPLETION_SOUND_ROUTE | typeof ANSWER_COMPLETION_SOUND_PREVIEW;
   readonly soundId: string;
   readonly volumePercent: number;
+  readonly conversationId?: string;
 }
 
 export interface OffscreenAnswerCompletionSoundRequest {
@@ -21,8 +23,9 @@ export interface OffscreenAnswerCompletionSoundRequest {
 
 export type AnswerCompletionSoundRouteResult =
   | { readonly ok: true; readonly route: 'default' | 'device' }
+  | { readonly ok: true; readonly route: 'skipped'; readonly reason: 'muted' | 'mute-unavailable' }
   | { readonly ok: false; readonly reason: 'invalid-request' | 'storage-failed' | 'corrupt-selection'
-    | 'device-unavailable' | 'permission-denied' | 'sink-failed' | 'offscreen-failed' };
+    | 'device-unavailable' | 'permission-denied' | 'sink-failed' | 'offscreen-failed' | 'mute-unavailable' };
 
 export interface OffscreenPlaybackResult {
   readonly ok: boolean;
@@ -34,8 +37,9 @@ function record(value: unknown): value is Record<string, unknown> {
 }
 
 export function isAnswerCompletionSoundRequest(value: unknown): value is AnswerCompletionSoundRequest {
-  if (!record(value) || Object.keys(value).some((key) => !['type', 'soundId', 'volumePercent'].includes(key))) return false;
+  if (!record(value) || Object.keys(value).some((key) => !['type', 'soundId', 'volumePercent', 'conversationId'].includes(key))) return false;
   return (value.type === ANSWER_COMPLETION_SOUND_ROUTE || value.type === ANSWER_COMPLETION_SOUND_PREVIEW)
+    && (value.conversationId === undefined || (value.type === ANSWER_COMPLETION_SOUND_ROUTE && isConversationId(value.conversationId)))
     && typeof value.soundId === 'string'
     && (isBuiltinCompletionSoundId(value.soundId) || isUserCompletionSoundId(value.soundId))
     && Number.isInteger(value.volumePercent) && (value.volumePercent as number) >= 0 && (value.volumePercent as number) <= 100;

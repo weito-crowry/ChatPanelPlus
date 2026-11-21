@@ -1,0 +1,22 @@
+# メインパネル再設計 v2 — Phase進捗
+
+## 完了記録
+
+| Phase | 状態 | 実装／記録コミット | 自動検証・配備 |
+|---|---|---|---|
+| 0 調査・計画 | COMPLETE | `63a48805601460a5d8e5a07d7cf3b66e8c28bf7e` | 計画・監査docs。typecheck/lint PASS、全テストは未実施。 |
+| 1 UIとコアの分離 | ACCEPTED | `efe5b26aa3a37cab7db94c7c6d2fe0969f099e1b` | 496/496、typecheck/lint PASS。ユーザーのChrome動作確認報告でPhase全体PASS。項目別の結果は未報告。 |
+| 2 3画面構成 | AUTO_ACCEPTED / CHROME_SMOKE_DEFERRED | 実装 `4eb037a3fa04ddcb47afb1bc724b81d296fa19ec`、受入記録 `5d5cfce054c3f14b19eed456311b3bddded1874c` | 501/501、typecheck/lint PASS。登録済み `dist/` へ `pnpm build` 済み。Chrome実機項目はPhase 5へ延期。 |
+| 3 会話別UI状態・タブ別ミュート | 自動検証PASS / 配備記録保留 | 実装コミット作成後に記録 | 隔離全テスト、typecheck、lint PASS。配備とChrome実機項目は後続へ記録する。仕様未決定事項は受入docsに列挙。 |
+
+## 継続中
+
+- Phase 4: Bridge監視owner・通知・件数・アクセス制御の会話分離。
+- Phase 5: 自動統合、最終実機チェックリスト。Chrome操作はユーザーが全Phase後に実施する。
+
+## 残る仕様判断
+
+- conversation ID不明時の通常回答完了音の再生可否。
+- Optionsの「既定値に戻す」が会話別パネル表示状態へ及ぼす範囲。
+- Bridge event保持上限128件の全体保持方針。未確認イベントを黙って削除しない保護を優先し、総件数の上限は勝手に確定しない。
+- Bridgeから取得できる最終回答本文の完全性。

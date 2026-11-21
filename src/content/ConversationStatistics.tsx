@@ -12,6 +12,7 @@ import { DEFAULT_COMPLETION_SOUND_ID } from '../shared/answer-completion-sound-d
 import { DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT } from '../shared/answer-completion-sound-volume.ts';
 import { routeAnswerCompletionSound } from './answer-completion-output-device-route.ts';
 import { dispatchAnswerCompletionNotifications } from './answer-completion-notifications.ts';
+import { conversationIdFromPath } from '../shared/conversation-route.ts';
 import { TabCompletionIndicator } from './tab-completion-indicator.ts';
 import { calculateStatisticsPopoverPlacement, type StatisticsPopoverPlacement } from './conversation-statistics-popover-position.ts';
 
@@ -36,6 +37,7 @@ const STORAGE_ERROR_TEXT: Record<StatisticsStorageError, string> = {
 function formatCount(value: number): string { return new Intl.NumberFormat('ja-JP').format(value); }
 
 function soundOutputErrorMessage(reason: string): string {
+  if (reason === 'mute-unavailable') return '会話別ミュート状態を確認できません。確認できるまで回答完了音を再生しません。';
   if (reason === 'device-unavailable') return '選択した出力デバイスが見つかりません。Optionsで接続状態を確認してください。既定の出力へは切り替えていません。';
   if (reason === 'permission-denied') return '選択した出力デバイスの利用が拒否されました。Optionsでデバイスを再選択してください。';
   if (reason === 'corrupt-selection') return '出力デバイス設定を読み取れません。Optionsで出力先を選び直してください。';
@@ -56,21 +58,35 @@ function scanMessage(state: ConversationStatisticsViewState): string | null {
 }
 
 export interface ConversationStatisticsProps {
+  readonly conversationId?: string | null;
+  readonly conversationMuted?: boolean;
+  readonly conversationMuteLoaded?: boolean;
+  readonly conversationMutePending?: boolean;
+  readonly conversationMuteRevision?: number;
+  readonly getConversationMuteSnapshot?: () => { readonly muted: boolean; readonly revision: number };
   readonly answerCompletionSoundEnabled?: boolean;
   readonly answerCompletionSoundId?: string;
   readonly answerCompletionSoundVolumePercent?: number;
   readonly soundTogglePending?: boolean;
   readonly soundToggleError?: string;
   readonly onToggleAnswerCompletionSound?: (enabled: boolean) => Promise<void>;
+  readonly onToggleConversationMute?: (muted: boolean) => Promise<void>;
 }
 
 export function ConversationStatistics({
+  conversationId = null,
+  conversationMuted = false,
+  conversationMuteLoaded = false,
+  conversationMutePending = false,
+  conversationMuteRevision = 0,
+  getConversationMuteSnapshot,
   answerCompletionSoundEnabled = false,
   answerCompletionSoundId = DEFAULT_COMPLETION_SOUND_ID,
   answerCompletionSoundVolumePercent = DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT,
   soundTogglePending = false,
   soundToggleError = '',
   onToggleAnswerCompletionSound,
+  onToggleConversationMute,
 }: ConversationStatisticsProps) {
   const [state, setState] = useState(EMPTY_STATE);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -83,6 +99,12 @@ export function ConversationStatistics({
   soundId.current = answerCompletionSoundId;
   const soundVolumePercent = useRef(answerCompletionSoundVolumePercent);
   soundVolumePercent.current = answerCompletionSoundVolumePercent;
+  const conversationMutedRef = useRef(conversationMuted);
+  conversationMutedRef.current = conversationMuted;
+  const conversationMuteRevisionRef = useRef(conversationMuteRevision);
+  conversationMuteRevisionRef.current = conversationMuteRevision;
+  const getMuteSnapshotRef = useRef(getConversationMuteSnapshot);
+  getMuteSnapshotRef.current = getConversationMuteSnapshot;
   const togglePending = useRef(false);
   const [localToggleError, setLocalToggleError] = useState('');
   const [playbackError, setPlaybackError] = useState('');
@@ -107,16 +129,30 @@ export function ConversationStatistics({
       window,
       repository: createChromeConversationStatisticsRepository(),
       onState: setState,
-      onAnswerCompleted: () => {
+      onAnswerCompleted: (_event, eventConversationId) => {
         dispatchAnswerCompletionNotifications({
           notifyTab: () => tabCompletionIndicator.onAnswerCompleted(),
           soundEnabled: soundEnabled.current,
           soundVolumePercent: soundVolumePercent.current,
           playSound: () => {
-            void routeAnswerCompletionSound(chrome.runtime, {
+            const currentId = conversationIdFromPath(window.location.pathname);
+            const muteSnapshot = getMuteSnapshotRef.current?.() ?? {
+              muted: conversationMutedRef.current, revision: conversationMuteRevisionRef.current,
+            };
+            if (eventConversationId && currentId !== eventConversationId) return;
+            if (eventConversationId && muteSnapshot.muted) return;
+            const muteRevisionAtRequest = muteSnapshot.revision;
+            const sound = {
               soundId: soundId.current,
               volumePercent: soundVolumePercent.current,
-            }, () => {
+              ...(eventConversationId ? { conversationId: eventConversationId } : {}),
+            };
+            void routeAnswerCompletionSound(chrome.runtime, sound, () => {
+              const latestMuteSnapshot = getMuteSnapshotRef.current?.() ?? {
+                muted: conversationMutedRef.current, revision: conversationMuteRevisionRef.current,
+              };
+              if (eventConversationId && (conversationIdFromPath(window.location.pathname) !== eventConversationId
+                || latestMuteSnapshot.muted || latestMuteSnapshot.revision !== muteRevisionAtRequest)) return;
               setPlaybackError('');
               player.play();
             }, (reason) => setPlaybackError(soundOutputErrorMessage(reason)));
@@ -217,6 +253,20 @@ export function ConversationStatistics({
         ) : (
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z" /><path d="m17 9 5 6m0-6-5 6" /></svg>
         )}
+      </button>
+      <button
+        type="button"
+        className="statistics-conversation-mute-toggle"
+        aria-label={`この会話の回答完了音を${conversationMuted ? 'ミュート解除' : 'ミュート'}する`}
+        aria-pressed={conversationMuted}
+        title={conversationId ? `このタブの「${conversationMuted ? 'ミュート解除' : 'ミュート'}」` : '会話IDが取得できないため変更できません'}
+        disabled={!conversationId || !conversationMuteLoaded || conversationMutePending || !onToggleConversationMute}
+        onClick={() => { void onToggleConversationMute?.(!conversationMuted); }}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 9v6h4l5 4V5L8 9H4z" />
+          {conversationMuted ? <path d="m16 9 5 6m0-6-5 6" /> : <path d="M16 9a5 5 0 0 1 0 6M18.5 6.5a8.5 8.5 0 0 1 0 11" />}
+        </svg>
       </button>
       <button
         ref={trigger}

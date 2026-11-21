@@ -180,7 +180,7 @@ export async function settle(): Promise<void> {
 export interface HarnessRepositoryOverrides {
   loadStore?: () => Promise<{ ok: true; store: StatisticsStore }>;
   saveConversation?: (conversationId: string, conversation: StoredConversationStatistics) => Promise<StatisticsSaveResult>;
-  onAnswerCompleted?: (event: AnswerCompletionEvent) => void;
+  onAnswerCompleted?: (event: AnswerCompletionEvent, conversationId: string | null) => void;
 }
 
 export function harness(

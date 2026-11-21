@@ -10,7 +10,9 @@ export interface OutputDeviceRuntimeLike {
 
 function isRouteResult(value: unknown): value is AnswerCompletionSoundRouteResult {
   if (typeof value !== 'object' || value === null || !('ok' in value)) return false;
-  if (value.ok === true) return 'route' in value && (value.route === 'default' || value.route === 'device');
+  if (value.ok === true) return 'route' in value
+    && (value.route === 'default' || value.route === 'device'
+      || (value.route === 'skipped' && 'reason' in value && (value.reason === 'muted' || value.reason === 'mute-unavailable')));
   return 'reason' in value && typeof value.reason === 'string';
 }
 
@@ -28,6 +30,10 @@ export async function routeAnswerCompletionSound(
     }
     if (!response.ok) {
       onError(response.reason);
+      return;
+    }
+    if (response.route === 'skipped') {
+      if (response.reason === 'mute-unavailable') onError('mute-unavailable');
       return;
     }
     if (response.route === 'default') playWithExistingDefaultPath();

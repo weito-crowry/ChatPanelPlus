@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { type ResolvedButton } from '../shared/default-ui';
-import { createChromeSettingsRepository, type SettingsRepository, type StoredViewState } from '../shared/settings-repository';
+import { createChromeSettingsRepository, type SettingsRepository } from '../shared/settings-repository';
 import { DEFAULT_SETTINGS, type ExtensionSettings } from '../shared/settings';
 import { DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT } from '../shared/answer-completion-sound-volume.ts';
 import { captureSelectionForPaste, clearComposer, insertAtBeginning, insertAtCaret, replaceCurrentSelection, type SelectionSnapshot } from './editor/adapter';
@@ -10,18 +10,16 @@ import { pasteFromClipboard, replaceCurrentSelectionWithHTML } from './editor/ex
 import type { ClipboardMetric, ClipboardMetricReporter } from './clipboard-metrics.ts';
 import { dispatchPanelButton } from './panel-button-actions';
 import {
-  createInitialPanelViewState,
   createPanelPresentation,
   createPanelViewModel,
   formatJstTimestamp,
   pasteResultErrorReason,
-  reconcilePanelViewState,
-  selectPanelTab,
-  togglePanelMinimized,
   type PanelViewModel,
   type PanelViewState,
 } from './panel-view';
 import type { ResolvedTab } from '../shared/default-ui';
+import { useConversationPanelState } from './useConversationPanelState.ts';
+import { useConversationAudioMute } from './useConversationAudioMute.ts';
 
 const ERROR_MESSAGES: Record<string, string> = {
   'editor-not-found': '入力欄が見つかりません。',
@@ -56,6 +54,13 @@ export interface PanelControllerState {
   readonly activeTab: ResolvedTab | undefined;
   readonly activeButtons: readonly ResolvedButton[];
   readonly minimized: boolean;
+  readonly conversationId: string | null;
+  readonly bridgeExpanded: boolean;
+  readonly conversationMuted: boolean;
+  readonly muteLoaded: boolean;
+  readonly mutePending: boolean;
+  readonly muteRevision: number;
+  readonly getConversationMuteSnapshot: () => { readonly muted: boolean; readonly revision: number };
   readonly error: string;
   readonly answerCompletionSoundEnabled: boolean;
   readonly answerCompletionSoundId: string;
@@ -68,6 +73,8 @@ export interface PanelControllerState {
   readonly onButtonClick: (button: ResolvedButton, isPointerClick: boolean) => void;
   readonly onSelectTab: (tabId: ResolvedTab['id']) => void;
   readonly onToggleMinimized: () => void;
+  readonly onToggleBridgeExpanded: () => void;
+  readonly onToggleConversationMute: (muted: boolean) => Promise<void>;
   readonly onOpenSettings: () => void;
   readonly onToggleAnswerCompletionSound: (enabled: boolean) => Promise<void>;
   readonly onManualPasteTextChange: (value: string) => void;
@@ -82,11 +89,8 @@ export function usePanelController(): PanelControllerState {
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const model = createPanelViewModel(settings);
-  const [viewState, setViewState] = useState(() => createInitialPanelViewState(model.tabs));
-  const viewStateRef = useRef(viewState);
-  viewStateRef.current = viewState;
-  const [viewStateLoaded, setViewStateLoaded] = useState(false);
-  const [persistViewState, setPersistViewState] = useState(false);
+  const conversationPanel = useConversationPanelState(model.tabs);
+  const conversationMute = useConversationAudioMute(conversationPanel.conversationId);
   const [error, setError] = useState('');
   const [soundToggleError, setSoundToggleError] = useState('');
   const [soundTogglePending, setSoundTogglePending] = useState(false);
@@ -97,7 +101,6 @@ export function usePanelController(): PanelControllerState {
   const pointerSnapshot = useRef<{ buttonId: ResolvedButton['id']; snapshot: SelectionSnapshot } | null>(null);
   const activePasteSnapshot = useRef<SelectionSnapshot | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
-  const ignoreNextViewChange = useRef(false);
   const pasteController = useRef<ClipboardPasteController | null>(null);
   if (!pasteController.current) {
     const onMetric = createClipboardMetricReporter();
@@ -124,84 +127,31 @@ export function usePanelController(): PanelControllerState {
       onMetric,
     });
   }
-  const presentation = createPanelPresentation(model, viewState);
+  const presentation = createPanelPresentation(model, conversationPanel.viewState);
   const { currentViewState, activeTab, activeButtons } = presentation;
-  const visibleTabKey = model.tabs.map(({ id }) => id).join('|');
 
   useEffect(() => {
     const repo = repository.current!;
     let active = true;
     let configRevision = 0;
-    let viewRevision = 0;
     const unsubscribeSettings = repo.subscribeSettings((next) => {
       configRevision += 1;
       settingsRef.current = next;
       setSettings(next);
-      const normalized = reconcilePanelViewState(viewStateRef.current, createPanelViewModel(next).tabs);
-      if (normalized.selectedTabId !== viewStateRef.current.selectedTabId) {
-        viewStateRef.current = normalized;
-        setViewState(normalized);
-        setPersistViewState(true);
-      }
     });
-    const unsubscribeView = repo.subscribeViewState((next) => {
-      viewRevision += 1;
-      const nextState = createInitialPanelViewState(createPanelViewModel(settingsRef.current).tabs, next);
-      const current = viewStateRef.current;
-      if (current.selectedTabId !== nextState.selectedTabId || current.minimized !== nextState.minimized) {
-        ignoreNextViewChange.current = true;
-        viewStateRef.current = nextState;
-        setViewState(nextState);
-      }
-    });
-
-    void Promise.all([repo.loadSettings(), repo.loadViewState()]).then(([settingsResult, viewResult]) => {
+    void repo.loadSettings().then((settingsResult) => {
       if (!active) return;
       if (configRevision === 0 && settingsResult.ok) {
         settingsRef.current = settingsResult.settings;
         setSettings(settingsResult.settings);
       }
-      if (viewRevision === 0) {
-        const currentModel = createPanelViewModel(settingsRef.current);
-        const stored: StoredViewState = viewResult.ok
-          ? viewResult.viewState
-          : { selectedTabId: null, minimized: false };
-        const initial = createInitialPanelViewState(currentModel.tabs, stored);
-        setViewState(initial);
-        if (viewResult.ok && (initial.selectedTabId !== stored.selectedTabId || initial.minimized !== stored.minimized)) {
-          setPersistViewState(true);
-        }
-      }
-      setViewStateLoaded(true);
     });
 
     return () => {
       active = false;
       unsubscribeSettings();
-      unsubscribeView();
     };
   }, []);
-
-  useEffect(() => {
-    const normalized = reconcilePanelViewState(viewState, model.tabs);
-    if (normalized.selectedTabId !== viewState.selectedTabId) {
-      setViewState(normalized);
-      setPersistViewState(true);
-    }
-  }, [visibleTabKey, viewState]);
-
-  useEffect(() => {
-    if (!viewStateLoaded || !persistViewState || ignoreNextViewChange.current) {
-      ignoreNextViewChange.current = false;
-      return;
-    }
-    void repository.current?.saveViewState({
-      selectedTabId: currentViewState.selectedTabId,
-      minimized: currentViewState.minimized,
-    }).then((result) => {
-      if (!result.ok) setError('パネル状態を保存できませんでした。');
-    });
-  }, [currentViewState.selectedTabId, currentViewState.minimized, persistViewState, viewStateLoaded]);
 
   function showResult(result: ReturnType<typeof insertAtBeginning>) {
     setError(result.ok ? '' : ERROR_MESSAGES[result.reason] ?? '入力欄の操作に失敗しました。');
@@ -293,24 +243,20 @@ export function usePanelController(): PanelControllerState {
     setSoundTogglePending(false);
   }
 
-  function selectTab(tabId: ResolvedTab['id']) {
-    setViewState((state) => selectPanelTab(state, model.tabs, tabId));
-    setPersistViewState(true);
-    setError('');
-  }
-
-  function toggleMinimized() {
-    setViewState((state) => togglePanelMinimized(reconcilePanelViewState(state, model.tabs)));
-    setPersistViewState(true);
-  }
-
   return {
     model,
     currentViewState,
     activeTab,
     activeButtons,
     minimized: currentViewState.minimized,
-    error,
+    conversationId: conversationPanel.conversationId,
+    bridgeExpanded: conversationPanel.bridgeExpanded,
+    conversationMuted: conversationMute.muted,
+    muteLoaded: conversationMute.loaded,
+    mutePending: conversationMute.pending,
+    muteRevision: conversationMute.revision,
+    getConversationMuteSnapshot: conversationMute.getSnapshot,
+    error: error || conversationPanel.error || conversationMute.error,
     answerCompletionSoundEnabled: soundToggleOptimistic ?? settings.answerCompletionSoundEnabled === true,
     answerCompletionSoundId: settings.answerCompletionSoundId ?? 'tone-660',
     answerCompletionSoundVolumePercent: settings.answerCompletionSoundVolumePercent ?? DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT,
@@ -320,8 +266,10 @@ export function usePanelController(): PanelControllerState {
     manualPasteText,
     onButtonPointerDown: captureSelectionPointer,
     onButtonClick: dispatchButton,
-    onSelectTab: selectTab,
-    onToggleMinimized: toggleMinimized,
+    onSelectTab: conversationPanel.onSelectTab,
+    onToggleMinimized: conversationPanel.onToggleMinimized,
+    onToggleBridgeExpanded: conversationPanel.onToggleBridgeExpanded,
+    onToggleConversationMute: conversationMute.onToggle,
     onOpenSettings: () => { void chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS' }); },
     onToggleAnswerCompletionSound: toggleAnswerCompletionSound,
     onManualPasteTextChange: setManualPasteText,

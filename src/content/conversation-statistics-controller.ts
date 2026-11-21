@@ -48,7 +48,7 @@ export interface ConversationStatisticsControllerOptions {
   readonly window: Window;
   readonly repository: ConversationStatisticsRepository;
   readonly onState: (state: ConversationStatisticsViewState) => void;
-  readonly onAnswerCompleted?: (event: AnswerCompletionEvent) => void;
+  readonly onAnswerCompleted?: (event: AnswerCompletionEvent, conversationId: string | null) => void;
 }
 
 const SAVE_DEBOUNCE_MS = 400;
@@ -342,7 +342,7 @@ export class ConversationStatisticsController {
         if (!identity) continue;
         const completion = this.answerCompletionTracker.observe(identity);
         if (completion) {
-          try { this.options.onAnswerCompleted?.(completion); } catch { /* Sound callbacks must not affect statistics. */ }
+          try { this.options.onAnswerCompleted?.(completion, this.conversationId); } catch { /* Sound callbacks must not affect statistics. */ }
         }
         const key = identity.turnKey;
         const existing = session.hasIdentity(key);

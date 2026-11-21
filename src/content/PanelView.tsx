@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { ConversationStatistics } from './ConversationStatistics';
 import { CodexWorkModeToggle } from './CodexWorkModeToggle';
 import { CodexBridgeList } from './CodexBridgeList';
@@ -21,6 +20,13 @@ export function PanelView({
   currentViewState,
   activeTab,
   activeButtons,
+  conversationId,
+  bridgeExpanded,
+  conversationMuted,
+  muteLoaded,
+  mutePending,
+  muteRevision,
+  getConversationMuteSnapshot,
   error,
   answerCompletionSoundEnabled,
   answerCompletionSoundId,
@@ -33,14 +39,14 @@ export function PanelView({
   onButtonClick,
   onSelectTab,
   onToggleMinimized,
+  onToggleBridgeExpanded,
+  onToggleConversationMute,
   onOpenSettings,
   onToggleAnswerCompletionSound,
   onManualPasteTextChange,
   onSubmitManualPaste,
   onCancelManualPaste,
 }: PanelControllerState) {
-  const [bridgeExpanded, setBridgeExpanded] = useState(false);
-
   return (
     <aside className={'panel' + (currentViewState.minimized ? ' is-minimized' : '')} aria-label="ChatPanelPlus パネル">
       <div className="panel-header">
@@ -55,6 +61,13 @@ export function PanelView({
           soundTogglePending={soundTogglePending}
           soundToggleError={soundToggleError}
           onToggleAnswerCompletionSound={onToggleAnswerCompletionSound}
+          conversationId={conversationId}
+          conversationMuted={conversationMuted}
+          conversationMuteLoaded={muteLoaded}
+          conversationMutePending={mutePending}
+          conversationMuteRevision={muteRevision}
+          getConversationMuteSnapshot={getConversationMuteSnapshot}
+          onToggleConversationMute={onToggleConversationMute}
         />
         <div className="utility-row" aria-label="常時表示操作">
           {model.utilityButtons.map((button) => (
@@ -128,7 +141,7 @@ export function PanelView({
             className="codex-bridge-button panel-bridge-details-toggle"
             aria-expanded={bridgeExpanded}
             aria-controls="panel-bridge-details"
-            onClick={() => setBridgeExpanded((open) => !open)}
+            onClick={onToggleBridgeExpanded}
           >
             CodexBridge詳細を{bridgeExpanded ? '閉じる' : '開く'}
           </button>
