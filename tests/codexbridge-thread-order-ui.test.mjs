@@ -4,39 +4,39 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const sourcePath = fileURLToPath(new URL('../src/content/CodexBridgeList.tsx', import.meta.url));
+const modePath = fileURLToPath(new URL('../src/content/CodexBridgeThreadModePicker.tsx', import.meta.url));
 const mainPath = fileURLToPath(new URL('../src/content/main.tsx', import.meta.url));
 
-test('読み込み済み対象と説明を持つaccessibleなnative checkboxを表示する', async () => {
-  const source = await readFile(sourcePath, 'utf8');
-  assert.match(source, /const \[runningOnly, setRunningOnly\] = useState\(true\)/);
-  assert.match(source, /<label>\s*<input type="checkbox" checked=\{runningOnly\}/);
-  assert.match(source, /aria-label="読み込み済みthreadを実行中だけ表示"/);
-  assert.match(source, /aria-describedby="codex-bridge-running-filter-note"/);
-  assert.match(source, /<span>実行中のみ<\/span>/);
-  assert.match(source, /id="codex-bridge-running-filter-note">読み込み済みthreadが対象です。次ページを取得すると再判定します。/);
-  assert.match(source, /onChange=\{\(event\) => setRunningOnly\(event\.currentTarget\.checked\)\}/);
+test('Bridge取得モードは実行中を既定にし、通常一覧とaccessibleな説明を持つradioを表示する', async () => {
+  const [source, picker] = await Promise.all([readFile(sourcePath, 'utf8'), readFile(modePath, 'utf8')]);
+  assert.match(source, /const \[listMode, setListMode\] = useState<CodexBridgeThreadListMode>\('running'\)/);
+  assert.match(picker, /<fieldset className="codex-bridge-list-mode" aria-describedby=\{descriptionId\}>/);
+  assert.match(picker, /value="running" checked=\{mode === 'running'\}/);
+  assert.match(picker, /value="normal" checked=\{mode === 'normal'\}/);
+  assert.match(picker, /Bridgeの実行中一覧APIが返したthreadを表示します/);
+  assert.match(picker, /通常一覧は20件ずつ取得します/);
 });
 
-test('filterは表示配列だけを切替え、選択・監視・次ページ要求を変更しない', async () => {
+test('running_onlyと通常cursor要求を分け、切替は選択と監視を保持する', async () => {
   const source = await readFile(sourcePath, 'utf8');
-  assert.match(source, /const displayedThreads = filterCodexBridgeThreads\(threads, runningOnly\)/);
+  assert.match(source, /\.\.\.\(listMode === 'running' \? \{ runningOnly: true \} : \{\}\)/);
+  assert.match(source, /const displayedThreads = sortCodexBridgeThreadsByActivity\(threads\)/);
+  assert.doesNotMatch(source, /filterCodexBridgeThreads\(threads/);
   assert.match(source, /displayedThreads\.map\(\(thread, index\) =>/);
   assert.match(source, /const isSelected = selected\?\.targetId === thread\.targetId/);
   assert.match(source, /<CodexBridgeWatchPanel[\s\S]*?selected=\{selected \? \{/);
-  const nextPage = source.match(/\{nextCursor && \([\s\S]*?次ページ[\s\S]*?\)\}/)?.[0];
+  const nextPage = source.match(/\{listMode === 'normal' && nextCursor && \([\s\S]*?次ページ[\s\S]*?\)\}/)?.[0];
   assert.ok(nextPage, 'next-page control remains available');
-  assert.doesNotMatch(nextPage, /runningOnly/);
-  const toggle = source.match(/onChange=\{\(event\) => setRunningOnly\(event\.currentTarget\.checked\)\}/)?.[0];
-  assert.ok(toggle);
-  assert.doesNotMatch(toggle, /updateSelected|requestTracker|setThreads/);
+  assert.match(source, /requestTracker\.current\?\.selectMode\(mode\)/);
+  assert.match(source, /requestTracker\.current\?\.selectTarget\(value\)/);
+  assert.match(source, /function changeListMode\(mode: CodexBridgeThreadListMode\)/);
 });
 
-test('未読込・実一覧空・filter結果空の案内を区別する', async () => {
+test('未読込・実行中0件・通常ページ0件・要求失敗の案内を区別する', async () => {
   const source = await readFile(sourcePath, 'utf8');
   assert.match(source, /!threadsLoaded && <p className="codex-bridge-empty">thread一覧は未読込です。/);
-  assert.match(source, /threadsLoaded && threads\.length === 0 && <p className="codex-bridge-empty">threadはありません。/);
-  assert.match(source, /threadsLoaded && threads\.length > 0 && runningOnly && displayedThreads\.length === 0/);
-  assert.match(source, /読み込み済みthreadに実行中または推定実行中はありません。/);
+  assert.match(source, /Bridgeが返した実行中threadはありません。/);
+  assert.match(source, /この通常一覧ページにthreadはありません。/);
   assert.match(source, /threadsError && <p className="codex-bridge-error" role="alert">/);
 });
 

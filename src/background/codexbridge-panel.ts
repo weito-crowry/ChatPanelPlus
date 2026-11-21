@@ -81,7 +81,9 @@ function readRequest(message: unknown): CodexBridgeTargetsMessage | CodexBridgeT
     return { type: CODEX_BRIDGE_MCP_GET_TARGETS };
   }
   if (message.type === CODEX_BRIDGE_MCP_GET_THREADS && isIdentifier(message.targetId)
-    && keys.every((key) => key === 'type' || key === 'targetId' || key === 'cursor')
+    && keys.every((key) => key === 'type' || key === 'targetId' || key === 'cursor' || key === 'runningOnly')
+    && (message.runningOnly === undefined || typeof message.runningOnly === 'boolean')
+    && !(message.runningOnly === true && message.cursor !== undefined)
     && (message.cursor === undefined || (typeof message.cursor === 'string'
       && message.cursor.length > 0 && message.cursor.length <= 2048
       && !hasControlCharacters(message.cursor)))) {
@@ -89,6 +91,7 @@ function readRequest(message: unknown): CodexBridgeTargetsMessage | CodexBridgeT
       type: CODEX_BRIDGE_MCP_GET_THREADS,
       targetId: message.targetId,
       ...(typeof message.cursor === 'string' ? { cursor: message.cursor } : {}),
+      ...(message.runningOnly === true ? { runningOnly: true } : {}),
     };
   }
   if (message.type === CODEX_BRIDGE_MCP_GET_STATUS && isIdentifier(message.targetId)
@@ -147,7 +150,7 @@ export function createCodexBridgePanelHandler(options: CodexBridgePanelHandlerOp
         return { ok: true, data: await client.readTargets() };
       }
       if (request.type === CODEX_BRIDGE_MCP_GET_THREADS) {
-        return { ok: true, data: await client.readThreads(request.targetId, request.cursor) };
+        return { ok: true, data: await client.readThreads(request.targetId, request.cursor, request.runningOnly === true) };
       }
       return { ok: true, data: await client.readStatus(request.targetId, request.threadId) };
     } catch (error) {

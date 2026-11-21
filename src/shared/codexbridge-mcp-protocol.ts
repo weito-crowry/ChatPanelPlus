@@ -103,6 +103,7 @@ export type CodexBridgeMcpDiagnosticCode =
   | 'protocol-error'
   | 'protocol-version-unsupported'
   | 'readonly-tool-unavailable'
+  | 'running-only-unsupported'
   | 'readonly-probe-failed'
   | 'response-too-large'
   | 'storage-error'
@@ -189,6 +190,7 @@ export type CodexBridgeThreadsMessage = Readonly<{
   type: typeof CODEX_BRIDGE_MCP_GET_THREADS;
   targetId: string;
   cursor?: string;
+  runningOnly?: boolean;
 }>;
 export type CodexBridgeStatusMessage = Readonly<{
   type: typeof CODEX_BRIDGE_MCP_GET_STATUS;

@@ -16,6 +16,7 @@ export type McpFailureCode =
   | 'protocol-error'
   | 'protocol-version-unsupported'
   | 'readonly-tool-unavailable'
+  | 'running-only-unsupported'
   | 'readonly-probe-failed'
   | 'response-too-large';
 

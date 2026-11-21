@@ -38,6 +38,7 @@ const DIAGNOSTIC_MESSAGES: Record<CodexBridgeMcpDiagnosticCode, string> = {
   'protocol-error': 'MCP応答を確認できませんでした。',
   'protocol-version-unsupported': 'サーバーのMCP protocol versionには対応していません。',
   'readonly-tool-unavailable': '読み取り確認用のcodex_targets toolがありません。',
+  'running-only-unsupported': 'Bridgeのcodex_threads toolがrunning_onlyに対応していません。',
   'readonly-probe-failed': 'codex_targetsの読み取り確認に失敗しました。',
   'response-too-large': 'サーバー応答が上限を超えました。',
   'storage-error': 'token保存領域を読み取れませんでした。',

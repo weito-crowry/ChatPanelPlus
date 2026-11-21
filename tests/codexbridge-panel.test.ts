@@ -19,6 +19,8 @@ type MockOptions = Readonly<{
   threads?: unknown;
   status?: unknown;
   toolError?: boolean;
+  runningOnlySchema?: boolean | 'invalid';
+  remoteRunningUnsupported?: boolean;
   responseMode?: 'json' | 'sse';
   httpStatus?: number;
 }>;
@@ -49,11 +51,21 @@ function createMock(options: MockOptions = {}) {
     if (payload.method === 'initialize') return jsonRpc(id, { protocolVersion: '2025-03-26' }, 'panel-session');
     if (payload.method === 'notifications/initialized') return new Response(null, { status: 202 });
     if (payload.method === 'tools/list') {
-      return jsonRpc(id, { tools: [{ name: 'codex_targets' }, { name: 'codex_threads' }, { name: 'codex_status' }] });
+      return jsonRpc(id, { tools: [
+        { name: 'codex_targets' },
+        { name: 'codex_threads', ...(options.runningOnlySchema ? { inputSchema: { properties: { running_only: {
+          type: options.runningOnlySchema === 'invalid' ? 'string' : 'boolean',
+        } } } } : {}) },
+        { name: 'codex_status' },
+      ] });
     }
     if (payload.method === 'tools/call') {
       const params = payload.params as { name: string };
       if (options.toolError) return jsonRpc(id, { isError: true, content: [{ type: 'text', text: 'private provider detail' }] });
+      if (options.remoteRunningUnsupported && params.name === 'codex_threads'
+        && (payload.params as { arguments?: { running_only?: boolean } }).arguments?.running_only === true) {
+        return jsonRpc(id, { isError: true, content: [{ type: 'text', text: 'private target detail' }] });
+      }
       const result = params.name === 'codex_targets'
         ? options.targets ?? { targets: [{ id: 'machine-1', name: 'Workstation', kind: 'local', available: true }] }
         : params.name === 'codex_threads'
@@ -161,6 +173,87 @@ test('thread pages request bounded history-free data, deduplicate external rows 
   assert.deepEqual((secondCall?.params as { arguments: unknown }).arguments, {
     target_id: 'machine-1', include_history: false, limit: 20, cursor: 'cursor-2',
   });
+});
+
+test('旧Bridgeのschemaでは実行中取得を拒否し、通常の20件cursor一覧は維持する', async () => {
+  const mock = createMock({ threads: { threads: [{ id: 'normal-row' }], next_cursor: 'next' } });
+  const unsupported = await mock.handler({ type: CODEX_BRIDGE_MCP_GET_THREADS, targetId: 'machine-1', runningOnly: true }, trustedSender);
+  assert.deepEqual(unsupported, { ok: false, reason: 'running-only-unsupported' });
+  assert.equal(mock.requests.some(({ payload }) => payload.method === 'tools/call'), false);
+
+  const normal = await mock.handler({ type: CODEX_BRIDGE_MCP_GET_THREADS, targetId: 'machine-1', cursor: 'cursor-2' }, trustedSender);
+  assert.equal(normal?.ok, true);
+  const call = mock.requests.find(({ payload }) => payload.method === 'tools/call')?.payload;
+  assert.deepEqual((call?.params as { arguments: unknown }).arguments, {
+    target_id: 'machine-1', include_history: false, limit: 20, cursor: 'cursor-2',
+  });
+});
+
+test('未知schemaとremote targetの実行中非対応は隠さず、通常一覧は継続できる', async () => {
+  const invalidSchema = createMock({ runningOnlySchema: 'invalid' });
+  assert.deepEqual(await invalidSchema.handler({ type: CODEX_BRIDGE_MCP_GET_THREADS, targetId: 'machine-1', runningOnly: true }, trustedSender), {
+    ok: false, reason: 'running-only-unsupported',
+  });
+  assert.equal(invalidSchema.requests.some(({ payload }) => payload.method === 'tools/call'), false);
+
+  const remote = createMock({ runningOnlySchema: true, remoteRunningUnsupported: true,
+    threads: { threads: [{ id: 'regular' }], external_threads: [], next_cursor: 'cursor-2' } });
+  assert.deepEqual(await remote.handler({ type: CODEX_BRIDGE_MCP_GET_THREADS, targetId: 'machine-1', runningOnly: true }, trustedSender), {
+    ok: false, reason: 'readonly-probe-failed',
+  });
+  const regular = await remote.handler({ type: CODEX_BRIDGE_MCP_GET_THREADS, targetId: 'machine-1' }, trustedSender);
+  assert.equal(regular?.ok, true);
+  const calls = remote.requests.filter(({ payload }) => payload.method === 'tools/call');
+  assert.deepEqual(calls.map(({ payload }) => (payload.params as { arguments: unknown }).arguments), [
+    { target_id: 'machine-1', running_only: true },
+    { target_id: 'machine-1', include_history: false, limit: 20 },
+  ]);
+});
+
+test('対応Bridgeの実行中結果はrunning_onlyだけを送り、100件超をcursorなしで読む', async () => {
+  const rows = Array.from({ length: 150 }, (_, index) => ({ id: `running-${index}`, target_id: 'machine-1' }));
+  const mock = createMock({ runningOnlySchema: true, threads: { threads: rows, external_threads: [], next_cursor: null } });
+  const response = await mock.handler({ type: CODEX_BRIDGE_MCP_GET_THREADS, targetId: 'machine-1', runningOnly: true }, trustedSender);
+
+  assert.equal(response?.ok, true);
+  if (!response?.ok) return;
+  assert.equal((response.data as CodexBridgeThreadPage).threads.length, 150);
+  assert.equal((response.data as CodexBridgeThreadPage).nextCursor, null);
+  const call = mock.requests.find(({ payload }) => payload.method === 'tools/call')?.payload;
+  assert.deepEqual((call?.params as { arguments: unknown }).arguments, { target_id: 'machine-1', running_only: true });
+
+  const excessive = createMock({ runningOnlySchema: true, threads: {
+    threads: Array.from({ length: 1001 }, (_, index) => ({ id: `running-${index}`, target_id: 'machine-1' })),
+    external_threads: [], next_cursor: null,
+  } });
+  assert.deepEqual(await excessive.handler({ type: CODEX_BRIDGE_MCP_GET_THREADS, targetId: 'machine-1', runningOnly: true }, trustedSender), {
+    ok: false, reason: 'protocol-error',
+  });
+});
+
+test('実行中取得ではcursor混在と非null next_cursorを拒否する', async () => {
+  const mixed = createMock({ runningOnlySchema: true });
+  assert.deepEqual(await mixed.handler({
+    type: CODEX_BRIDGE_MCP_GET_THREADS, targetId: 'machine-1', runningOnly: true, cursor: 'next',
+  }, trustedSender), { ok: false, reason: 'protocol-error' });
+  assert.equal(mixed.requests.some(({ payload }) => payload.method === 'tools/call'), false);
+
+  const malformed = createMock({ runningOnlySchema: true, threads: { threads: [{ id: 'one' }], next_cursor: 'next' } });
+  assert.deepEqual(await malformed.handler({ type: CODEX_BRIDGE_MCP_GET_THREADS, targetId: 'machine-1', runningOnly: true }, trustedSender), {
+    ok: false, reason: 'protocol-error',
+  });
+});
+
+test('runtime message guard rejects unknown thread options but accepts only a boolean runningOnly flag', async () => {
+  const unsupportedFlag = createMock();
+  assert.deepEqual(await unsupportedFlag.handler({
+    type: CODEX_BRIDGE_MCP_GET_THREADS, targetId: 'machine-1', runningOnly: 'true',
+  }, trustedSender), { ok: false, reason: 'protocol-error' });
+
+  const historyMix = createMock();
+  assert.deepEqual(await historyMix.handler({
+    type: CODEX_BRIDGE_MCP_GET_THREADS, targetId: 'machine-1', runningOnly: true, includeHistory: true,
+  }, trustedSender), { ok: false, reason: 'protocol-error' });
 });
 
 test('empty pages are valid and selected status stays bound to its target/thread pair', async () => {

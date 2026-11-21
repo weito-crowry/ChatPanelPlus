@@ -1,3 +1,5 @@
+import { formatRunningThreadCount, type RunningThreadSummary } from './codexbridge-running-summary.ts';
+
 type BridgeSummary = Readonly<{
   watchingCount: number;
   unacknowledgedThreadCount: number;
@@ -7,13 +9,14 @@ type Props = Readonly<{
   compact?: boolean;
   conversationId: string | null;
   summary: BridgeSummary | null;
-  connection: Readonly<{ state: 'loading' | 'connected' | 'error'; targetName: string | null }>;
+  connection: Readonly<{ state: 'loading' | 'connected' | 'error'; targetId: string | null; targetName: string | null }>;
+  runningSummary: RunningThreadSummary;
   expanded?: boolean;
   onToggle?: () => void;
 }>;
 
-export function BridgeSummaryBar({ compact = false, conversationId, summary, connection, expanded = false, onToggle }: Props) {
-  const runningCount: number | null = null;
+export function BridgeSummaryBar({ compact = false, conversationId, summary, connection, runningSummary, expanded = false, onToggle }: Props) {
+  const runningCount = formatRunningThreadCount(runningSummary, connection.targetId, connection.state);
   const targetName = connection.targetName?.trim();
   const connectionLabel = connection.state === 'loading' ? '接続状況を確認中'
     : connection.state === 'error' ? '接続できません'
@@ -28,9 +31,9 @@ export function BridgeSummaryBar({ compact = false, conversationId, summary, con
         <span className="phase6-bridge-connection">{connectionLabel}</span>
       </div>
       <dl className="phase6-bridge-counters" aria-label="CodexBridge件数">
-        <div title="実行中件数はBridge running_only連携後に取得します。">
+        <div title={runningCount.title}>
           <dt>実行中</dt>
-          <dd aria-label="Bridge実行中件数">{runningCount ?? '—'}</dd>
+          <dd aria-label="Bridge実行中件数">{runningCount.value}</dd>
         </div>
         <div title="現在の会話から登録した監視対象です。">
           <dt>監視中</dt>
@@ -49,7 +52,7 @@ export function BridgeSummaryBar({ compact = false, conversationId, summary, con
       )}
       {!compact && <p className="phase6-bridge-note" role="note">
         {!conversationId ? '会話ID確認後に監視・通知件数を表示します。'
-          : currentSummary ? '監視中・通知は現在の会話の件数です。実行中はBridge連携待ちです。'
+          : currentSummary ? '監視中・通知は現在の会話の件数です。実行中は選択対象のBridge結果です。'
             : '会話別の監視・通知件数を確認しています。'}
       </p>}
     </section>

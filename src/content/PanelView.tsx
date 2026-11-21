@@ -5,13 +5,14 @@ import { CodexBridgeList } from './CodexBridgeList';
 import { ProjectPanelTitle } from './ProjectPanelTitle';
 import { BridgeSummaryBar } from './BridgeSummaryBar';
 import type { PanelControllerState } from './usePanelController';
+import type { RunningThreadSummary } from './codexbridge-running-summary.ts';
 import { conversationIdFromPath } from '../shared/conversation-route.ts';
 
 const MIN_ICON_SVG = <svg className="panel-minimize-icon" viewBox="0 0 24 24" aria-hidden="true">
   <path d="m7 10 5 5 5-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
 </svg>;
 
-type BridgeConnection = Readonly<{ state: 'loading' | 'connected' | 'error'; targetName: string | null }>;
+type BridgeConnection = Readonly<{ state: 'loading' | 'connected' | 'error'; targetId: string | null; targetName: string | null }>;
 
 export function PanelView({
   model,
@@ -46,7 +47,8 @@ export function PanelView({
   onSubmitManualPaste,
   onCancelManualPaste,
 }: PanelControllerState) {
-  const [bridgeConnection, setBridgeConnection] = useState<BridgeConnection>({ state: 'loading', targetName: null });
+  const [bridgeConnection, setBridgeConnection] = useState<BridgeConnection>({ state: 'loading', targetId: null, targetName: null });
+  const [runningSummary, setRunningSummary] = useState<RunningThreadSummary>({ targetId: null, count: null, status: 'loading' });
   const [bridgeSummary, setBridgeSummary] = useState<Readonly<{
     conversationId: string;
     watchingCount: number;
@@ -58,6 +60,7 @@ export function PanelView({
     setBridgeSummary(summary && conversationId ? { ...summary, conversationId } : null);
   }, [conversationId]);
   const updateBridgeConnection = useCallback((connection: BridgeConnection) => setBridgeConnection(connection), []);
+  const updateRunningSummary = useCallback((summary: RunningThreadSummary) => setRunningSummary(summary), []);
   return (
     <aside className={'panel' + (currentViewState.minimized ? ' is-minimized' : '')} aria-label="ChatPanelPlus パネル">
       <header className="panel-header">
@@ -97,7 +100,7 @@ export function PanelView({
           </button>
         </div>
         {currentViewState.minimized && <BridgeSummaryBar compact conversationId={conversationId}
-          summary={currentBridgeSummary} connection={bridgeConnection} />}
+          summary={currentBridgeSummary} connection={bridgeConnection} runningSummary={runningSummary} />}
       </header>
       <div className="panel-content" hidden={currentViewState.minimized}>
         <div className="utility-row" aria-label="常時表示操作">
@@ -156,13 +159,14 @@ export function PanelView({
           </div>
         )}
         <BridgeSummaryBar conversationId={conversationId} summary={currentBridgeSummary} connection={bridgeConnection}
-          expanded={bridgeExpanded} onToggle={onToggleBridgeExpanded} />
+          runningSummary={runningSummary} expanded={bridgeExpanded} onToggle={onToggleBridgeExpanded} />
         <div id="panel-bridge-details" className="panel-bridge-details" hidden={!bridgeExpanded}>
           <CodexBridgeList
             foregroundEnabled={!currentViewState.minimized} conversationId={conversationId}
             bridgeWatchSelection={bridgeWatchSelection} bridgeEventSelection={bridgeEventSelection}
             onSelectBridgeWatch={onSelectBridgeWatch} onSelectBridgeEvent={onSelectBridgeEvent}
             onSummaryChange={updateBridgeSummary} onConnectionChange={updateBridgeConnection}
+            onRunningSummaryChange={updateRunningSummary}
           />
         </div>
         {error && <div className="panel-error" role="status">{error}</div>}

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { CodexBridgeThread } from '../src/shared/codexbridge-mcp-protocol.ts';
-import { mergeCodexBridgeThreads } from '../src/content/codexbridge-request-tracker.ts';
+import { CodexBridgeRequestTracker, mergeCodexBridgeThreads } from '../src/content/codexbridge-request-tracker.ts';
 import {
   classifyCodexBridgeThreadActivity,
   filterCodexBridgeThreads,
@@ -84,4 +84,21 @@ test('実行中のみfilterは確定・推定だけを返し、OFFでは全一�
   assert.deepEqual(filterCodexBridgeThreads(threads, true).map(({ id }) => id), ['running', 'estimated']);
   assert.equal(filterCodexBridgeThreads(threads, false).length, 4);
   assert.deepEqual(filterCodexBridgeThreads([], true), []);
+});
+
+test('表示モードと対象を切り替えると古い一覧応答を破棄し、通常一覧のcursorを維持する', () => {
+  const tracker = new CodexBridgeRequestTracker();
+  tracker.selectTarget('target-1');
+  const running = tracker.beginThreads('target-1');
+  assert.equal(tracker.isCurrentThreads(running), true);
+
+  tracker.selectMode('normal');
+  assert.equal(tracker.isCurrentThreads(running), false);
+  const firstNormalPage = tracker.beginThreads('target-1');
+  assert.equal(tracker.setNextCursor(firstNormalPage, 'page-2'), true);
+  const secondNormalPage = tracker.beginThreads('target-1', 'page-2');
+  assert.equal(tracker.isCurrentThreads(secondNormalPage), true);
+
+  tracker.selectTarget('target-2');
+  assert.equal(tracker.isCurrentThreads(secondNormalPage), false);
 });

@@ -134,7 +134,7 @@ function finalAnswerFailure(error: unknown): CodexBridgeFinalAnswerResult {
     if (error.code === 'response-too-large') {
       return { status: 'incomplete', reason: 'history-too-large', completeness: 'unconfirmed' };
     }
-    return { status: 'failed', reason: error.code };
+    return { status: 'failed', reason: error.code === 'running-only-unsupported' ? 'readonly-tool-unavailable' : error.code };
   }
   return { status: 'failed', reason: 'unknown-error' };
 }

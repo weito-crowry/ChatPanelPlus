@@ -223,6 +223,37 @@ test('SSE responses work and a 404 session expiry reinitializes before retrying 
   assert.equal(requests.at(-1)?.headers.get('mcp-protocol-version'), '2025-03-26');
 });
 
+test('running_only capability is rechecked after session expiry before retrying the read', async () => {
+  const requests: RecordedRequest[] = [];
+  let initialized = 0;
+  let toolsListCount = 0;
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const request = recordRequest(input, init);
+    requests.push(request);
+    const { id, method } = request.payload;
+    if (method === 'initialize') {
+      initialized += 1;
+      return jsonRpcResponse(id as number, { protocolVersion: '2025-03-26' }, `session-${initialized}`);
+    }
+    if (method === 'notifications/initialized') return new Response(null, { status: 202 });
+    if (method === 'tools/list') {
+      toolsListCount += 1;
+      return jsonRpcResponse(id as number, { tools: [{ name: 'codex_threads', ...(toolsListCount === 1
+        ? { inputSchema: { properties: { running_only: { type: 'boolean' } } } } : {}) }] });
+    }
+    if (method === 'tools/call') return new Response(null, { status: 404 });
+    return new Response(null, { status: 400 });
+  };
+  const client = new CodexBridgeMcpClient('http://127.0.0.1:18000/mcp', '', { fetchImpl });
+
+  await assert.rejects(client.readThreads('machine-1', undefined, true), (error: unknown) =>
+    error instanceof McpTransportError && error.code === 'running-only-unsupported');
+
+  assert.equal(initialized, 2);
+  assert.equal(toolsListCount, 2);
+  assert.equal(requests.filter(({ payload }) => payload.method === 'tools/call').length, 1);
+});
+
 test('connection diagnostics classify HTTP responses, request failure, timeout, and expired session without raw details', async () => {
   for (const [status, reason] of [
     [401, 'authentication-required'],

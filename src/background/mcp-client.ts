@@ -142,11 +142,13 @@ function readTargets(value: unknown): readonly CodexBridgeTarget[] {
   });
 }
 
-function readThreads(value: unknown, targetId: string): CodexBridgeThreadPage {
+function readThreads(value: unknown, targetId: string, runningOnly: boolean): CodexBridgeThreadPage {
   const payload = readToolPayload(value);
-  if (!Array.isArray(payload.threads) || payload.threads.length > 100) throw new McpTransportError('protocol-error');
+  const limit = runningOnly ? 1000 : 100;
+  if (!Array.isArray(payload.threads) || payload.threads.length > limit) throw new McpTransportError('protocol-error');
   const external = payload.external_threads === undefined ? [] : payload.external_threads;
-  if (!Array.isArray(external) || external.length > 100) throw new McpTransportError('protocol-error');
+  if (!Array.isArray(external) || external.length > limit
+    || (runningOnly && payload.threads.length + external.length > limit)) throw new McpTransportError('protocol-error');
   const unique = new Map<string, CodexBridgeThread>();
   for (const item of [...payload.threads, ...external]) {
     if (!isRecord(item)) throw new McpTransportError('protocol-error');
@@ -167,7 +169,8 @@ function readThreads(value: unknown, targetId: string): CodexBridgeThreadPage {
     const key = `${targetId}\u0000${id}`;
     if (!unique.has(key)) unique.set(key, thread);
   }
-  const cursor = payload.next_cursor ?? payload.nextCursor;
+  const cursor = 'next_cursor' in payload ? payload.next_cursor : payload.nextCursor;
+  if (runningOnly && cursor !== null) throw new McpTransportError('protocol-error');
   if (cursor !== undefined && cursor !== null && (typeof cursor !== 'string' || cursor.length > 2048)) {
     throw new McpTransportError('protocol-error');
   }
@@ -197,6 +200,12 @@ function readTools(value: unknown): readonly Record<string, unknown>[] {
   return value.tools;
 }
 
+function supportsRunningOnly(tool: Record<string, unknown> | undefined): boolean {
+  if (!tool || !isRecord(tool.inputSchema) || !isRecord(tool.inputSchema.properties)) return false;
+  const property = tool.inputSchema.properties.running_only;
+  return isRecord(property) && property.type === 'boolean';
+}
+
 function isSessionExpired(error: unknown): boolean {
   return error instanceof McpTransportError && error.code === 'session-expired';
 }
@@ -205,6 +214,7 @@ export class CodexBridgeMcpClient {
   private readonly transport: StreamableHttpMcpTransport;
   private negotiatedProtocolVersion: CodexBridgeMcpProtocolVersion | null = null;
   private availableTools: ReadonlySet<string> | null = null;
+  private runningOnlySupported = false;
   private initializeFlight: Promise<void> | null = null;
   private toolsFlight: Promise<readonly Record<string, unknown>[]> | null = null;
   private sessionEpoch = 0;
@@ -243,13 +253,13 @@ export class CodexBridgeMcpClient {
     return readTargets(await this.callReadonlyTool('codex_targets', {}));
   }
 
-  async readThreads(targetId: string, cursor?: string): Promise<CodexBridgeThreadPage> {
-    return readThreads(await this.callReadonlyTool('codex_threads', {
-      target_id: targetId,
-      include_history: false,
-      limit: 20,
+  async readThreads(targetId: string, cursor?: string, runningOnly = false): Promise<CodexBridgeThreadPage> {
+    if (runningOnly && cursor !== undefined) throw new McpTransportError('protocol-error');
+    const args = runningOnly ? { target_id: targetId, running_only: true } : {
+      target_id: targetId, include_history: false, limit: 20,
       ...(cursor === undefined ? {} : { cursor }),
-    }), targetId);
+    };
+    return readThreads(await this.callReadonlyTool('codex_threads', args), targetId, runningOnly);
   }
 
   async readStatus(targetId: string, threadId: string): Promise<CodexBridgeThreadStatus> {
@@ -291,6 +301,7 @@ export class CodexBridgeMcpClient {
     this.transport.clearSession();
     this.negotiatedProtocolVersion = null;
     this.availableTools = null;
+    this.runningOnlySupported = false;
     this.toolsFlight = null;
     const result = await this.transport.request<InitializeResult>('initialize', {
       protocolVersion: CODEX_BRIDGE_MCP_PROTOCOL_VERSION,
@@ -333,6 +344,7 @@ export class CodexBridgeMcpClient {
     const result = await this.transport.request<ToolsListResult>('tools/list', {});
     const tools = readTools(result);
     this.availableTools = new Set(tools.map(({ name }) => name as string));
+    this.runningOnlySupported = supportsRunningOnly(tools.find(({ name }) => name === 'codex_threads'));
     return tools;
   }
 
@@ -350,6 +362,9 @@ export class CodexBridgeMcpClient {
       availableTools = this.availableTools;
     }
     if (!availableTools?.has(name)) throw new McpTransportError('readonly-tool-unavailable');
+    if (name === 'codex_threads' && argumentsValue.running_only === true && !this.runningOnlySupported) {
+      throw new McpTransportError('running-only-unsupported');
+    }
     const requestSessionEpoch = this.sessionEpoch;
     try {
       return await this.callToolResult(name, argumentsValue);
@@ -360,6 +375,9 @@ export class CodexBridgeMcpClient {
       await this.listToolsWithRecovery();
       availableTools = this.availableTools;
       if (!availableTools?.has(name)) throw new McpTransportError('readonly-tool-unavailable');
+      if (name === 'codex_threads' && argumentsValue.running_only === true && !this.runningOnlySupported) {
+        throw new McpTransportError('running-only-unsupported');
+      }
       return this.callToolResult(name, argumentsValue);
     }
   }

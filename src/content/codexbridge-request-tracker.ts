@@ -1,9 +1,12 @@
 import type { CodexBridgeThread } from '../shared/codexbridge-mcp-protocol.ts';
 
+export type CodexBridgeThreadListMode = 'running' | 'normal';
+
 export type CodexBridgeThreadsRequest = Readonly<{
   generation: number;
   targetId: string;
   cursor: string | null;
+  mode: CodexBridgeThreadListMode;
 }>;
 
 export function mergeCodexBridgeThreads(
@@ -24,6 +27,7 @@ export type CodexBridgeStatusRequest = Readonly<{
 export class CodexBridgeRequestTracker {
   private targetId = '';
   private cursor: string | null = null;
+  private mode: CodexBridgeThreadListMode = 'running';
   private selectedThread: Readonly<{ targetId: string; threadId: string }> | null = null;
   private threadsGeneration = 0;
   private statusGeneration = 0;
@@ -37,9 +41,16 @@ export class CodexBridgeRequestTracker {
     this.statusGeneration += 1;
   }
 
+  selectMode(mode: CodexBridgeThreadListMode): void {
+    if (mode === this.mode) return;
+    this.mode = mode;
+    this.cursor = null;
+    this.threadsGeneration += 1;
+  }
+
   beginThreads(targetId: string, cursor: string | null = null): CodexBridgeThreadsRequest {
     if (cursor === null) this.cursor = null;
-    return { generation: ++this.threadsGeneration, targetId, cursor };
+    return { generation: ++this.threadsGeneration, targetId, cursor, mode: this.mode };
   }
 
   isCurrentThreads(request: CodexBridgeThreadsRequest): boolean {
@@ -48,7 +59,7 @@ export class CodexBridgeRequestTracker {
   }
 
   isLatestThreads(request: CodexBridgeThreadsRequest): boolean {
-    return request.generation === this.threadsGeneration && request.targetId === this.targetId;
+    return request.generation === this.threadsGeneration && request.targetId === this.targetId && request.mode === this.mode;
   }
 
   setNextCursor(request: CodexBridgeThreadsRequest, cursor: string | null): boolean {

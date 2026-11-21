@@ -49,13 +49,15 @@ function responseForError(error: unknown): CodexBridgeMcpTestResponse {
       case 'protocol-error': reason = 'protocol-error'; break;
       case 'protocol-version-unsupported': reason = 'protocol-version-unsupported'; break;
       case 'readonly-tool-unavailable': reason = 'readonly-tool-unavailable'; break;
+      case 'running-only-unsupported': reason = 'running-only-unsupported'; break;
       case 'readonly-probe-failed': reason = 'readonly-probe-failed'; break;
       case 'response-too-large': reason = 'response-too-large'; break;
     }
     const stage = error.stage
       ?? (error.code === 'timeout' ? 'timeout'
         : error.code === 'protocol-error' || error.code === 'protocol-version-unsupported'
-          || error.code === 'readonly-tool-unavailable' || error.code === 'readonly-probe-failed'
+          || error.code === 'readonly-tool-unavailable' || error.code === 'running-only-unsupported'
+          || error.code === 'readonly-probe-failed'
           || error.code === 'response-too-large' ? 'protocol' : undefined);
     return {
       ok: false,

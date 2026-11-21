@@ -1,4 +1,5 @@
-.codex-bridge-running-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; }
-.codex-bridge-running-filter label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
-.codex-bridge-running-filter input { margin: 0; accent-color: #3157a4; }
-.codex-bridge-running-filter small, .codex-bridge-thread-estimated { color: var(--text-secondary, #565869); line-height: 1.4; }
+.codex-bridge-list-mode { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; border: 0; padding: 0; margin: 4px 0; }
+.codex-bridge-list-mode legend { padding: 0; font-size: 0.88em; font-weight: 600; }
+.codex-bridge-list-mode label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.codex-bridge-list-mode input { margin: 0; accent-color: #3157a4; }
+.codex-bridge-list-mode small, .codex-bridge-thread-estimated { flex-basis: 100%; color: var(--text-secondary, #565869); line-height: 1.4; }
