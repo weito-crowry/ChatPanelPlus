@@ -7,7 +7,7 @@ import test from 'node:test';
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 test('one work-mode control remains outside the panel content hidden during minimization', async () => {
-  const source = await readFile(resolve(root, 'src/content/Panel.tsx'), 'utf8');
+  const source = await readFile(resolve(root, 'src/content/PanelView.tsx'), 'utf8');
   const contentIndex = source.indexOf('className="panel-content"');
   const controlIndex = source.indexOf('<CodexWorkModeToggle');
 

@@ -5,9 +5,10 @@ import test from 'node:test';
 const read = (path) => readFile(new URL(path, import.meta.url), 'utf8');
 
 test('音量ボタンはTurnsの直前に独立し、状態・操作名・キーボードフォーカスを持つ', async () => {
-  const [component, panel, styles] = await Promise.all([
+  const [component, panel, controller, styles] = await Promise.all([
     read('../src/content/ConversationStatistics.tsx'),
-    read('../src/content/Panel.tsx'),
+    read('../src/content/PanelView.tsx'),
+    read('../src/content/usePanelController.ts'),
     read('../src/content/panel.css'),
   ]);
   const soundPosition = component.indexOf('className="statistics-sound-toggle"');
@@ -19,8 +20,10 @@ test('音量ボタンはTurnsの直前に独立し、状態・操作名・キー
   assert.match(component, /onClick=\{\(\) => \{ void toggleSound\(\); \}\}/);
   assert.match(component, /onClick=\{\(\) => setDetailsOpen\(\(open\) => !open\)\}/);
   assert.match(styles, /\.statistics-sound-toggle:focus-visible\s*\{/);
-  assert.ok(panel.includes("answerCompletionSoundId={settings.answerCompletionSoundId ?? 'tone-660'}"));
-  assert.ok(panel.includes('answerCompletionSoundEnabled={soundToggleOptimistic ?? settings.answerCompletionSoundEnabled === true}'));
+  assert.ok(panel.includes('answerCompletionSoundId={answerCompletionSoundId}'));
+  assert.ok(panel.includes('answerCompletionSoundEnabled={answerCompletionSoundEnabled}'));
+  assert.ok(controller.includes("answerCompletionSoundId: settings.answerCompletionSoundId ?? 'tone-660'"));
+  assert.ok(controller.includes('answerCompletionSoundEnabled: soundToggleOptimistic ?? settings.answerCompletionSoundEnabled === true'));
 });
 
 test('Optionsで通知音と出力先を試聴・選択し、音源管理と上限を説明する', async () => {
@@ -51,10 +54,11 @@ test('Optionsで通知音と出力先を試聴・選択し、音源管理と上�
 });
 
 test('Optionsの音量rangeは値を表示し、previewにdraft値を渡し、0%で再生できないと示す', async () => {
-  const [component, options, panel] = await Promise.all([
+  const [component, options, panel, controller] = await Promise.all([
     read('../options/src/AnswerCompletionSoundSettings.tsx'),
     read('../options/src/OptionsPage.tsx'),
-    read('../src/content/Panel.tsx'),
+    read('../src/content/PanelView.tsx'),
+    read('../src/content/usePanelController.ts'),
   ]);
   assert.match(component, /type="range"/);
   assert.match(component, /min=\{0\}/);
@@ -68,7 +72,8 @@ test('Optionsの音量rangeは値を表示し、previewにdraft値を渡し、0%
   assert.ok(options.includes('volumePercent={draft.answerCompletionSoundVolumePercent ?? DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT}'));
   assert.ok(options.includes('onVolumeChange={updateAnswerCompletionSoundVolume}'));
   assert.ok(options.includes('answerCompletionSoundVolumePercent: volumePercent'));
-  assert.ok(panel.includes('answerCompletionSoundVolumePercent={settings.answerCompletionSoundVolumePercent ?? DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT}'));
+  assert.ok(panel.includes('answerCompletionSoundVolumePercent={answerCompletionSoundVolumePercent}'));
+  assert.ok(controller.includes('answerCompletionSoundVolumePercent: settings.answerCompletionSoundVolumePercent ?? DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT'));
 });
 
 test('音声プレイヤー・完了Tracker・タブ表示通知は統計UIの再マウント時に破棄され、二重登録しない', async () => {

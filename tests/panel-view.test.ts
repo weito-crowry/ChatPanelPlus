@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DEFAULT_BUTTONS, type TabId } from '../src/shared/default-ui.ts';
 import {
+  createPanelPresentation,
   createInitialPanelViewState,
   createPanelViewModel,
   formatJstTimestamp,
@@ -108,6 +109,16 @@ test('最小化の切替で選択タブを保ち、初期値は展開状態', ()
   const minimized = togglePanelMinimized(initial);
   assert.deepEqual(minimized, { selectedTabId: 'control', minimized: true });
   assert.deepEqual(togglePanelMinimized(minimized), initial);
+});
+
+test('表示用presentationは選択状態と対応するタブ内容を一体で返す', () => {
+  const model = createPanelViewModel();
+  const state = { selectedTabId: 'control' as TabId, minimized: true };
+  const presentation = createPanelPresentation(model, state);
+
+  assert.deepEqual(presentation.currentViewState, state);
+  assert.equal(presentation.activeTab?.id, 'control');
+  assert.equal(presentation.activeButtons.length, 2);
 });
 
 test('カスタムタブを選択でき、非表示・消滅時は先頭可視タブへ戻る', () => {

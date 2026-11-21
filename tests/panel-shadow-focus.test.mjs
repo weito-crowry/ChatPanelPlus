@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-const panelPath = resolve(fileURLToPath(new URL('../src/content/Panel.tsx', import.meta.url)));
+const panelPath = resolve(fileURLToPath(new URL('../src/content/PanelView.tsx', import.meta.url)));
 
 test('ダイアログのTab循環はShadowRootのactiveElementを優先しDocumentへフォールバックする', async () => {
   const source = await readFile(panelPath, 'utf8');

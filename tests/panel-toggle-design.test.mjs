@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
-const panelPath = resolve(root, 'src/content/Panel.tsx');
+const panelPath = resolve(root, 'src/content/PanelView.tsx');
 const stylePath = resolve(root, 'src/content/panel.css');
 
 test('最小化トグルはTampermonkey v7.2のSVG viewBoxと全パス座標を保持する', async () => {
@@ -68,7 +68,7 @@ test('168x72のクリック領域は140x52のSVGと分離し、パネル操作�
   const minimizedClickRegionBottom = value(buttonRule, 'height') * (1 - bottomInset / 100) - value(buttonRule, 'height') / 2;
   assert.ok(minimizedClickRegionBottom < value(minimizedPanelRule, 'height') + marginBottom);
   assert.match(iconRule, /pointer-events:\s*none/);
-  assert.match(source, /className=\{`panel-minimize-toggle\$\{currentViewState\.minimized \? ' is-minimized' : ''\}`\}/);
+  assert.match(source, /className=\{'panel-minimize-toggle' \+ \(currentViewState\.minimized \? ' is-minimized' : ''\)\}/);
 });
 
 test('原典の通常色・ホバー色を使い、最小化時はSVG全体を180度回転する', async () => {

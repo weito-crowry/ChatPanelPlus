@@ -14,6 +14,22 @@ export interface PanelViewModel {
   readonly selectedTabId: TabId | null;
 }
 
+export interface PanelPresentation {
+  readonly currentViewState: PanelViewState;
+  readonly activeTab: ResolvedTab | undefined;
+  readonly activeButtons: readonly ResolvedButton[];
+}
+
+export function createPanelPresentation(
+  model: PanelViewModel,
+  state: PanelViewState,
+): PanelPresentation {
+  const currentViewState = reconcilePanelViewState(state, model.tabs);
+  const activeTab = model.tabs.find((tab) => tab.id === currentViewState.selectedTabId);
+  const activeButtons = activeTab ? model.buttonsByTab.get(activeTab.id) ?? [] : [];
+  return { currentViewState, activeTab, activeButtons };
+}
+
 export function pasteResultErrorReason(result: ClipboardPasteResult): string | null {
   return result.kind === 'edit-failed' ? result.reason : null;
 }

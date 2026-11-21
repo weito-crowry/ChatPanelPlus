@@ -4,7 +4,8 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const componentPath = fileURLToPath(new URL('../src/content/ConversationStatistics.tsx', import.meta.url));
-const panelPath = fileURLToPath(new URL('../src/content/Panel.tsx', import.meta.url));
+const panelPath = fileURLToPath(new URL('../src/content/PanelView.tsx', import.meta.url));
+const panelControllerPath = fileURLToPath(new URL('../src/content/usePanelController.ts', import.meta.url));
 const stylePath = fileURLToPath(new URL('../src/content/panel.css', import.meta.url));
 
 test('Turnsホバー、クリック詳細、INPUT/OUTPUT/総数、再集計を提供する', async () => {
@@ -51,12 +52,14 @@ test('TurnsがDOM件数ではなく会話の計測済み累積数と分かる説
 });
 
 test('詳細小窓はIME中のEscapeを奪わず、画面に合わせて配置し、説明だけスクロールする', async () => {
-  const [component, panel, styles] = await Promise.all([
-    readFile(componentPath, 'utf8'), readFile(panelPath, 'utf8'), readFile(stylePath, 'utf8'),
+  const [component, panel, panelController, styles] = await Promise.all([
+    readFile(componentPath, 'utf8'), readFile(panelPath, 'utf8'), readFile(panelControllerPath, 'utf8'), readFile(stylePath, 'utf8'),
   ]);
   assert.match(component, /event\.nativeEvent\.isComposing/);
   assert.match(component, /setDetailsOpen\(false\)/);
-  assert.match(panel, /<div className="panel-content" hidden=\{currentViewState\.minimized\}>[\s\S]*?<ConversationStatistics[\s\S]*?answerCompletionSoundEnabled=\{soundToggleOptimistic \?\? settings\.answerCompletionSoundEnabled === true\}[\s\S]*?answerCompletionSoundId=\{settings\.answerCompletionSoundId \?\? 'tone-660'\}/);
+  assert.match(panel, /<div className="panel-content" hidden=\{currentViewState\.minimized\}>[\s\S]*?<ConversationStatistics[\s\S]*?answerCompletionSoundEnabled=\{answerCompletionSoundEnabled\}[\s\S]*?answerCompletionSoundId=\{answerCompletionSoundId\}/);
+  assert.match(panelController, /answerCompletionSoundEnabled: soundToggleOptimistic \?\? settings\.answerCompletionSoundEnabled === true/);
+  assert.match(panelController, /answerCompletionSoundId: settings\.answerCompletionSoundId \?\? 'tone-660'/);
   assert.match(component, /getBoundingClientRect\(\)/);
   assert.match(component, /findComposerForm/);
   assert.match(styles, /\.statistics-popover\s*\{[\s\S]*?position:\s*fixed/);
