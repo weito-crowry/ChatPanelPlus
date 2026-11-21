@@ -51,13 +51,16 @@ test('TurnsがDOM件数ではなく会話の計測済み累積数と分かる説
   assert.match(source, /保存済みの計測済みTurn Key数/);
 });
 
-test('詳細小窓はIME中のEscapeを奪わず、画面に合わせて配置し、説明だけスクロールする', async () => {
-  const [component, panel, panelController, styles] = await Promise.all([
-    readFile(componentPath, 'utf8'), readFile(panelPath, 'utf8'), readFile(panelControllerPath, 'utf8'), readFile(stylePath, 'utf8'),
+test('統計はヘッダーに置き、最小化時は隠しつつIME/配置/スクロール契約を保つ', async () => {
+  const [component, panel, panelController, styles, phase6Styles] = await Promise.all([
+    readFile(componentPath, 'utf8'), readFile(panelPath, 'utf8'), readFile(panelControllerPath, 'utf8'),
+    readFile(stylePath, 'utf8'), readFile(fileURLToPath(new URL('../src/content/panel-phase6.css', import.meta.url)), 'utf8'),
   ]);
   assert.match(component, /event\.nativeEvent\.isComposing/);
   assert.match(component, /setDetailsOpen\(false\)/);
-  assert.match(panel, /<div className="panel-content" hidden=\{currentViewState\.minimized\}>[\s\S]*?<ConversationStatistics[\s\S]*?answerCompletionSoundEnabled=\{answerCompletionSoundEnabled\}[\s\S]*?answerCompletionSoundId=\{answerCompletionSoundId\}/);
+  assert.match(panel, /<div className="panel-header-statistics">[\s\S]*?<ConversationStatistics[\s\S]*?answerCompletionSoundEnabled=\{answerCompletionSoundEnabled\}[\s\S]*?answerCompletionSoundId=\{answerCompletionSoundId\}/);
+  assert.match(panel, /className="panel-content" hidden=\{currentViewState\.minimized\}/);
+  assert.match(phase6Styles, /\.panel\.is-minimized \.panel-header-statistics[\s\S]*?display:\s*none/);
   assert.match(panelController, /answerCompletionSoundEnabled: settings\.answerCompletionSoundEnabled === true/);
   assert.match(panelController, /answerCompletionSoundId: settings\.answerCompletionSoundId \?\? 'tone-660'/);
   assert.match(component, /getBoundingClientRect\(\)/);

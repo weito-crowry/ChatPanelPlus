@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import {
   CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY,
   CODEX_BRIDGE_THREAD_MONITOR_FOREGROUND_MS,
@@ -15,16 +15,20 @@ import {
   type CodexBridgeTerminalEvent,
   type CodexBridgeFinalAnswerResult,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
+import type { CodexBridgeThread } from '../shared/codexbridge-mcp-protocol.ts';
 import { conversationIdFromPath } from '../shared/conversation-route.ts';
 import type { ConversationPanelWatchSelection } from '../shared/conversation-panel-state-repository.ts';
 import { acknowledgeCodexBridgeEventIds } from './codexbridge-event-ack.ts';
-import { editorInsertionFailureLabel, eventKindLabel, eventStatusLabel, filterOwnedWatchData, finalAnswerLabel } from './codexbridge-watch-presentation.ts';
+import { editorInsertionFailureLabel, filterOwnedWatchData } from './codexbridge-watch-presentation.ts';
+import { codexBridgeThreadDisplayName } from './codexbridge-thread-presentation.ts';
+import { CodexBridgeNotificationCard } from './CodexBridgeNotificationCard.tsx';
 import { captureSelectionForPaste, getBrowserEditorEnvironment, insertAtCaret } from './editor/adapter.ts';
 type SelectedThread = Readonly<{ targetId: string; threadId: string }>;
 type Props = Readonly<{
   selected: SelectedThread | null;
   foregroundEnabled: boolean;
   conversationId: string | null;
+  threadCandidates?: readonly Pick<CodexBridgeThread, 'id' | 'targetId' | 'title'>[];
   bridgeWatchSelection: ConversationPanelWatchSelection | null;
   bridgeEventSelection: string | null;
   onSelectBridgeWatch: (selection: ConversationPanelWatchSelection | null) => void;
@@ -124,7 +128,7 @@ function connectionLabel(connectionId: string): string {
 
 export function CodexBridgeWatchPanel({
   selected, foregroundEnabled, conversationId, bridgeWatchSelection, bridgeEventSelection,
-  onSelectBridgeWatch, onSelectBridgeEvent, onSummaryChange,
+  threadCandidates = [], onSelectBridgeWatch, onSelectBridgeEvent, onSummaryChange,
 }: Props) {
   const [items, setItems] = useState<readonly CodexBridgeWatchSnapshot[]>([]);
   const [events, setEvents] = useState<readonly CodexBridgeTerminalEvent[]>([]);
@@ -149,6 +153,7 @@ export function CodexBridgeWatchPanel({
   watchSelectionCallbackRef.current = onSelectBridgeWatch;
   const eventSelectionCallbackRef = useRef(onSelectBridgeEvent);
   eventSelectionCallbackRef.current = onSelectBridgeEvent;
+  const threadIdDescriptionPrefix = useId();
 
   function setListData(data: ListData, ownerConversationId: string) {
     const owned = filterOwnedWatchData(data, ownerConversationId);
@@ -408,13 +413,20 @@ export function CodexBridgeWatchPanel({
   const selectedEvent = events.find((event) => event.eventId === bridgeEventSelection
     && event.ownerConversationId === conversationId) ?? null;
   const displayedAnswer = answer && selectedEvent && answer.eventId === selectedEvent.eventId ? answer.result : null;
+  function threadLabel(targetId: string, threadId: string, fallbackToId: boolean) {
+    const candidate = threadCandidates.find((thread) => thread.targetId === targetId && thread.id === threadId);
+    if (!candidate) return fallbackToId ? threadId : '監視スレッド';
+    if (fallbackToId) return codexBridgeThreadDisplayName(candidate.title, threadId);
+    return candidate.title?.trim() || '表示名未取得';
+  }
   if (!conversationId || conversationIdFromPath(window.location.pathname) !== conversationId) return null;
 
   return (
-    <section className="codex-bridge-watch" aria-label="CodexBridgeスレッド監視">
+    <>
+    <section className="codex-bridge-watch phase6-card phase6-card-b" aria-label="選択スレッド・監視中">
       <div className="codex-bridge-heading">
-        <h3>スレッド監視</h3>
-        <span>{items.length} / 32</span>
+        <h2>B 選択スレッド・監視中</h2>
+        <span>{items.length}件</span>
       </div>
       {selected && (selectedWatch
         ? <button type="button" className="codex-bridge-button" onClick={() => { void stopWatch(selectedWatch); }} disabled={busyKey !== ''}>
@@ -426,75 +438,47 @@ export function CodexBridgeWatchPanel({
       {error && <p className="codex-bridge-error" role="alert">{error}</p>}
       {items.length === 0 && <p className="codex-bridge-empty">監視対象はありません。threadを選んで明示的に開始してください。</p>}
       {items.length > 0 && <ul className="codex-bridge-watch-list" aria-label="監視対象一覧">
-        {items.map((item) => {
+        {items.map((item, index) => {
           const sameConnection = item.connectionId === currentConnectionId;
           const outcome = OUTCOME_LABELS[item.fetchOutcome] ?? '不明';
           const isSelected = bridgeWatchSelection?.connectionId === item.connectionId
             && bridgeWatchSelection.targetId === item.targetId && bridgeWatchSelection.threadId === item.threadId;
+          const threadIdDescriptionId = `${threadIdDescriptionPrefix}-watch-${index}`;
           return <li key={item.watchId} className="codex-bridge-watch-item">
             <div className="codex-bridge-watch-heading">
-              <button type="button" className="codex-bridge-watch-select" aria-pressed={isSelected} onClick={() => selectWatch(item)}>
-                <strong>{item.targetId} / {item.threadId}</strong>
+              <button type="button" title={item.threadId} aria-describedby={threadIdDescriptionId}
+                className="codex-bridge-watch-select" aria-pressed={isSelected} onClick={() => selectWatch(item)}>
+                <strong>{threadLabel(item.targetId, item.threadId, true)}</strong>
               </button>
+              <span id={threadIdDescriptionId} className="phase6-sr-only">スレッドID：{item.threadId}</span>
               <button type="button" className="codex-bridge-button" onClick={() => { void stopWatch(item); }}
                 disabled={busyKey !== ''} aria-label={`${item.threadId}の監視を解除`}>
                 {busyKey === `stop:${item.watchId}` ? '解除中…' : '解除'}
               </button>
             </div>
-            <small>connection ID: {connectionLabel(item.connectionId)}{sameConnection ? '' : '（現在の接続先と異なります）'}</small>
-            <small>取得: {outcome} · {dateLabel(item.observedAt)} · 最終成功: {dateLabel(item.lastSuccessAt)}</small>
-            <small>turn: {turnStateLabel(item, sameConnection)} · baseline: {item.baselineTurnId ?? '不明'} · 最終観測: {item.lastObservedTurnId ?? '不明'}</small>
-            <small>codex_status state（最終成功時）: {item.statusState ?? '不明'}</small>
-            <small>last_turn（最終成功時 {dateLabel(item.lastSuccessAt)}）: {item.lastTurnStatus ?? '不明'} · evidence: {item.lastTurnEvidence ?? '不明'}</small>
-            <small>current_execution（最終成功時）: {item.currentExecutionState ?? '不明'}
-              · turn_id: {item.currentExecutionTurnId ?? '不明'} · evidence: {item.currentExecutionEvidence ?? '不明'}</small>
-            <small>needs_attention（最終成功時）: {item.needsAttention === true ? '要対応' : item.needsAttention === false ? '不要' : '不明'}
-              {!sameConnection && ' · 現在の状態は不明（接続先が異なります）'}
-            </small>
+            <small className="phase6-watch-status">{turnStateLabel(item, sameConnection)}</small>
+            <details className="phase6-technical-details">
+              <summary>技術情報</summary>
+              <small>thread ID: {item.threadId} · target ID: {item.targetId}</small>
+              <small>connection ID: {connectionLabel(item.connectionId)}</small>
+              <small>取得: {outcome} · {dateLabel(item.observedAt)} · 最終成功: {dateLabel(item.lastSuccessAt)}</small>
+              <small>baseline: {item.baselineTurnId ?? '不明'} · 最終観測: {item.lastObservedTurnId ?? '不明'}</small>
+              <small>codex_status: {item.statusState ?? '不明'} · last_turn: {item.lastTurnStatus ?? '不明'} / {item.lastTurnEvidence ?? '不明'}</small>
+              <small>current_execution: {item.currentExecutionState ?? '不明'} · turn_id: {item.currentExecutionTurnId ?? '不明'} / {item.currentExecutionEvidence ?? '不明'}</small>
+              <small>needs_attention: {item.needsAttention === true ? '要対応' : item.needsAttention === false ? '不要' : '不明'}</small>
+            </details>
           </li>;
         })}
       </ul>}
-      <div className="codex-bridge-event-heading">
-        <h3>終了イベント</h3><span>{events.length} 件</span>
-        <button type="button" className="codex-bridge-button" onClick={() => { void acknowledgeVisibleEvents(); }}
-          disabled={busyKey !== '' || !events.some((event) => !event.acknowledgedAt)}>
-          {busyKey === 'acknowledge' ? '確認中…' : '未確認の終了通知を確認'}
-        </button>
-      </div>
-      {events.length === 0 && <p className="codex-bridge-empty">通知イベントはありません。</p>}
-      {events.length > 0 && <ul className="codex-bridge-event-list" aria-label="監視終了イベント一覧">
-        {events.map((event) => <li key={event.eventId} className="codex-bridge-event-item">
-          <button type="button" className="codex-bridge-event-select" aria-pressed={event.eventId === bridgeEventSelection}
-            onClick={() => selectEvent(event.eventId)}>
-            <strong>{eventKindLabel(event.status)} · {event.targetId} / {event.threadId}</strong>
-            <small>turn: {event.turnId} · 検出: {dateLabel(event.detectedAt)}</small>
-            <small>{event.acknowledgedAt ? 'ユーザー確認済み' : '未確認の終了通知'}</small>
-            <small>{eventStatusLabel(event)}</small>
-            {event.notificationReason && <small>通知理由: {event.notificationReason}</small>}
-            {event.connectionId !== currentConnectionId && <small>イベント発生時と現在の接続先が異なります。</small>}
-          </button>
-        </li>)}
-      </ul>}
-      {selectedEvent && <div className="codex-bridge-final-answer">
-        <strong>選択イベント: {eventKindLabel(selectedEvent.status)} · {selectedEvent.turnId}</strong>
-        <button type="button" className="codex-bridge-button" onClick={() => { void fetchSelectedAnswer(); }}
-          disabled={answerBusy || selectedEvent.connectionId !== currentConnectionId}>
-          {answerBusy ? '最終回答を取得中…' : '最終回答を取得'}
-        </button>
-        {selectedEvent.connectionId !== currentConnectionId && <p className="codex-bridge-note">イベント発生時のBridge接続先と現在の接続先が一致しません。</p>}
-        {displayedAnswer && <>
-          <p className="codex-bridge-note" role="status">{finalAnswerLabel(displayedAnswer)}</p>
-          {displayedAnswer.status === 'retrieved' && <>
-            <p className="codex-bridge-note">Bridge応答には切詰め情報がないため、取得本文の完全性は確認できません。</p>
-            <div className="codex-bridge-answer-actions">
-              <button type="button" className="codex-bridge-button" onMouseDown={(mouseEvent) => mouseEvent.preventDefault()} onClick={() => { void copyAnswer(selectedEvent, displayedAnswer.text); }}>コピー</button>
-              <button type="button" className="codex-bridge-button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertAnswer(selectedEvent, displayedAnswer.text)}>ChatGPT入力欄へ挿入</button>
-            </div>
-            <pre className="codex-bridge-answer-text">{displayedAnswer.text}</pre>
-          </>}
-        </>}
-        {answerMessage && <p className="codex-bridge-note" role="status">{answerMessage}</p>}
-      </div>}
     </section>
+    <CodexBridgeNotificationCard
+      events={events} selectedEvent={selectedEvent} selectedEventId={bridgeEventSelection}
+      currentConnectionId={currentConnectionId} busyKey={busyKey} answerBusy={answerBusy}
+      answerMessage={answerMessage} displayedAnswer={displayedAnswer}
+      threadLabel={(targetId, threadId) => threadLabel(targetId, threadId, false)}
+      onAcknowledge={() => { void acknowledgeVisibleEvents(); }} onSelectEvent={selectEvent}
+      onFetchAnswer={() => { void fetchSelectedAnswer(); }} onCopyAnswer={copyAnswer} onInsertAnswer={insertAnswer}
+    />
+    </>
   );
 }

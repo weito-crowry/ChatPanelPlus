@@ -4,27 +4,29 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const sourcePath = fileURLToPath(new URL('../src/content/CodexBridgeWatchPanel.tsx', import.meta.url));
+const cardPath = fileURLToPath(new URL('../src/content/CodexBridgeNotificationCard.tsx', import.meta.url));
 const stylePath = fileURLToPath(new URL('../src/content/codexbridge-watch.css', import.meta.url));
 const presentationPath = fileURLToPath(new URL('../src/content/codexbridge-watch-presentation.ts', import.meta.url));
 
 test('watch UI selects terminal events and fetches only after an explicit click', async () => {
-  const source = await readFile(sourcePath, 'utf8');
-  assert.match(source, /終了イベント/);
-  assert.match(source, /最終回答を取得/);
-  assert.match(source, /onClick=\{\(\) => \{ void fetchSelectedAnswer\(\); \}\}/);
+  const [source, card] = await Promise.all([readFile(sourcePath, 'utf8'), readFile(cardPath, 'utf8')]);
+  assert.match(card, /C 通知・最終回答/);
+  assert.match(card, /最終回答を取得/);
+  assert.match(card, /onClick=\{onFetchAnswer\}/);
+  assert.match(source, /onFetchAnswer=\{\(\) => \{ void fetchSelectedAnswer\(\); \}\}/);
   assert.match(source, /type: CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER,[\s\S]*?eventId: event\.eventId/);
   assert.match(source, /event\.connectionId !== currentConnectionId/);
   assert.match(source, /answerGeneration\.current/);
 });
 
 test('copy and insertion are independent user actions and the answer is rendered as text', async () => {
-  const source = await readFile(sourcePath, 'utf8');
-  assert.match(source, /onClick=\{\(\) => \{ void copyAnswer\(selectedEvent, displayedAnswer\.text\); \}\}/);
-  assert.match(source, /onClick=\{\(\) => insertAnswer\(selectedEvent, displayedAnswer\.text\)\}/);
+  const [source, card] = await Promise.all([readFile(sourcePath, 'utf8'), readFile(cardPath, 'utf8')]);
+  assert.match(card, /onClick=\{\(\) => \{ void onCopyAnswer\(selectedEvent, displayedAnswer\.text\); \}\}/);
+  assert.match(card, /onClick=\{\(\) => onInsertAnswer\(selectedEvent, displayedAnswer\.text\)\}/);
   assert.match(source, /navigator\.clipboard\.writeText\(text\)/);
   assert.match(source, /insertAtCaret\(text, environment, snapshot\)/);
-  assert.match(source, /<pre className="codex-bridge-answer-text">\{displayedAnswer\.text\}<\/pre>/);
-  assert.doesNotMatch(source, /dangerouslySetInnerHTML/);
+  assert.match(card, /<pre className="codex-bridge-answer-text">\{displayedAnswer\.text\}<\/pre>/);
+  assert.doesNotMatch(card, /dangerouslySetInnerHTML/);
   assert.doesNotMatch(source, /CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER[\s\S]{0,300}CODEX_BRIDGE_MCP_GET_STATUS/);
 });
 
@@ -56,10 +58,10 @@ test('watch and event selection are conversation-owned persisted props and only 
 });
 
 test('retrieved body completeness is labeled and Markdown whitespace remains visible', async () => {
-  const [source, styles, presentation] = await Promise.all([
-    readFile(sourcePath, 'utf8'), readFile(stylePath, 'utf8'), readFile(presentationPath, 'utf8'),
+  const [card, styles, presentation] = await Promise.all([
+    readFile(cardPath, 'utf8'), readFile(stylePath, 'utf8'), readFile(presentationPath, 'utf8'),
   ]);
   assert.match(presentation, /完全性は未確認です/);
-  assert.match(source, /Bridge応答には切詰め情報がない/);
+  assert.match(card, /Bridge応答には切詰め情報がない/);
   assert.match(styles, /\.codex-bridge-answer-text[^{]*\{[^}]*white-space:\s*pre-wrap/s);
 });

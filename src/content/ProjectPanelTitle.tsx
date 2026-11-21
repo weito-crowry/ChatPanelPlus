@@ -16,5 +16,5 @@ export function ProjectPanelTitle() {
     return () => controller.dispose();
   }, []);
 
-  return <>{title}</>;
+  return <span title={title}>{title}</span>;
 }

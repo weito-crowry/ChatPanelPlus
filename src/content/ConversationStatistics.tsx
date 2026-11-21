@@ -247,6 +247,9 @@ export function ConversationStatistics({
         title={tooltip}
         onClick={() => setDetailsOpen((open) => !open)}
       >
+        <svg className="statistics-turns-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M3 3h14v14H3zM6 13V9m4 4V6m4 7v-3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
         {formatCount(state.aggregate.turns)} Turns
       </button>
       {playbackError && <p className="statistics-sound-error" role="alert">{playbackError}</p>}

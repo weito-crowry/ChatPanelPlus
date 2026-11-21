@@ -8,7 +8,7 @@ const mainPath = fileURLToPath(new URL('../src/content/main.tsx', import.meta.ur
 
 test('読み込み済み対象と説明を持つaccessibleなnative checkboxを表示する', async () => {
   const source = await readFile(sourcePath, 'utf8');
-  assert.match(source, /const \[runningOnly, setRunningOnly\] = useState\(false\)/);
+  assert.match(source, /const \[runningOnly, setRunningOnly\] = useState\(true\)/);
   assert.match(source, /<label>\s*<input type="checkbox" checked=\{runningOnly\}/);
   assert.match(source, /aria-label="読み込み済みthreadを実行中だけ表示"/);
   assert.match(source, /aria-describedby="codex-bridge-running-filter-note"/);
@@ -20,7 +20,7 @@ test('読み込み済み対象と説明を持つaccessibleなnative checkboxを�
 test('filterは表示配列だけを切替え、選択・監視・次ページ要求を変更しない', async () => {
   const source = await readFile(sourcePath, 'utf8');
   assert.match(source, /const displayedThreads = filterCodexBridgeThreads\(threads, runningOnly\)/);
-  assert.match(source, /displayedThreads\.map\(\(thread\) =>/);
+  assert.match(source, /displayedThreads\.map\(\(thread, index\) =>/);
   assert.match(source, /const isSelected = selected\?\.targetId === thread\.targetId/);
   assert.match(source, /<CodexBridgeWatchPanel[\s\S]*?selected=\{selected \? \{/);
   const nextPage = source.match(/\{nextCursor && \([\s\S]*?次ページ[\s\S]*?\)\}/)?.[0];
@@ -43,11 +43,12 @@ test('未読込・実一覧空・filter結果空の案内を区別する', async
 test('filter stylesheetを既存Shadow DOMのstyle要素へ注入する', async () => {
   const main = await readFile(mainPath, 'utf8');
   assert.match(main, /import codexBridgeThreadFilterStyles from '\.\/codexbridge-thread-filter\.css\?inline'/);
-  assert.match(main, /style\.textContent = `\$\{panelStyles\}[\s\S]*?\$\{codexBridgeThreadFilterStyles\}`/);
+  assert.match(main, /style\.textContent = `\$\{panelStyles\}[\s\S]*?\$\{codexBridgeThreadFilterStyles\}[\s\S]*?\$\{panelPhase6Styles\}`/);
 });
 
 test('推定中は推定ラベルを表示し、確定中のstateは実行中と表示する', async () => {
   const source = await readFile(sourcePath, 'utf8');
-  assert.match(source, /activity === 'estimated' && <small className="codex-bridge-thread-estimated">実行中の推定<\/small>/);
+  assert.match(source, /activity === 'estimated' \? '実行中の推定'/);
+  assert.match(source, /className=\{`phase6-thread-state is-\$\{activity\}`\}/);
   assert.match(source, /value === 'in_progress' \|\| value === 'running'\) return '実行中'/);
 });

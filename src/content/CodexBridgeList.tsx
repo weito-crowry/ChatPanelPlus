@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import {
   CODEX_BRIDGE_MCP_GET_STATUS,
   CODEX_BRIDGE_MCP_GET_TARGETS,
@@ -96,6 +96,7 @@ export function CodexBridgeList({
   onSummaryChange,
   onSelectBridgeWatch = () => {},
   onSelectBridgeEvent = () => {},
+  onConnectionChange,
 }: Readonly<{
   foregroundEnabled?: boolean;
   conversationId?: string | null;
@@ -103,6 +104,7 @@ export function CodexBridgeList({
   bridgeEventSelection?: string | null;
   onSelectBridgeWatch?: (selection: ConversationPanelWatchSelection | null) => void;
   onSelectBridgeEvent?: (eventId: string | null) => void;
+  onConnectionChange?: (connection: Readonly<{ state: ConnectionState; targetName: string | null }>) => void;
   onSummaryChange?: (summary: Readonly<{ watchingCount: number; unacknowledgedThreadCount: number }> | null) => void;
 }> = {}) {
   const [connection, setConnection] = useState<ConnectionState>('loading');
@@ -114,7 +116,7 @@ export function CodexBridgeList({
   const [threadsLoaded, setThreadsLoaded] = useState(false);
   const [threadsBusy, setThreadsBusy] = useState(false);
   const [threadsError, setThreadsError] = useState('');
-  const [runningOnly, setRunningOnly] = useState(false);
+  const [runningOnly, setRunningOnly] = useState(true);
   const [selected, setSelected] = useState<CodexBridgeThread | null>(null);
   const [selectedMissing, setSelectedMissing] = useState(false);
   const [status, setStatus] = useState<CodexBridgeThreadStatus | null>(null);
@@ -124,6 +126,7 @@ export function CodexBridgeList({
   const targetIdRef = useRef('');
   const targetListGeneration = useRef(0);
   const requestTracker = useRef<CodexBridgeRequestTracker | null>(null);
+  const threadIdDescriptionPrefix = useId();
   if (!requestTracker.current) requestTracker.current = new CodexBridgeRequestTracker();
 
   function updateSelected(thread: CodexBridgeThread | null) {
@@ -195,6 +198,11 @@ export function CodexBridgeList({
   useEffect(() => {
     void refreshTargets();
   }, []);
+
+  useEffect(() => {
+    const targetName = targets.find((target) => target.id === targetId)?.name?.trim() || null;
+    onConnectionChange?.({ state: connection, targetName });
+  }, [connection, onConnectionChange, targetId, targets]);
 
   async function loadThreads(loadMore: boolean) {
     if (!targetId || threadsBusy || (loadMore && !nextCursor)) return;
@@ -285,9 +293,10 @@ export function CodexBridgeList({
   const displayedThreads = filterCodexBridgeThreads(threads, runningOnly);
 
   return (
-    <section className="codex-bridge" aria-label="CodexBridge一覧">
+    <section className="codex-bridge phase6-bridge-columns" aria-label="CodexBridge詳細">
+      <section className="phase6-card phase6-card-a" aria-label="スレッド一覧">
       <div className="codex-bridge-heading">
-        <h2>CodexBridge</h2>
+        <h2>A スレッド一覧</h2>
         <button type="button" className="codex-bridge-button" onClick={() => { void refreshTargets(); }} disabled={connection === 'loading'}>
           {connection === 'loading' ? '確認中…' : '接続更新'}
         </button>
@@ -350,12 +359,16 @@ export function CodexBridgeList({
             && <p className="codex-bridge-empty">読み込み済みthreadに実行中または推定実行中はありません。</p>}
           {displayedThreads.length > 0 && (
             <ul className="codex-bridge-thread-list" aria-label="thread一覧">
-              {displayedThreads.map((thread) => {
+              {displayedThreads.map((thread, index) => {
                 const isSelected = selected?.targetId === thread.targetId && selected.id === thread.id;
                 const activity = classifyCodexBridgeThreadActivity(thread);
+                const threadIdDescriptionId = `${threadIdDescriptionPrefix}-thread-${index}`;
+                const activityLabel = activity === 'running' ? '実行中'
+                  : activity === 'estimated' ? '実行中の推定' : stateLabel(thread.currentExecution?.state);
                 return (
                   <li key={`${thread.targetId}:${thread.id}`}>
-                    <button type="button" className={`codex-bridge-thread${isSelected ? ' is-selected' : ''}`} onClick={() => {
+                    <button type="button" title={thread.id} aria-describedby={threadIdDescriptionId}
+                      className={`codex-bridge-thread${isSelected ? ' is-selected' : ''}`} onClick={() => {
                       requestTracker.current?.selectThread(thread.targetId, thread.id);
                       updateSelected(thread);
                       setSelectedMissing(false);
@@ -363,23 +376,21 @@ export function CodexBridgeList({
                       setStatusBusy(false);
                       setStatusError('');
                     }}>
-                      <span>{thread.title ?? thread.preview ?? thread.id}</span>
-                      {activity === 'estimated' && <small className="codex-bridge-thread-estimated">実行中の推定</small>}
-                      <small>current_execution: {observationLabel(thread.currentExecution)}</small>
-                      <small>last_turn: {lastTurnLabel(thread.lastTurn)} · needs_attention: {attentionLabel(thread.needsAttention)}</small>
+                      <span className="phase6-thread-label">{thread.title?.trim() || thread.preview?.trim() || 'タイトル未取得'}</span>
+                      <small className={`phase6-thread-state is-${activity}`}>
+                        <span aria-hidden="true">{activity === 'running' ? '●' : activity === 'estimated' ? '◌' : '○'}</span> {activityLabel}
+                      </small>
                     </button>
+                    <span id={threadIdDescriptionId} className="phase6-sr-only">スレッドID：{thread.id}</span>
                   </li>
                 );
               })}
             </ul>
           )}
           {selected && (
-            <div className="codex-bridge-selected">
-              <strong>{selected.title ?? selected.preview ?? selected.id}</strong>
-              <code>{selected.id}</code>
-              <p className="codex-bridge-note">対象マシン: {selectedTarget?.name ?? '不明'} ({selected.targetId})</p>
-              <p className="codex-bridge-note">cwd: {selectedListRow?.cwd ?? '不明'}</p>
-              <p className="codex-bridge-note">最終更新: {dateLabel(selectedListRow?.updatedAt)}</p>
+                <div className="codex-bridge-selected phase6-selected-thread">
+                  <strong>{selected.title?.trim() || selected.preview?.trim() || 'タイトル未取得'}</strong>
+                  <p className="codex-bridge-note">対象マシン: {selectedTarget?.name ?? '不明'}</p>
               {selectedMissing && <p className="codex-bridge-note">
                 {threadsError || connection === 'error' || (threadsBusy && !threadsLoaded)
                   ? 'thread一覧の更新を確認できていません。状態は未確認です。'
@@ -391,22 +402,28 @@ export function CodexBridgeList({
                 {statusBusy ? '確認中…' : '選択threadの状態を手動確認'}
               </button>
               {statusError && <p className="codex-bridge-error" role="alert">{statusError}</p>}
-              <dl className="codex-bridge-status">
-                <dt>応答状態</dt>
-                <dd>{stateLabel(selectedStatus?.state)}</dd>
-                <dt>current_execution{selectedStatus ? '（手動確認）' : '（一覧取得時）'}</dt>
-                <dd>{observationLabel(selectedStatus ? selectedStatus.currentExecution : selectedListRow?.currentExecution)}</dd>
-                <dt>last_turn{selectedStatus ? '（手動確認）' : '（一覧取得時）'}</dt>
-                <dd>{lastTurnLabel(selectedStatus ? selectedStatus.lastTurn : selectedListRow?.lastTurn)}</dd>
-                <dt>last_turn.turn_id</dt>
-                <dd>{(selectedStatus ? selectedStatus.lastTurn : selectedListRow?.lastTurn)?.turnId ?? '不明'}</dd>
-                <dt>needs_attention</dt>
-                <dd>{attentionLabel(selectedStatus ? selectedStatus.needsAttention : selectedListRow?.needsAttention)}</dd>
-              </dl>
+                  <details className="phase6-technical-details">
+                    <summary>技術情報</summary>
+                    <code>thread ID: {selected.id} · target ID: {selected.targetId}</code>
+                    <p className="codex-bridge-note">cwd: {selectedListRow?.cwd ?? '不明'} · 最終更新: {dateLabel(selectedListRow?.updatedAt)}</p>
+                    <dl className="codex-bridge-status">
+                      <dt>応答状態</dt>
+                      <dd>{stateLabel(selectedStatus?.state)}</dd>
+                      <dt>current_execution{selectedStatus ? '（手動確認）' : '（一覧取得時）'}</dt>
+                      <dd>{observationLabel(selectedStatus ? selectedStatus.currentExecution : selectedListRow?.currentExecution)}</dd>
+                      <dt>last_turn{selectedStatus ? '（手動確認）' : '（一覧取得時）'}</dt>
+                      <dd>{lastTurnLabel(selectedStatus ? selectedStatus.lastTurn : selectedListRow?.lastTurn)}</dd>
+                      <dt>last_turn.turn_id</dt>
+                      <dd>{(selectedStatus ? selectedStatus.lastTurn : selectedListRow?.lastTurn)?.turnId ?? '不明'}</dd>
+                      <dt>needs_attention</dt>
+                      <dd>{attentionLabel(selectedStatus ? selectedStatus.needsAttention : selectedListRow?.needsAttention)}</dd>
+                    </dl>
+                  </details>
             </div>
           )}
         </>
       )}
+      </section>
       <CodexBridgeWatchPanel
         selected={selected ? { targetId: selected.targetId, threadId: selected.id } : null}
         foregroundEnabled={foregroundEnabled}
@@ -415,6 +432,7 @@ export function CodexBridgeList({
         bridgeEventSelection={bridgeEventSelection}
         onSelectBridgeWatch={onSelectBridgeWatch}
         onSelectBridgeEvent={onSelectBridgeEvent}
+        threadCandidates={threads}
         onSummaryChange={onSummaryChange}
       />
     </section>

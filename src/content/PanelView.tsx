@@ -1,21 +1,17 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { ConversationStatistics } from './ConversationStatistics';
 import { CodexWorkModeToggle } from './CodexWorkModeToggle';
 import { CodexBridgeList } from './CodexBridgeList';
 import { ProjectPanelTitle } from './ProjectPanelTitle';
+import { BridgeSummaryBar } from './BridgeSummaryBar';
 import type { PanelControllerState } from './usePanelController';
 import { conversationIdFromPath } from '../shared/conversation-route.ts';
 
-const MIN_ICON_SVG = (
-  <svg className="panel-minimize-icon" viewBox="0 0 320 120" width="140" height="52" aria-hidden="true">
-    <g fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M40 60 L100 60" />
-      <path d="M100 60 C110 60, 110 85, 130 85 L190 85" />
-      <path d="M190 85 C210 85, 210 60, 220 60 L280 60" />
-      <path d="M140 64 L160 78 L180 64" />
-    </g>
-  </svg>
-);
+const MIN_ICON_SVG = <svg className="panel-minimize-icon" viewBox="0 0 24 24" aria-hidden="true">
+  <path d="m7 10 5 5 5-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+</svg>;
+
+type BridgeConnection = Readonly<{ state: 'loading' | 'connected' | 'error'; targetName: string | null }>;
 
 export function PanelView({
   model,
@@ -50,6 +46,7 @@ export function PanelView({
   onSubmitManualPaste,
   onCancelManualPaste,
 }: PanelControllerState) {
+  const [bridgeConnection, setBridgeConnection] = useState<BridgeConnection>({ state: 'loading', targetName: null });
   const [bridgeSummary, setBridgeSummary] = useState<Readonly<{
     conversationId: string;
     watchingCount: number;
@@ -57,28 +54,52 @@ export function PanelView({
   }> | null>(null);
   const currentBridgeSummary = bridgeSummary?.conversationId === conversationId && conversationId
     && conversationIdFromPath(window.location.pathname) === conversationId ? bridgeSummary : null;
-  function updateBridgeSummary(summary: Readonly<{ watchingCount: number; unacknowledgedThreadCount: number }> | null) {
+  const updateBridgeSummary = useCallback((summary: Readonly<{ watchingCount: number; unacknowledgedThreadCount: number }> | null) => {
     setBridgeSummary(summary && conversationId ? { ...summary, conversationId } : null);
-  }
+  }, [conversationId]);
+  const updateBridgeConnection = useCallback((connection: BridgeConnection) => setBridgeConnection(connection), []);
   return (
     <aside className={'panel' + (currentViewState.minimized ? ' is-minimized' : '')} aria-label="ChatPanelPlus パネル">
-      <div className="panel-header">
-        <h1 className="panel-title" hidden={currentViewState.minimized}><ProjectPanelTitle /></h1>
-        <CodexWorkModeToggle minimized={currentViewState.minimized} />
-      </div>
+      <header className="panel-header">
+        <div className="panel-header-brand">
+          <svg className="panel-brand-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 5h14v14H5zM8 9h8M8 12h5M8 15h7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+          <div className="panel-brand-copy">
+            <h1 className="panel-title">ChatPanelPlus</h1>
+            <span className="panel-project-divider" aria-hidden="true">·</span>
+            <span className="panel-project-title"><ProjectPanelTitle /></span>
+          </div>
+        </div>
+        <div className="panel-header-actions">
+          <CodexWorkModeToggle minimized={currentViewState.minimized} />
+          <div className="panel-header-statistics">
+            <ConversationStatistics
+              answerCompletionSoundEnabled={answerCompletionSoundEnabled}
+              answerCompletionSoundId={answerCompletionSoundId}
+              answerCompletionSoundVolumePercent={answerCompletionSoundVolumePercent}
+              conversationId={conversationId}
+              conversationMuted={conversationMuted}
+              conversationMuteLoaded={muteLoaded}
+              conversationMutePending={mutePending}
+              conversationMuteRevision={muteRevision}
+              getConversationMuteSnapshot={getConversationMuteSnapshot}
+              onToggleConversationMute={onToggleConversationMute}
+            />
+          </div>
+          <button type="button" className="panel-options-toggle" aria-label="Optionsを開く" title="Optionsを開く" onClick={onOpenSettings}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm0-5v2m0 13v2m9-8h-2m-14 0H3m15.36-6.36-1.42 1.42M7.06 16.94l-1.42 1.42m12.72 0-1.42-1.42M7.06 7.06 5.64 5.64" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg>
+          </button>
+          <button type="button" className={'panel-minimize-toggle' + (currentViewState.minimized ? ' is-minimized' : '')}
+            aria-label={currentViewState.minimized ? '復帰' : '最小化'} title={currentViewState.minimized ? '復帰' : '最小化'}
+            aria-expanded={!currentViewState.minimized} onClick={onToggleMinimized}>
+            {MIN_ICON_SVG}
+          </button>
+        </div>
+        {currentViewState.minimized && <BridgeSummaryBar compact conversationId={conversationId}
+          summary={currentBridgeSummary} connection={bridgeConnection} />}
+      </header>
       <div className="panel-content" hidden={currentViewState.minimized}>
-        <ConversationStatistics
-          answerCompletionSoundEnabled={answerCompletionSoundEnabled}
-          answerCompletionSoundId={answerCompletionSoundId}
-          answerCompletionSoundVolumePercent={answerCompletionSoundVolumePercent}
-          conversationId={conversationId}
-          conversationMuted={conversationMuted}
-          conversationMuteLoaded={muteLoaded}
-          conversationMutePending={mutePending}
-          conversationMuteRevision={muteRevision}
-          getConversationMuteSnapshot={getConversationMuteSnapshot}
-          onToggleConversationMute={onToggleConversationMute}
-        />
         <div className="utility-row" aria-label="常時表示操作">
           {model.utilityButtons.map((button) => (
             <button
@@ -134,44 +155,17 @@ export function PanelView({
             ))}
           </div>
         )}
-        <section className="panel-bridge-summary" aria-label="CodexBridgeサマリー">
-          <dl className="panel-bridge-summary-list" aria-label="CodexBridge件数">
-            <div className="panel-bridge-summary-item">
-              <dt>監視中</dt>
-              <dd aria-label="この会話の監視件数">{currentBridgeSummary?.watchingCount ?? '—'}</dd>
-            </div>
-            <div className="panel-bridge-summary-item">
-              <dt>監視スレッドが終了した未確認</dt>
-              <dd aria-label="この会話の未確認終了件数">{currentBridgeSummary?.unacknowledgedThreadCount ?? '—'}</dd>
-            </div>
-          </dl>
-          <p className="panel-bridge-summary-note" role="note">
-            {!conversationId ? '会話IDが確認できると件数を表示します。' : currentBridgeSummary ? '現在の会話に紐づく監視・終了通知です。' : '会話別件数を確認しています。'}
-          </p>
-          <button
-            type="button"
-            className="codex-bridge-button panel-bridge-details-toggle"
-            aria-expanded={bridgeExpanded}
-            aria-controls="panel-bridge-details"
-            onClick={onToggleBridgeExpanded}
-          >
-            CodexBridge詳細を{bridgeExpanded ? '閉じる' : '開く'}
-          </button>
-        </section>
+        <BridgeSummaryBar conversationId={conversationId} summary={currentBridgeSummary} connection={bridgeConnection}
+          expanded={bridgeExpanded} onToggle={onToggleBridgeExpanded} />
         <div id="panel-bridge-details" className="panel-bridge-details" hidden={!bridgeExpanded}>
           <CodexBridgeList
             foregroundEnabled={!currentViewState.minimized} conversationId={conversationId}
             bridgeWatchSelection={bridgeWatchSelection} bridgeEventSelection={bridgeEventSelection}
             onSelectBridgeWatch={onSelectBridgeWatch} onSelectBridgeEvent={onSelectBridgeEvent}
-            onSummaryChange={updateBridgeSummary}
+            onSummaryChange={updateBridgeSummary} onConnectionChange={updateBridgeConnection}
           />
         </div>
         {error && <div className="panel-error" role="status">{error}</div>}
-        <div className="settings-entry">
-          <button type="button" onClick={onOpenSettings}>
-            設定
-          </button>
-        </div>
       </div>
       {manualPasteOpen && (
         <div
@@ -223,16 +217,6 @@ export function PanelView({
           </section>
         </div>
       )}
-      <button
-        type="button"
-        className={'panel-minimize-toggle' + (currentViewState.minimized ? ' is-minimized' : '')}
-        aria-label={currentViewState.minimized ? '復帰' : '最小化'}
-        title={currentViewState.minimized ? '復帰' : '最小化'}
-        aria-expanded={!currentViewState.minimized}
-        onClick={onToggleMinimized}
-      >
-        {MIN_ICON_SVG}
-      </button>
     </aside>
   );
 }
