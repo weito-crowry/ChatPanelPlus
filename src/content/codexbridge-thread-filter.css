@@ -3,3 +3,7 @@
 .codex-bridge-list-mode label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
 .codex-bridge-list-mode input { margin: 0; accent-color: #3157a4; }
 .codex-bridge-list-mode small, .codex-bridge-thread-estimated { flex-basis: 100%; color: var(--text-secondary, #565869); line-height: 1.4; }
+.codex-bridge-project-filter { display: flex; flex-wrap: wrap; align-items: end; gap: 6px 10px; margin: 6px 0; min-width: 0; }
+.codex-bridge-project-filter label { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 0.9em; }
+.codex-bridge-project-filter select { max-width: 100%; min-width: 0; }
+.codex-bridge-project-filter small { flex-basis: 100%; color: var(--text-secondary, #565869); line-height: 1.4; }

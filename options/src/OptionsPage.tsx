@@ -16,6 +16,7 @@ import { CustomButtonCreator } from './CustomButtonCreator';
 import { OptionsTabControls } from './OptionsTabControls';
 import { AnswerCompletionSoundSettings } from './AnswerCompletionSoundSettings';
 import { McpConnectionSettings } from './McpConnectionSettings';
+import { ProjectFolderPatternsSettings } from './ProjectFolderPatternsSettings';
 import { CODEX_BRIDGE_MCP_DEFAULT_URL } from '../../src/shared/codexbridge-mcp-protocol.ts';
 import { prepareSoundAssetDeletion } from './answer-completion-sound-actions.ts';
 import {
@@ -43,7 +44,6 @@ import {
   validateExtensionSettings,
   type ExtensionSettings,
 } from '../../src/shared/settings';
-
 type ImportPreview = Readonly<{
   settings: ExtensionSettings;
   savedCustomCount: number;
@@ -52,7 +52,6 @@ type ImportPreview = Readonly<{
   deletedCustomTabCount: number;
   legacy: boolean;
 }>;
-
 function expandHex(color: string): string {
   const short = /^#([\da-f])([\da-f])([\da-f])$/i.exec(color);
   return short ? `#${short[1]}${short[1]}${short[2]}${short[2]}${short[3]}${short[3]}` : color;
@@ -329,6 +328,7 @@ export function OptionsPage() {
         disabled={!ready || saving}
         onEndpointChange={updateCodexBridgeMcpUrl}
       />
+      <ProjectFolderPatternsSettings />
       <fieldset className="settings-editor" disabled={!ready || saving}>
         {buttonGroups.map((group) => (
           <section

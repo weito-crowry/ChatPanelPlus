@@ -27,6 +27,7 @@ import { createChromeSettingsRepository } from './shared/settings-repository.ts'
 import {
   CODEX_BRIDGE_THREAD_MONITOR_ALARM,
   CODEX_BRIDGE_WATCH_ACK_EVENTS,
+  CODEX_BRIDGE_WATCH_CLEAR_EVENTS,
   CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH,
   CODEX_BRIDGE_WATCH_LIST,
   CODEX_BRIDGE_WATCH_READ,
@@ -65,7 +66,8 @@ function isCodexBridgePanelMessage(message: unknown): boolean {
 
 function isCodexBridgeWatchMessage(message: unknown): boolean {
   return typeof message === 'object' && message !== null && 'type' in message
-    && (message.type === CODEX_BRIDGE_WATCH_ACK_EVENTS || message.type === CODEX_BRIDGE_WATCH_START || message.type === CODEX_BRIDGE_WATCH_STOP
+    && (message.type === CODEX_BRIDGE_WATCH_ACK_EVENTS || message.type === CODEX_BRIDGE_WATCH_CLEAR_EVENTS
+      || message.type === CODEX_BRIDGE_WATCH_START || message.type === CODEX_BRIDGE_WATCH_STOP
       || message.type === CODEX_BRIDGE_WATCH_LIST || message.type === CODEX_BRIDGE_WATCH_READ
       || message.type === CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH
       || message.type === CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER);

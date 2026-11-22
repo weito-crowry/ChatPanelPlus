@@ -52,15 +52,18 @@ test('Bridge詳細は会話stateで開閉し、ARIA・owner filter・route race�
 });
 
 test('Bridge詳細の順序はthread一覧、監視登録、終了通知を保つ', async () => {
-  const [list, watch, notifications] = await Promise.all([
+  const [list, filter, watch, notifications] = await Promise.all([
     read('../src/content/CodexBridgeList.tsx'),
+    read('../src/content/CodexBridgeProjectFolderFilter.tsx'),
     read('../src/content/CodexBridgeWatchPanel.tsx'),
     read('../src/content/CodexBridgeNotificationCard.tsx'),
   ]);
-  const threadListIndex = list.indexOf('className="codex-bridge-thread-list"');
+  const threadListIndex = filter.indexOf('className="codex-bridge-thread-list"');
+  const filterIndex = list.indexOf('<CodexBridgeProjectFolderFilter');
   const watchPanelIndex = list.indexOf('<CodexBridgeWatchPanel');
   const watchListIndex = watch.indexOf('className="codex-bridge-watch-list"');
-  assert.ok(threadListIndex >= 0 && threadListIndex < watchPanelIndex);
+  assert.ok(filterIndex >= 0 && filterIndex < watchPanelIndex);
+  assert.ok(threadListIndex >= 0);
   assert.ok(watchListIndex >= 0);
   assert.ok(notifications.indexOf('className="codex-bridge-event-list"') >= 0);
   assert.match(watch, /選択threadの監視を開始/);

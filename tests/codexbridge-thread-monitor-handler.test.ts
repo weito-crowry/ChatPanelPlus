@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH,
   CODEX_BRIDGE_WATCH_ACK_EVENTS,
+  CODEX_BRIDGE_WATCH_CLEAR_EVENTS,
   CODEX_BRIDGE_WATCH_LIST,
   CODEX_BRIDGE_WATCH_READ,
   CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER,
@@ -10,6 +11,7 @@ import {
   CODEX_BRIDGE_WATCH_STOP,
   type CodexBridgeWatchSnapshot,
   type CodexBridgeTerminalEvent,
+  type CodexBridgeWatchOwnerMute,
 } from '../src/shared/codexbridge-thread-monitor-protocol.ts';
 import { createCodexBridgeThreadMonitorMessageHandler } from '../src/background/codexbridge-thread-monitor.ts';
 
@@ -29,12 +31,15 @@ const event: CodexBridgeTerminalEvent = {
   ownerTabId: 4, ownerConversationId: 'test', ownerMuted: false, ownerMuteRevision: 0,
 };
 
-function handlerFixture(connectionId = item.connectionId, sourceItems: readonly CodexBridgeWatchSnapshot[] = [item], sourceEvents: readonly CodexBridgeTerminalEvent[] = [event]) {
+function handlerFixture(connectionId = item.connectionId, sourceItems: readonly CodexBridgeWatchSnapshot[] = [item], sourceEvents: readonly CodexBridgeTerminalEvent[] = [event], startTransferred = false) {
   const calls: string[] = [];
+  const requestedOwners: CodexBridgeWatchOwnerMute[] = [];
   const monitor = {
-    async startWatch(targetId: string, threadId: string) {
+    async startWatch(targetId: string, threadId: string, owner: CodexBridgeWatchOwnerMute) {
       calls.push(`start:${targetId}:${threadId}`);
-      return { ok: true as const, item, created: true };
+      requestedOwners.push(owner);
+      return { ok: true as const, item: startTransferred ? { ...item, ...owner } : item,
+        created: !startTransferred, transferred: startTransferred };
     },
     async stopWatch(connectionId: string, targetId: string, threadId: string, ownerConversationId: string) {
       calls.push(`stop:${connectionId}:${targetId}:${threadId}`);
@@ -55,6 +60,10 @@ function handlerFixture(connectionId = item.connectionId, sourceItems: readonly 
       calls.push(`ack:${ownerConversationId}:${eventIds.join(',')}`);
       return ownerConversationId === event.ownerConversationId && eventIds.every((id) => id === event.eventId);
     },
+    async clearEvents(ownerConversationId: string, eventIds: readonly string[]) {
+      calls.push(`clear:${ownerConversationId}:${eventIds.join(',')}`);
+      return ownerConversationId === event.ownerConversationId && eventIds.every((id) => id === event.eventId);
+    },
   };
   const handle = createCodexBridgeThreadMonitorMessageHandler({
     extensionId: 'test-extension',
@@ -71,7 +80,7 @@ function handlerFixture(connectionId = item.connectionId, sourceItems: readonly 
     },
     async loadOwnerMute() { return { ok: true as const, muted: false, revision: 0 }; },
   });
-  return { handle, calls };
+  return { handle, calls, requestedOwners };
 }
 
 const trustedSender = {
@@ -101,7 +110,7 @@ test('only top-level ChatGPT senders can use the typed watch messages', async ()
 test('start, stop, read, list, and foreground refresh are explicit bounded operations', async () => {
   const { handle, calls } = handlerFixture();
   assert.deepEqual(await handle({ type: CODEX_BRIDGE_WATCH_START, targetId: 'target-1', threadId: 'thread-1', conversationId: 'test' }, trustedSender), {
-    ok: true, data: { item, created: true },
+    ok: true, data: { item, created: true, transferred: false },
   });
   assert.deepEqual(await handle({
     type: CODEX_BRIDGE_WATCH_STOP, connectionId: item.connectionId, targetId: item.targetId, threadId: item.threadId,
@@ -123,6 +132,19 @@ test('start, stop, read, list, and foreground refresh are explicit bounded opera
     `read:${item.connectionId}:${item.targetId}:${item.threadId}`,
     'list', 'foreground', 'list',
   ]);
+});
+
+test('trusted senderが別会話から登録を要求すると移管結果を返し、sender不一致は拒否する', async () => {
+  const { handle, calls, requestedOwners } = handlerFixture(item.connectionId, [item], [event], true);
+  const senderB = { ...trustedSender, url: 'https://chatgpt.com/c/other', tab: { id: 8, url: 'https://chatgpt.com/c/other' } };
+  assert.deepEqual(await handle({ type: CODEX_BRIDGE_WATCH_START, targetId: item.targetId, threadId: item.threadId, conversationId: 'other' }, senderB), {
+    ok: true, data: { item: { ...item, ownerTabId: 8, ownerConversationId: 'other', ownerMuted: false, ownerMuteRevision: 0 }, created: false, transferred: true },
+  });
+  assert.deepEqual(requestedOwners, [{ ownerTabId: 8, ownerConversationId: 'other', ownerMuted: false, ownerMuteRevision: 0 }]);
+  assert.equal(await handle({ type: CODEX_BRIDGE_WATCH_START, targetId: item.targetId, threadId: item.threadId, conversationId: 'other' }, {
+    ...senderB, tab: { id: 8, url: trustedSender.url },
+  }), null);
+  assert.deepEqual(calls, ['start:target-1:thread-1']);
 });
 
 test('final answer requests read only saved exact events and require the current connection', async () => {
@@ -180,6 +202,21 @@ test('ACKは要求元会話のevent IDsだけ確認し、越権・unknownを同�
     ok: true, data: { acknowledged: true },
   });
   assert.deepEqual(calls, ['ack:other:event-1', 'ack:test:missing-event', 'ack:test:event-1']);
+});
+
+test('通知clearはtrusted sender会話のevent IDsだけ削除し、owner越権を拒否する', async () => {
+  const { handle, calls } = handlerFixture();
+  const otherSender = { ...trustedSender, url: 'https://chatgpt.com/c/other', tab: { id: 8, url: 'https://chatgpt.com/c/other' } };
+  assert.deepEqual(await handle({ type: CODEX_BRIDGE_WATCH_CLEAR_EVENTS, conversationId: 'other', eventIds: [event.eventId] }, otherSender), {
+    ok: false, reason: 'invalid-request',
+  });
+  assert.deepEqual(await handle({ type: CODEX_BRIDGE_WATCH_CLEAR_EVENTS, conversationId: 'test', eventIds: [event.eventId] }, trustedSender), {
+    ok: true, data: { cleared: true },
+  });
+  assert.deepEqual(await handle({ type: CODEX_BRIDGE_WATCH_CLEAR_EVENTS, conversationId: 'test', eventIds: Array(129).fill('event-1') }, trustedSender), {
+    ok: false, reason: 'invalid-request',
+  });
+  assert.deepEqual(calls, ['clear:other:event-1', 'clear:test:event-1']);
 });
 
 test('final-answerは別会話のevent IDから本文を取得しない', async () => {

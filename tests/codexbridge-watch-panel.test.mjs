@@ -7,6 +7,7 @@ const sourcePath = fileURLToPath(new URL('../src/content/CodexBridgeWatchPanel.t
 const cardPath = fileURLToPath(new URL('../src/content/CodexBridgeNotificationCard.tsx', import.meta.url));
 const stylePath = fileURLToPath(new URL('../src/content/codexbridge-watch.css', import.meta.url));
 const presentationPath = fileURLToPath(new URL('../src/content/codexbridge-watch-presentation.ts', import.meta.url));
+const feedbackPath = fileURLToPath(new URL('../src/content/codexbridge-watch-start-feedback.ts', import.meta.url));
 
 test('watch UI selects terminal events and fetches only after an explicit click', async () => {
   const [source, card] = await Promise.all([readFile(sourcePath, 'utf8'), readFile(cardPath, 'utf8')]);
@@ -40,6 +41,20 @@ test('conversation owner is required for watch data, final-answer actions, and A
   assert.doesNotMatch(source, /acceptStoredItems|setEvents\(.*newValue/);
 });
 
+test('通知クリアは確認後、現在会話のevent ID snapshotだけを削除し監視ACKを維持する', async () => {
+  const [source, card] = await Promise.all([readFile(sourcePath, 'utf8'), readFile(cardPath, 'utf8')]);
+  assert.match(card, /通知をクリア/);
+  assert.match(card, /onClick=\{onClear\}/);
+  assert.match(source, /監視登録は残ります/);
+  assert.match(source, /window\.confirm\(`現在の会話に属する終了通知/);
+  assert.match(source, /events\.filter\(\(event\) => event\.ownerConversationId === ownerConversationId\)/);
+  assert.match(source, /type: CODEX_BRIDGE_WATCH_CLEAR_EVENTS,[\s\S]*?conversationId: ownerConversationId,[\s\S]*?eventIds: batch/);
+  assert.match(source, /clearCodexBridgeEventIds\(eventIds/);
+  assert.match(source, /clearInFlight\.current/);
+  assert.match(source, /setEventOperationMessage\(`現在の会話の終了通知/);
+  assert.match(source, /CODEX_BRIDGE_WATCH_ACK_EVENTS/);
+});
+
 test('ACK snapshots visible IDs and uses bounded serial batches with a partial-failure result', async () => {
   const source = await readFile(sourcePath, 'utf8');
   assert.match(source, /acknowledgeCodexBridgeEventIds\(/);
@@ -55,6 +70,48 @@ test('watch and event selection are conversation-owned persisted props and only 
   assert.match(source, /event\.ownerConversationId === conversationId/);
   assert.match(source, /onSelectBridgeWatch/);
   assert.match(source, /onSelectBridgeEvent/);
+});
+
+test('別会話のwatch再登録成功を通知し、過去eventは元ownerのまま扱う', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+  assert.match(source, /response\.data\.transferred === true/);
+  assert.match(source, /監視登録をこの会話へ移管しました。過去の通知は元の会話に残ります。/);
+  assert.match(source, /ownerConversationId !== ownerConversationId/);
+  assert.doesNotMatch(source, /別会話の登録元で監視中です/);
+});
+
+test('Aのthread選択・更新は監視開始を送らず、Bの明示ボタンだけがWATCH_STARTを起動する', async () => {
+  const [list, watch] = await Promise.all([readFile(fileURLToPath(new URL('../src/content/CodexBridgeList.tsx', import.meta.url)), 'utf8'), readFile(sourcePath, 'utf8')]);
+  assert.doesNotMatch(list, /CODEX_BRIDGE_WATCH_START|startWatch\(/);
+  assert.match(list, /CODEX_BRIDGE_MCP_GET_THREADS/);
+  assert.match(list, /setWatchFeedbackResetToken\(\(current\) => current \+ 1\)/);
+  assert.match(list, /watchFeedbackResetToken=\{watchFeedbackResetToken\}/);
+  assert.match(watch, /type: CODEX_BRIDGE_WATCH_START/);
+  assert.match(watch, /onClick=\{\(\) => \{ void startWatch\(\); \}\}/);
+  assert.equal((watch.match(/void startWatch\(\);/g) ?? []).length, 1);
+});
+
+test('選択変更・A更新・明示再試行で旧エラーを整理し、disabled理由と取得失敗を明示する', async () => {
+  const [source, presentation] = await Promise.all([
+    readFile(sourcePath, 'utf8'), readFile(presentationPath, 'utf8'),
+  ]);
+  assert.match(source, /watchStartFeedback\.current\.invalidate\(\);\s*setWatchStartError\(''\);\s*setWatchMessage\(''\);\s*\}, \[selected\?\.targetId, selected\?\.threadId\]\)/);
+  assert.match(source, /setWatchStartError\(''\);\s*setWatchMessage\(''\);\s*\}, \[watchFeedbackResetToken\]\)/);
+  assert.match(source, /refreshList\(showLoading = false, clearStartError = false\)/);
+  assert.match(source, /if \(clearStartError\) setWatchStartError\(''\)/);
+  assert.match(source, /refreshList\(true, true\)/);
+  assert.match(source, /recordFailure\(ticket, currentWatchStartIdentity\(\)\)/);
+  assert.match(await readFile(feedbackPath, 'utf8'), /if \(reason === 'invalid-request'\) return/);
+  assert.match(source, /watchStartFeedback\.current\.isCurrent\(ticket, currentWatchStartIdentity\(\)\)/);
+  const foregroundRefresh = source.slice(source.indexOf('const refreshForeground'), source.indexOf('const timer'));
+  assert.doesNotMatch(foregroundRefresh, /setWatchStartError/);
+  assert.match(source, /watchStartError && <p className="codex-bridge-error" role="alert">\{watchStartError\}/);
+  assert.match(source, /aria-describedby=\{startDisabledReason \? startReasonId : undefined\}/);
+  assert.match(presentation, /Aのスレッド一覧で対象を選択してください/);
+  assert.match(presentation, /Bridge接続IDが未取得です/);
+  assert.match(presentation, /会話IDを確認できません/);
+  assert.match(source, /role="alert">\{watchListFailureLabel\(listFailure\)\}/);
+  assert.match(source, /再試行/);
 });
 
 test('retrieved body completeness is labeled and Markdown whitespace remains visible', async () => {

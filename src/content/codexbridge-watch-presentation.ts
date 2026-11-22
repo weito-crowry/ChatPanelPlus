@@ -3,6 +3,65 @@ import type {
   CodexBridgeTerminalEvent,
   CodexBridgeWatchSnapshot,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
+import { deriveCodexBridgeWatchTurnState } from '../shared/codexbridge-thread-monitor-protocol.ts';
+import type { CodexBridgeWatchListFailureReason } from './codexbridge-watch-response.ts';
+
+const WATCH_OUTCOME_LABELS: Readonly<Record<CodexBridgeWatchSnapshot['fetchOutcome'], string>> = {
+  ok: '取得成功', '401': '認証失敗（401）', '403': '拒否（403）', timeout: 'timeout',
+  disconnected: '切断', unknown: '不明', 'permission-required': '権限なし',
+  'settings-unavailable': '接続設定またはtokenを取得できません', 'endpoint-not-found': 'endpointなし',
+  'session-expired': 'MCP session失効', 'http-error': 'HTTPエラー', 'protocol-error': '応答形式不明',
+  'protocol-version-unsupported': 'protocol version非対応', 'readonly-tool-unavailable': 'codex_statusなし',
+  'readonly-probe-failed': 'codex_status失敗', 'connection-changed': '接続先変更',
+};
+
+export function watchOutcomeLabel(outcome: CodexBridgeWatchSnapshot['fetchOutcome']): string {
+  return WATCH_OUTCOME_LABELS[outcome] ?? '不明';
+}
+
+export function watchDateLabel(value: string | null): string {
+  if (value === null) return '未取得';
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString('ja-JP') : '不明';
+}
+
+export function watchTurnStateLabel(snapshot: CodexBridgeWatchSnapshot, sameConnection: boolean): string {
+  if (!sameConnection) return '現在の接続先では未確認';
+  if (snapshot.fetchOutcome !== 'ok') return '最新取得に失敗、現在状態不明';
+  const state = deriveCodexBridgeWatchTurnState(snapshot);
+  if (state === 'baseline') return '登録時のturn（新規完了ではありません）';
+  if (state === 'running') return '別turnの実行を観測';
+  if (state === 'in_progress') return '進行中';
+  if (state === 'completed') return '新しいturnの完了を観測';
+  if (state === 'failed') return '新しいturnの失敗を観測';
+  if (state === 'interrupted') return '新しいturnの中断を観測';
+  if (state === 'gap') return '観測gapあり（中間turn不明）';
+  return '不明';
+}
+
+export function watchConnectionLabel(connectionId: string): string {
+  return connectionId.length > 20 ? `${connectionId.slice(0, 15)}…${connectionId.slice(-6)}` : connectionId;
+}
+
+export function watchListFailureLabel(reason: CodexBridgeWatchListFailureReason | 'runtime-unavailable'): string {
+  if (reason === 'sender-unverified') return '監視一覧: 会話ページの送信元を確認できません。SPA遷移が完了してから再試行してください。';
+  if (reason === 'storage-error') return '監視一覧: 保存領域の読み取りに失敗しました。';
+  if (reason === 'runtime-unavailable') return '監視一覧: 拡張機能から応答がありません。拡張機能とChatGPTタブを再読み込みしてください。';
+  return '監視一覧: 応答形式を確認できません。';
+}
+
+export function watchStartDisabledReason(input: Readonly<{
+  busy: boolean; conversationValid: boolean; loading: boolean; listFailure: boolean;
+  connectionId: string | null; selected: boolean;
+}>): string {
+  if (input.busy) return '監視操作を処理中です。';
+  if (!input.conversationValid) return '会話IDを確認できません。会話ページの再読込後に再試行してください。';
+  if (input.loading) return '監視一覧と接続IDを読み込み中です.';
+  if (input.listFailure) return '監視一覧を確認できません。上の再試行を行ってください。';
+  if (!input.connectionId) return 'Bridge接続IDが未取得です。接続状態を確認してください。';
+  if (!input.selected) return 'Aのスレッド一覧で対象を選択してください。';
+  return '';
+}
 
 export function filterOwnedWatchData(
   data: Readonly<{ items: readonly CodexBridgeWatchSnapshot[]; events: readonly CodexBridgeTerminalEvent[] }>,

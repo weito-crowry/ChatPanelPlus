@@ -56,19 +56,24 @@ test('muteは信頼済みtab IDとconversation IDで保存し、同一会話の�
   assert.ok(Object.keys(fake.data).every((key) => key.startsWith(CONVERSATION_AUDIO_MUTE_SESSION_KEY_PREFIX)));
 });
 
-test('sender.url・tab.url・要求conversation ID・frame ID不一致は拒否する', async () => {
+test('sender.url・tab.url・要求conversation ID・frame ID不一致は拒否理由を保ち、保存しない', async () => {
   const fake = fixture();
   const valid = fake.sender(11);
-  assert.equal(await fake.handler({ type: GET_CONVERSATION_AUDIO_MUTE, conversationId: 'conversation-B' }, valid), null);
-  assert.equal(await fake.handler({ type: GET_CONVERSATION_AUDIO_MUTE, conversationId: 'conversation-A' }, {
+  assert.deepEqual(await fake.handler({ type: GET_CONVERSATION_AUDIO_MUTE, conversationId: 'conversation-B' }, valid), {
+    ok: false, reason: 'sender-unverified',
+  });
+  assert.deepEqual(await fake.handler({ type: GET_CONVERSATION_AUDIO_MUTE, conversationId: 'conversation-A' }, {
     ...valid, url: 'https://chatgpt.com/c/conversation-B',
-  }), null);
-  assert.equal(await fake.handler({ type: GET_CONVERSATION_AUDIO_MUTE, conversationId: 'conversation-A' }, {
+  }), { ok: false, reason: 'sender-unverified' });
+  assert.deepEqual(await fake.handler({ type: GET_CONVERSATION_AUDIO_MUTE, conversationId: 'conversation-A' }, {
+    ...valid, tab: { id: 11, url: 'https://chatgpt.com/c/conversation-B' },
+  }), { ok: false, reason: 'sender-unverified' });
+  assert.deepEqual(await fake.handler({ type: GET_CONVERSATION_AUDIO_MUTE, conversationId: 'conversation-A' }, {
     ...valid, frameId: 2,
-  }), null);
-  assert.equal(await fake.handler({ type: GET_CONVERSATION_AUDIO_MUTE, conversationId: 'conversation-A' }, {
+  }), { ok: false, reason: 'sender-unverified' });
+  assert.deepEqual(await fake.handler({ type: GET_CONVERSATION_AUDIO_MUTE, conversationId: 'conversation-A' }, {
     ...valid, id: 'other-extension',
-  }), null);
+  }), { ok: false, reason: 'sender-unverified' });
   assert.deepEqual(fake.data, {});
 });
 

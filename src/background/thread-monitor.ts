@@ -1,8 +1,8 @@
 import {
   CODEX_BRIDGE_THREAD_MONITOR_ALARM,
   CODEX_BRIDGE_THREAD_MONITOR_FOREGROUND_MS,
-  CODEX_BRIDGE_THREAD_MONITOR_MAX_WATCHES,
   CODEX_BRIDGE_THREAD_MONITOR_MINUTES,
+  CODEX_BRIDGE_WATCH_ACK_EVENT_IDS_LIMIT,
   codexBridgeTerminalEventKey,
   codexBridgeWatchKey,
   isCodexBridgeWatchIdentifier,
@@ -18,6 +18,7 @@ import {
 import type { CodexBridgeThreadStatus } from '../shared/codexbridge-mcp-protocol.ts';
 import { detectCodexBridgeTerminalStatus } from './thread-monitor-events.ts';
 import { CodexBridgeThreadMonitorStorage, type LocalStorageLike } from './thread-monitor-storage.ts';
+import { registerCodexBridgeWatch } from './thread-monitor-registration.ts';
 
 type AlarmLike = Readonly<{
   get(name: string): Promise<unknown>;
@@ -148,8 +149,8 @@ export class CodexBridgeThreadMonitor {
   }
 
   async startWatch(targetId: string, threadId: string, owner?: CodexBridgeWatchOwnerMute): Promise<
-    | Readonly<{ ok: true; item: CodexBridgeWatchSnapshot; created: boolean }>
-    | Readonly<{ ok: false; reason: 'watch-limit' | 'connection-unavailable' | 'owner-conflict' }>
+    | Readonly<{ ok: true; item: CodexBridgeWatchSnapshot; created: boolean; transferred: boolean }>
+    | Readonly<{ ok: false; reason: 'watch-limit' | 'connection-unavailable' | 'owner-unavailable' }>
   > {
     if (!isCodexBridgeWatchIdentifier(targetId) || !isCodexBridgeWatchIdentifier(threadId)) {
       return { ok: false, reason: 'connection-unavailable' };
@@ -162,7 +163,6 @@ export class CodexBridgeThreadMonitor {
     }
     if (!access.connectionId) return { ok: false, reason: 'connection-unavailable' };
 
-    const key = codexBridgeWatchKey(access.connectionId, targetId, threadId);
     const initial: CodexBridgeWatchSnapshot = {
       watchId: this.createWatchId(), connectionId: access.connectionId, targetId, threadId, enabled: true,
       ...(owner ?? {}),
@@ -172,24 +172,15 @@ export class CodexBridgeThreadMonitor {
       needsAttention: null, turnChange: 'unknown', observedAt: null, lastSuccessAt: null,
       fetchOutcome: 'unknown', nextPollAt: this.now(), failureCount: 0,
     };
-    const result = await this.storage.mutate<Readonly<{ item: CodexBridgeWatchSnapshot | null; created: boolean; conflict: boolean }>>((items, events) => {
-      const existing = items.find((item) => codexBridgeWatchKey(item.connectionId, item.targetId, item.threadId) === key);
-      if (existing) {
-        const conflict = Boolean(owner && existing.ownerConversationId !== owner.ownerConversationId);
-        return { items, events, result: { item: existing, created: false, conflict } };
-      }
-      if (items.length >= CODEX_BRIDGE_THREAD_MONITOR_MAX_WATCHES) {
-        return { items, events, result: { item: null, created: false, conflict: false } };
-      }
-      return { items: [...items, initial], events, result: { item: initial, created: true, conflict: false } };
-    });
-    if (result.conflict) return { ok: false, reason: 'owner-conflict' };
+    const result = await this.storage.mutate((items, events) => registerCodexBridgeWatch(items, events, initial, owner));
+    if (result.ownerUnavailable) return { ok: false, reason: 'owner-unavailable' };
     if (!result.item) return { ok: false, reason: 'watch-limit' };
     await this.syncAlarm();
     if (result.created) {
       await this.poll(result.item, access, 'background');
     }
-    return { ok: true, item: (await this.read(access.connectionId, targetId, threadId)) ?? result.item, created: result.created };
+    return { ok: true, item: (await this.read(access.connectionId, targetId, threadId)) ?? result.item,
+      created: result.created, transferred: result.transferred };
   }
 
   async stopWatch(connectionId: string, targetId: string, threadId: string, ownerConversationId?: string): Promise<boolean> {
@@ -228,6 +219,17 @@ export class CodexBridgeThreadMonitor {
           ? { ...event, acknowledgedAt: event.acknowledgedAt ?? acknowledgedAt } : event),
         result: true,
       };
+    });
+  }
+
+  async clearEvents(ownerConversationId: string, eventIds: readonly string[]): Promise<boolean> {
+    return this.storage.mutate((items, events) => {
+      const ids = new Set(eventIds);
+      if (ids.size !== eventIds.length || ids.size === 0 || ids.size > CODEX_BRIDGE_WATCH_ACK_EVENT_IDS_LIMIT
+        || events.some((event) => ids.has(event.eventId) && event.ownerConversationId !== ownerConversationId)) {
+        return { items, events, result: false };
+      }
+      return { items, events: events.filter((event) => !ids.has(event.eventId)), result: true };
     });
   }
 

@@ -7,6 +7,7 @@ import {
   CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH,
   CODEX_BRIDGE_WATCH_ACK_EVENTS,
   CODEX_BRIDGE_WATCH_ACK_EVENT_IDS_LIMIT,
+  CODEX_BRIDGE_WATCH_CLEAR_EVENTS,
   CODEX_BRIDGE_WATCH_LIST,
   CODEX_BRIDGE_WATCH_READ,
   CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER,
@@ -41,7 +42,7 @@ type SenderLike = Readonly<{
   tab?: { id?: number; url?: string };
 }>;
 type MonitorLike = Pick<CodexBridgeThreadMonitor, 'startWatch' | 'stopWatch' | 'list' | 'listEvents' | 'read' | 'readEvent'
-  | 'refreshForeground' | 'acknowledgeEvents'>;
+  | 'refreshForeground' | 'acknowledgeEvents' | 'clearEvents'>;
 
 export type CodexBridgeThreadMonitorHandlerOptions = Readonly<{
   extensionId: string;
@@ -104,7 +105,7 @@ function isMessage(value: unknown): value is CodexBridgeWatchMessage {
   if (value.type === CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER) {
     return keys.length === 2 && isCodexBridgeWatchIdentifier(value.eventId) && value.eventId.length <= 96;
   }
-  if (value.type === CODEX_BRIDGE_WATCH_ACK_EVENTS) {
+  if (value.type === CODEX_BRIDGE_WATCH_ACK_EVENTS || value.type === CODEX_BRIDGE_WATCH_CLEAR_EVENTS) {
     return keys.length === 3 && isConversationId(value.conversationId) && Array.isArray(value.eventIds)
       && value.eventIds.length > 0 && value.eventIds.length <= CODEX_BRIDGE_WATCH_ACK_EVENT_IDS_LIMIT
       && value.eventIds.every((eventId) => isCodexBridgeWatchIdentifier(eventId) && eventId.length <= 96);
@@ -141,13 +142,14 @@ function finalAnswerFailure(error: unknown): CodexBridgeFinalAnswerResult {
 
 export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridgeThreadMonitorHandlerOptions) {
   return async (message: unknown, sender: SenderLike): Promise<
-    | CodexBridgeWatchResponse<Readonly<{ item: CodexBridgeWatchSnapshot; created: boolean }>>
+    | CodexBridgeWatchResponse<Readonly<{ item: CodexBridgeWatchSnapshot; created: boolean; transferred: boolean }>>
     | CodexBridgeWatchResponse<Readonly<{ removed: boolean }>>
     | CodexBridgeWatchResponse<CodexBridgeWatchListData>
     | CodexBridgeWatchResponse<CodexBridgeWatchSnapshot | null>
     | CodexBridgeWatchResponse<CodexBridgeWatchListData>
     | CodexBridgeWatchResponse<CodexBridgeFinalAnswerResult>
     | CodexBridgeWatchResponse<Readonly<{ acknowledged: boolean }>>
+    | CodexBridgeWatchResponse<Readonly<{ cleared: boolean }>>
     | null
   > => {
     if (!isMessage(message)) return { ok: false, reason: 'invalid-request' };
@@ -164,7 +166,7 @@ export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridg
         };
         const result = await options.monitor.startWatch(message.targetId, message.threadId, owner);
         if (!result.ok) return result;
-        return { ok: true, data: { item: result.item, created: result.created } };
+        return { ok: true, data: { item: result.item, created: result.created, transferred: result.transferred } };
       }
       if (message.type === CODEX_BRIDGE_WATCH_STOP) {
         const removed = await options.monitor.stopWatch(message.connectionId, message.targetId, message.threadId, identity.conversationId);
@@ -212,6 +214,11 @@ export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridg
         if (message.conversationId !== identity.conversationId) return { ok: false, reason: 'invalid-request' };
         const acknowledged = await options.monitor.acknowledgeEvents(identity.conversationId, message.eventIds, new Date().toISOString());
         return acknowledged ? { ok: true, data: { acknowledged: true } } : { ok: false, reason: 'invalid-request' };
+      }
+      if (message.type === CODEX_BRIDGE_WATCH_CLEAR_EVENTS) {
+        if (message.conversationId !== identity.conversationId) return { ok: false, reason: 'invalid-request' };
+        const cleared = await options.monitor.clearEvents(identity.conversationId, message.eventIds);
+        return cleared ? { ok: true, data: { cleared: true } } : { ok: false, reason: 'invalid-request' };
       }
       if (message.type === CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH) await options.monitor.refreshForeground();
       const [items, events, connectionId] = await Promise.all([

@@ -80,6 +80,7 @@ test('256-ID snapshot traverses the real owner-authenticated handler in accepted
       acceptedBatches.push([...ids]);
       return true;
     },
+    async clearEvents() { return false; },
   };
   const handle = createCodexBridgeThreadMonitorMessageHandler({
     extensionId: 'test-extension', monitor,

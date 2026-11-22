@@ -36,6 +36,13 @@ test('conversation ID不明または不正な場合はmute messageを送らな�
   assert.deepEqual(fake.messages, []);
 });
 
+test('mute clientはsender検証拒否とruntime未応答を保存失敗から区別する', async () => {
+  const rejected = new ConversationAudioMuteClient(fakeRuntime({ ok: false, reason: 'sender-unverified' }).runtime);
+  assert.deepEqual(await rejected.load('conversation-A'), { ok: false, reason: 'sender-unverified' });
+  const unavailable = new ConversationAudioMuteClient({ async sendMessage() { throw new Error('no response'); } });
+  assert.deepEqual(await unavailable.load('conversation-A'), { ok: false, reason: 'runtime-unavailable' });
+});
+
 test('mute済み再生route応答は既定Content Script playerを呼ばず、エラーにも数えない', async () => {
   const messages: unknown[] = [];
   let playback = 0;

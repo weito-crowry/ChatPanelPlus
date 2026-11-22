@@ -15,11 +15,11 @@
 - 設定画面の設定、タブ、プロンプト、カスタムボタンおよびミュート以外の音声設定は同一Chromeプロファイル内で共通にする。
 - 音声ミュートだけはChromeタブID＋conversation ID別に保存し、共有音声設定や別タブのミュート値を変更しない。
 - 通常の回答完了音は共有音声有効化がONかつ現在のタブ／会話muteがOFFの場合に可聴とし、Bridge完了音は登録元ownerのmuteを使う。共有ON/OFFと会話別muteは別UI操作にする。
-- Bridge完了音は監視登録元のChromeタブID＋検証済みconversation IDを単一・不変ownerとして保持し、そのownerの最新muteだけを参照する。active tabへfallbackしない。
+- Bridge watchはtrusted tab ID＋検証済みconversation IDを単一ownerとして保持し、別conversationから新たな監視開始があれば既存watchを原子的に後勝ち移管する。完了音はその時点のwatch ownerの最新muteだけを参照し、active tabへfallbackしない。
 - Bridge監視と終了検出のbackendは共通とするが、Bの監視一覧、Cの終了通知一覧、通知確認、2件数はowner conversation IDごとに分離する。同じconversation IDを開いた別Chromeタブ間では表示・確認状態を共有する。
 - Aの一般Codex thread候補探索一覧は共有でよい。通常の会話別パネルには、現在会話から登録したwatchと、その会話ownerを持つ終了eventだけを返す。
 - Bの監視中一覧・選択状態とCのevent一覧・選択状態もconversation IDごとに分け、同一会話を開いた別tab間で共有する。
-- 終了eventは作成時点のowner conversation ID（必要ならorigin tabId／watch identity）を内部snapshotとして固定し、watch解除・後日の再登録・SPA遷移で過去eventの帰属を変えない。
+- 終了eventは作成時点のowner conversation ID（必要ならorigin tabId／watch identity）を内部snapshotとして固定し、watch解除・owner移管・SPA遷移で過去eventの帰属を変えない。
 - 最終回答の取得・表示・コピー・入力欄挿入はevent ownerと現在会話が一致する場合だけ許可する。backgroundで取得を認可し、SPA遷移時はcontent側の選択・本文・pending結果を破棄して挿入直前にも再照合する。
 - owner欠損の既存watch／eventは保持するが通常の会話別panelには表示・計上しない。ownerを推測して割り当てない。
 - パネルが変更する表示・選択状態は会話ID別に保存し、別会話タブへ引き継がない。SPA遷移と再読込後に同じ会話状態を復元する。
@@ -70,7 +70,7 @@ Bridge詳細では現在の全診断値を常時展開しない。監視登録�
 | **音声ミュート** | **ChromeタブID＋conversation ID別** | **`chrome.storage.session` にbackground経由で保存する。キーに送信元タブIDと検証済みconversation IDを含め、再読込後に同じタブ・会話の値を復元する。同じ会話を別Chromeタブで開いた場合も別状態にする。タブを閉じた際は当該タブの値を整理する。ミュート操作は共有設定や他タブのミュート値を書き換えない。** |
 | selected tab、最小化、Bridge詳細展開、thread／終了通知の選択など、音声ミュート以外のパネルUI状態 | 既存計画どおりconversation ID別 | 会話別状態として保存する。同じ会話を複数タブで開く場合の共有は前計画の扱いを維持し、今回決定したタブ別音声ミュートとは分ける。 |
 | Codex作業中モード | 既存どおりChromeタブID＋conversation ID別 | 現行 `chrome.storage.session` の保存・タブ終了時の整理を維持する。音声ミュートと別の状態として扱う。 |
-| Bridge監視登録・終了イベント | 監視・検出・保存はプロファイル共通。表示・確認はconversation ID別 | 既存の`chrome.storage.local`watch/event台帳を維持する。watchに単一・不変owner（信頼済みtab ID＋conversation ID）を持たせ、eventには作成時のowner conversation IDを不変snapshotとして保存する。owner別mute policyは登録元tab＋conversationに適用する。owner欠損データは保持するが通常panelの一覧・件数から除外し、推測移行しない。 |
+| Bridge監視登録・終了イベント | 監視・検出・保存はプロファイル共通。表示・確認はconversation ID別 | 既存の`chrome.storage.local`watch/event台帳を維持する。watchには常に単一owner（信頼済みtab ID＋conversation ID）を持たせ、別conversationからの新たな開始で同一watchを原子的に後勝ち移管する。eventには作成時のowner conversation IDを不変snapshotとして保存する。owner別mute policyは現在のwatch owner tab＋conversationに適用する。owner欠損データは保持するが通常panelの一覧・件数から除外し、推測移行しない。 |
 
 回答完了音の共通有効化・音色・音量は`chatPanelPlus.config`にあり、出力デバイスと音源assetも別の`chrome.storage.local`領域に保存される。これらは同一ChromeプロファイルのChatGPTタブ間で共有する。Optionsは共有設定を読み・保存する。
 
@@ -151,10 +151,10 @@ conversation IDが不明な新規会話では、会話別UI状態やミュート
 - [ ] 既存イベント台帳に確認状態を追加し、MCP APIを増やさず既存background保存経路で更新する。
 - [ ] 旧イベントの読み込み、重複Turn、複数タブの同時確認、新規イベントとの競合、128件履歴上限をテストする。
 - [ ] 監視開始要求はChromeの信頼済みsender.tab.idと、/c/<ID>をsender.url／sender.tab.urlおよび要求conversation IDと照合した値でowner bindingを作る。不一致、欠落、SPA切替raceでは登録を拒否する。
-- [ ] owner bindingと最新mute snapshot/revisionをwatch snapshotの不変owner情報として既存共有watch stateへ保存する。watch identityごとにownerは単一。同じconversation IDからの重複登録は既存watchを返し初回origin tabId／muteを保つ。別conversation IDからの登録はowner conflictとし、owner変更は解除後の再登録のみ。複数ownerと自動移譲は対象外。
+- [ ] owner bindingと最新mute snapshot/revisionをwatch snapshotのowner情報として既存共有watch stateへ保存する。watch identityごとにownerは常に単一。同じconversation IDからの重複登録は冪等で既存watchを返す。別conversation IDから開始された登録はstorage.mutate内で同一watchを原子的に新ownerへ移管し、watchId・baseline・lastObservedTurnId等の監視状態を保持する。競合する移管は保存順の後勝ちとする。複数ownerは持たない。
 - [ ] 既存owner欠損watchは監視とeventを維持し、UIに解除・再登録を案内する。owner不明の通知音はskipし、自動で割り当てない。
 - [ ] Turn単位の終了eventと通知は生成元watchのownerに帰属させ、active tab／現在routeを参照しない。owner IDをログ・公開UI・MCP出力へ露出しない。
-- [ ] Turn event作成時にowner conversation ID（必要ならorigin tabId／watch identity）を不変snapshotとして保存する。watch stop後もeventの所有会話を変えず、再登録先変更で過去eventを移動しない。
+- [ ] Turn event作成時にowner conversation ID（必要ならorigin tabId／watch identity）を不変snapshotとして保存する。watch stop後やowner移管後も過去eventの所有会話を変えず、移管後に新規作成するeventだけ新ownerへ帰属させる。
 - [ ] `WATCH_LIST`と`WATCH_FOREGROUND_REFRESH`はbackgroundでsender.url／sender.tab.urlからconversation IDを検証してからwatch、event、summaryをfilterする。`WATCH_READ`／`WATCH_STOP`もsender会話がownerと一致するwatchだけ許可し、不一致時はwatchの有無や他会話の内容を返さない。
 - [ ] 通知確認はevent IDごとにowner conversationを検証し、要求元会話のeventだけを確認する。他会話のevent IDは拒否して件数を維持し、同一会話別tabの確認は冪等にする。
 - [ ] `WATCH_READ_FINAL_ANSWER`はeventId検索後にevent ownerと信頼済みsender conversationを照合する。不一致、owner不明、conversation ID不明をbackgroundで拒否する。取得済み本文表示、copy、入力欄挿入もowner会話内だけ許可し、SPA route変更時に選択／本文／pending結果を破棄して挿入直前に再照合する。
@@ -177,6 +177,6 @@ conversation IDが不明な新規会話では、会話別UI状態やミュート
 2. パネルのタブ選択、最小化／復帰、ボタン挿入、クリア、貼り付け、設定、カスタムボタン、統計、共有回答完了音ON/OFF、音量／音色／出力先／音源asset、既定／Offscreen出力経路、Bridge一覧／監視登録の既存動作を確認する。
 3. 会話ID別状態を導入する場合は、別会話タブの独立、同一会話の再読込復元、SPA遷移切替、会話ID不明時の非保存、遅延ロード競合を確認する。
 4. Codex作業中モードの保存がtabId＋conversationId単位のままで、パネル状態の変更から独立していることを確認する。
-5. Phase 3で会話別muteのread/write、再読込復元、同一会話の別タブ分離、SPA切替、共有設定非干渉、既定／Offscreen再生raceを確認する。Bridgeはowner snapshot更新、Turn eventの元owner帰属、同一owner再登録／別owner conflict／legacy owner欠損、owner mute OFF時のみ再生、mute ON／不明・タブ終了後の音声skip、視覚通知と件数維持をテストする。
+5. Phase 3で会話別muteのread/write、再読込復元、同一会話の別タブ分離、SPA切替、共有設定非干渉、既定／Offscreen再生raceを確認する。Bridgeはowner snapshot更新、Turn eventの元owner帰属、同一owner再登録／別ownerへの後勝ち移管／legacy owner欠損、owner mute OFF時のみ再生、mute ON／不明・タブ終了後の音声skip、視覚通知と件数維持をテストする。
 6. 会話A/Bの一覧・件数・確認分離、同一会話別tabでの共有、watch stop後／別会話再登録後もevent owner不変、不正sender、eventId越権read／stop拒否、確認競合、新eventの保持、SPA中の取得／copy／挿入取消、legacy ownerless隔離を確認する。
 7. Chrome実機未実施の項目はNOT_RUN、判定不能はUNKNOWNとして記録する。

@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   CODEX_BRIDGE_THREAD_MONITOR_ALARM,
   CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY,
+  type CodexBridgeTerminalEvent,
 } from '../src/shared/codexbridge-thread-monitor-protocol.ts';
 import { CodexBridgeThreadMonitor, type CodexBridgeNotificationHandler } from '../src/background/thread-monitor.ts';
 import type { CodexBridgeLastTurn, CodexBridgeThreadStatus } from '../src/shared/codexbridge-mcp-protocol.ts';
@@ -108,7 +109,7 @@ test('an actively observed baseline turn and a later new terminal turn notify on
   assert.equal(notificationCalls, 1);
 });
 
-test('watch owner is single, duplicate same-conversation start preserves origin, and event ownership survives stop/re-registration', async () => {
+test('別会話の再登録はwatch ownerを移管し、過去eventと旧owner権限を維持する', async () => {
   const h = harness(status('turn-a', 'in_progress'));
   const ownerA = { ownerTabId: 4, ownerConversationId: 'conversation-A', ownerMuted: false, ownerMuteRevision: 0 } as const;
   const sameConversationOtherTab = { ...ownerA, ownerTabId: 9, ownerMuted: true, ownerMuteRevision: 3 } as const;
@@ -121,22 +122,52 @@ test('watch owner is single, duplicate same-conversation start preserves origin,
   const duplicate = await h.monitor.startWatch('target-1', 'thread-1', sameConversationOtherTab);
   assert.equal(duplicate.ok && duplicate.created, false);
   if (duplicate.ok) assert.equal(duplicate.item.ownerTabId, 4);
-  assert.deepEqual(await h.monitor.startWatch('target-1', 'thread-1', ownerB), { ok: false, reason: 'owner-conflict' });
 
   h.setStatus(status('turn-a', 'completed'));
   h.advance(30_000);
   await h.monitor.refreshAlarm();
+  const beforeTransfer = (await h.monitor.listEvents())[0]!;
+  const transferred = await h.monitor.startWatch('target-1', 'thread-1', ownerB);
+  assert.equal(transferred.ok, true);
+  if (!transferred.ok) return;
+  assert.equal(transferred.transferred, true);
+  assert.equal(transferred.created, false);
+  assert.equal(transferred.item.watchId, first.ok ? first.item.watchId : '');
+  assert.equal(transferred.item.lastObservedTurnId, 'turn-a');
+  assert.equal((await h.monitor.listEvents())[0]?.ownerConversationId, 'conversation-A');
+  const previousEvent = (await h.monitor.listEvents())[0]!;
+  assert.equal(await h.monitor.clearEvents('conversation-B', [previousEvent.eventId]), false);
+  assert.equal(await h.monitor.stopWatch('connection-A', 'target-1', 'thread-1', 'conversation-A'), false);
   assert.equal(await h.monitor.updateOwnerMute(4, 'conversation-A', true, 1), undefined);
-  const event = (await h.monitor.listEvents())[0];
-  assert.equal(event?.ownerConversationId, 'conversation-A');
-  assert.equal(event?.ownerTabId, 4);
-  assert.equal(event?.ownerMuted, true);
-  assert.equal(await h.monitor.stopWatch('connection-A', 'target-1', 'thread-1', 'conversation-A'), true);
+  assert.equal((await h.monitor.read('connection-A', 'target-1', 'thread-1'))?.ownerConversationId, 'conversation-B');
+  assert.equal((await h.monitor.read('connection-A', 'target-1', 'thread-1'))?.ownerMuted, false);
+  assert.equal(await h.monitor.updateOwnerMute(10, 'conversation-B', true, 2), undefined);
+  assert.equal((await h.monitor.read('connection-A', 'target-1', 'thread-1'))?.ownerMuted, true);
+
+  h.setStatus(status('turn-b', 'in_progress'));
+  h.advance(30_000);
+  await h.monitor.refreshAlarm();
+  h.setStatus(status('turn-b', 'failed'));
+  h.advance(30_000);
+  await h.monitor.refreshAlarm();
+  const events = await h.monitor.listEvents();
+  assert.equal(events.find((event) => event.turnId === 'turn-a')?.ownerConversationId, 'conversation-A');
+  assert.equal(events.find((event) => event.turnId === 'turn-b')?.ownerConversationId, 'conversation-B');
+  assert.equal(events.find((event) => event.turnId === 'turn-b')?.ownerMuted, true);
+  assert.equal(await h.monitor.clearEvents('conversation-A', [previousEvent.eventId]), true);
+  assert.deepEqual((await h.monitor.listEvents()).map((event) => event.turnId), ['turn-b']);
+
+  const sameOwnerAgain = await h.monitor.startWatch('target-1', 'thread-1', { ...ownerB, ownerTabId: 12, ownerMuted: false });
+  assert.equal(sameOwnerAgain.ok && sameOwnerAgain.transferred, false);
+  if (sameOwnerAgain.ok) assert.deepEqual([sameOwnerAgain.item.ownerTabId, sameOwnerAgain.item.ownerMuted], [10, true]);
+  assert.equal(beforeTransfer.ownerConversationId, 'conversation-A');
+
+  // A later explicit stop followed by start still creates a new watch identity.
+  assert.equal(await h.monitor.stopWatch('connection-A', 'target-1', 'thread-1', 'conversation-B'), true);
+  assert.equal(await h.monitor.updateOwnerMute(4, 'conversation-A', true, 1), undefined);
   const reassigned = await h.monitor.startWatch('target-1', 'thread-1', ownerB);
   assert.equal(reassigned.ok, true);
-  const retainedEvent = (await h.monitor.listEvents())[0];
-  assert.equal(retainedEvent?.ownerConversationId, 'conversation-A');
-  assert.equal(retainedEvent?.ownerTabId, 4);
+  assert.equal((await h.monitor.listEvents()).length, 1);
 });
 
 test('event ACK is owner-scoped and idempotent while a concurrent new event remains unconfirmed', async () => {
@@ -159,6 +190,34 @@ test('event ACK is owner-scoped and idempotent while a concurrent new event rema
   const events = await h.monitor.listEvents();
   assert.equal(events.find((event) => event.eventId === first.eventId)?.acknowledgedAt, '2026-11-21T00:00:00.000Z');
   assert.equal(events.filter((event) => !event.acknowledgedAt).length, 1);
+});
+
+test('通知clearはowner eventだけを削除しwatch baselineと新着・他owner eventを保持する', async () => {
+  const h = harness(status('turn-a', 'in_progress'));
+  const owner = { ownerTabId: 4, ownerConversationId: 'conversation-A', ownerMuted: false, ownerMuteRevision: 0 } as const;
+  await h.monitor.startWatch('target-1', 'thread-1', owner);
+  h.setStatus(status('turn-a', 'completed'));
+  h.advance(30_000);
+  await h.monitor.refreshAlarm();
+  const original = (await h.monitor.listEvents())[0]!;
+  assert.equal(await h.monitor.clearEvents('conversation-B', [original.eventId]), false);
+  assert.equal((await h.monitor.listEvents()).length, 1);
+
+  const foreign: CodexBridgeTerminalEvent = {
+    ...original, eventId: 'foreign-event', turnId: 'turn-foreign', ownerTabId: 9, ownerConversationId: 'conversation-B',
+  };
+  const concurrent: CodexBridgeTerminalEvent = { ...original, eventId: 'new-event', turnId: 'turn-new' };
+  const saved = h.storage.values[CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY] as { version: number; items: unknown[]; events: CodexBridgeTerminalEvent[] };
+  await h.storage.set({ [CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY]: { ...saved, events: [...saved.events, foreign, concurrent] } });
+
+  assert.equal(await h.monitor.clearEvents('conversation-A', [original.eventId]), true);
+  assert.deepEqual((await h.monitor.listEvents()).map((event) => event.eventId).sort(), ['foreign-event', 'new-event']);
+  const watches = await h.monitor.list();
+  assert.equal(watches.length, 1);
+  assert.equal(watches[0]?.lastObservedTurnId, 'turn-a');
+  h.advance(30_000);
+  await h.monitor.refreshAlarm();
+  assert.deepEqual((await h.monitor.listEvents()).map((event) => event.eventId).sort(), ['foreign-event', 'new-event']);
 });
 
 test('live terminal turns complete when current execution is specifically unconfirmed', async () => {

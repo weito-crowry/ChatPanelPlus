@@ -16,6 +16,7 @@ export const CODEX_BRIDGE_WATCH_READ = 'CODEX_BRIDGE_WATCH_READ' as const;
 export const CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH = 'CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH' as const;
 export const CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER = 'CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER' as const;
 export const CODEX_BRIDGE_WATCH_ACK_EVENTS = 'CODEX_BRIDGE_WATCH_ACK_EVENTS' as const;
+export const CODEX_BRIDGE_WATCH_CLEAR_EVENTS = 'CODEX_BRIDGE_WATCH_CLEAR_EVENTS' as const;
 
 export type CodexBridgeTerminalStatus = 'completed' | 'failed' | 'interrupted';
 export type CodexBridgeNotificationState = 'pending' | 'requested' | 'played' | 'skipped' | 'failed';
@@ -118,7 +119,8 @@ export type CodexBridgeWatchMessage =
   | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_READ; connectionId: string; targetId: string; threadId: string }>
   | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH }>
   | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER; eventId: string }>
-  | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_ACK_EVENTS; conversationId: string; eventIds: readonly string[] }>;
+  | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_ACK_EVENTS; conversationId: string; eventIds: readonly string[] }>
+  | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_CLEAR_EVENTS; conversationId: string; eventIds: readonly string[] }>;
 
 export type CodexBridgeWatchListData = Readonly<{
   items: readonly CodexBridgeWatchSnapshot[];
@@ -129,7 +131,7 @@ export type CodexBridgeWatchListData = Readonly<{
 
 export type CodexBridgeWatchResponse<T = undefined> =
   | Readonly<{ ok: true; data: T }>
-  | Readonly<{ ok: false; reason: 'invalid-request' | 'watch-limit' | 'connection-unavailable' | 'storage-error' | 'owner-conflict' }>;
+  | Readonly<{ ok: false; reason: 'invalid-request' | 'watch-limit' | 'connection-unavailable' | 'storage-error' | 'owner-unavailable' }>;
 
 export function isCodexBridgeWatchFetchOutcome(value: unknown): value is CodexBridgeWatchFetchOutcome {
   return typeof value === 'string' && [

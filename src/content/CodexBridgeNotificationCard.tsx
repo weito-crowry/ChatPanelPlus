@@ -9,9 +9,11 @@ type Props = Readonly<{
   busyKey: string;
   answerBusy: boolean;
   answerMessage: string;
+  operationMessage: string;
   displayedAnswer: CodexBridgeFinalAnswerResult | null;
   threadLabel: (targetId: string, threadId: string) => string;
   onAcknowledge: () => void;
+  onClear: () => void;
   onSelectEvent: (eventId: string) => void;
   onFetchAnswer: () => void;
   onCopyAnswer: (event: CodexBridgeTerminalEvent, text: string) => void;
@@ -26,7 +28,7 @@ function dateLabel(value: string | null): string {
 
 export function CodexBridgeNotificationCard({
   events, selectedEvent, selectedEventId, currentConnectionId, busyKey, answerBusy, answerMessage,
-  displayedAnswer, threadLabel, onAcknowledge, onSelectEvent, onFetchAnswer, onCopyAnswer, onInsertAnswer,
+  operationMessage, displayedAnswer, threadLabel, onAcknowledge, onClear, onSelectEvent, onFetchAnswer, onCopyAnswer, onInsertAnswer,
 }: Props) {
   return (
     <section className="phase6-card phase6-card-c" aria-label="通知・最終回答">
@@ -36,7 +38,12 @@ export function CodexBridgeNotificationCard({
           disabled={busyKey !== '' || !events.some((event) => !event.acknowledgedAt)}>
           {busyKey === 'acknowledge' ? '確認中…' : '未確認の終了通知を確認'}
         </button>
+        <button type="button" className="codex-bridge-button" onClick={onClear}
+          disabled={busyKey !== '' || events.length === 0}>
+          {busyKey === 'clear' ? '削除中…' : '通知をクリア'}
+        </button>
       </div>
+      {operationMessage && <p className="codex-bridge-note" role="status">{operationMessage}</p>}
       {events.length === 0 && <p className="codex-bridge-empty">通知イベントはありません。</p>}
       {events.length > 0 && <ul className="codex-bridge-event-list" aria-label="監視終了イベント一覧">
         {events.map((event) => <li key={event.eventId} className="codex-bridge-event-item">

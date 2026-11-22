@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   CODEX_BRIDGE_MCP_GET_STATUS,
   CODEX_BRIDGE_MCP_GET_TARGETS,
@@ -12,9 +12,10 @@ import {
   type CodexBridgeThreadStatus,
 } from '../shared/codexbridge-mcp-protocol.ts';
 import { CodexBridgeRequestTracker, mergeCodexBridgeThreads, type CodexBridgeThreadListMode } from './codexbridge-request-tracker.ts';
-import { classifyCodexBridgeThreadActivity, sortCodexBridgeThreadsByActivity } from './codexbridge-thread-order.ts';
+import { sortCodexBridgeThreadsByActivity } from './codexbridge-thread-order.ts';
 import { CodexBridgeWatchPanel } from './CodexBridgeWatchPanel.tsx';
 import { CodexBridgeThreadModePicker } from './CodexBridgeThreadModePicker.tsx';
+import { CodexBridgeProjectFolderFilter } from './CodexBridgeProjectFolderFilter.tsx';
 import { codexBridgeReadErrorLabel } from './codexbridge-read-error-label.ts';
 import type { ConversationPanelWatchSelection } from '../shared/conversation-panel-state-repository.ts';
 import type { RunningThreadSummary } from './codexbridge-running-summary.ts';
@@ -74,6 +75,7 @@ export function CodexBridgeList({
   onSelectBridgeWatch = () => {},
   onSelectBridgeEvent = () => {},
   onConnectionChange,
+  currentProjectId = null,
 }: Readonly<{
   foregroundEnabled?: boolean;
   conversationId?: string | null;
@@ -82,6 +84,7 @@ export function CodexBridgeList({
   onSelectBridgeWatch?: (selection: ConversationPanelWatchSelection | null) => void;
   onSelectBridgeEvent?: (eventId: string | null) => void;
   onConnectionChange?: (connection: Readonly<{ state: ConnectionState; targetId: string | null; targetName: string | null }>) => void;
+  currentProjectId?: string | null;
   onSummaryChange?: (summary: Readonly<{ watchingCount: number; unacknowledgedThreadCount: number }> | null) => void;
   onRunningSummaryChange?: (summary: RunningThreadSummary) => void;
 }> = {}) {
@@ -95,6 +98,7 @@ export function CodexBridgeList({
   const [threadsBusy, setThreadsBusy] = useState(false);
   const [threadsError, setThreadsError] = useState('');
   const [listMode, setListMode] = useState<CodexBridgeThreadListMode>('running');
+  const [watchFeedbackResetToken, setWatchFeedbackResetToken] = useState(0);
   const [selected, setSelected] = useState<CodexBridgeThread | null>(null);
   const [selectedMissing, setSelectedMissing] = useState(false);
   const [status, setStatus] = useState<CodexBridgeThreadStatus | null>(null);
@@ -105,7 +109,6 @@ export function CodexBridgeList({
   const targetListGeneration = useRef(0);
   const runningSummaryGeneration = useRef(0);
   const requestTracker = useRef<CodexBridgeRequestTracker | null>(null);
-  const threadIdDescriptionPrefix = useId();
   if (!requestTracker.current) requestTracker.current = new CodexBridgeRequestTracker();
 
   function updateSelected(thread: CodexBridgeThread | null) {
@@ -196,6 +199,7 @@ export function CodexBridgeList({
 
   async function loadThreads(loadMore: boolean) {
     if (!targetId || threadsBusy || (loadMore && (listMode !== 'normal' || !nextCursor))) return;
+    setWatchFeedbackResetToken((current) => current + 1);
     const requestedTargetId = targetIdRef.current;
     const requestedCursor = loadMore ? nextCursor : null;
     const request = requestTracker.current!.beginThreads(requestedTargetId, requestedCursor);
@@ -403,35 +407,16 @@ export function CodexBridgeList({
           {threadsLoaded && threads.length === 0 && <p className="codex-bridge-empty">
             {listMode === 'running' ? 'Bridgeが返した実行中threadはありません。' : 'この通常一覧ページにthreadはありません。'}
           </p>}
-          {displayedThreads.length > 0 && (
-            <ul className="codex-bridge-thread-list" aria-label="thread一覧">
-              {displayedThreads.map((thread, index) => {
-                const isSelected = selected?.targetId === thread.targetId && selected.id === thread.id;
-                const activity = classifyCodexBridgeThreadActivity(thread);
-                const threadIdDescriptionId = `${threadIdDescriptionPrefix}-thread-${index}`;
-                const activityLabel = activity === 'running' ? '実行中'
-                  : activity === 'estimated' ? '実行中の推定' : stateLabel(thread.currentExecution?.state);
-                return (
-                  <li key={`${thread.targetId}:${thread.id}`}>
-                    <button type="button" title={thread.id} aria-describedby={threadIdDescriptionId}
-                      className={`codex-bridge-thread${isSelected ? ' is-selected' : ''}`} onClick={() => {
-                      requestTracker.current?.selectThread(thread.targetId, thread.id);
-                      updateSelected(thread);
-                      setSelectedMissing(false);
-                      setStatus(null);
-                      setStatusBusy(false);
-                      setStatusError('');
-                    }}>
-                      <span className="phase6-thread-label">{thread.title?.trim() || thread.preview?.trim() || 'タイトル未取得'}</span>
-                      <small className={`phase6-thread-state is-${activity}`}>
-                        <span aria-hidden="true">{activity === 'running' ? '●' : activity === 'estimated' ? '◌' : '○'}</span> {activityLabel}
-                      </small>
-                    </button>
-                    <span id={threadIdDescriptionId} className="phase6-sr-only">スレッドID：{thread.id}</span>
-                  </li>
-                );
-              })}
-            </ul>
+          {targetId && (
+            <CodexBridgeProjectFolderFilter threads={threadsLoaded ? displayedThreads : []} selected={selected} currentProjectId={currentProjectId}
+              onSelectThread={(thread) => {
+                requestTracker.current?.selectThread(thread.targetId, thread.id);
+                updateSelected(thread);
+                setSelectedMissing(false);
+                setStatus(null);
+                setStatusBusy(false);
+                setStatusError('');
+              }} />
           )}
           {selected && (
                 <div className="codex-bridge-selected phase6-selected-thread">
@@ -472,6 +457,7 @@ export function CodexBridgeList({
       </section>
       <CodexBridgeWatchPanel
         selected={selected ? { targetId: selected.targetId, threadId: selected.id } : null}
+        watchFeedbackResetToken={watchFeedbackResetToken}
         foregroundEnabled={foregroundEnabled}
         conversationId={conversationId}
         bridgeWatchSelection={bridgeWatchSelection}

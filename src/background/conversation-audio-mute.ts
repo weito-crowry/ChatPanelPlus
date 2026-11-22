@@ -30,7 +30,7 @@ interface ReadResult {
   readonly saved: boolean;
 }
 
-interface ErrorResult { readonly ok: false; readonly reason: 'invalid-data' | 'storage-error' }
+interface ErrorResult { readonly ok: false; readonly reason: 'invalid-data' | 'storage-error' | 'sender-unverified' }
 
 function trustedIdentity(sender: ConversationAudioMuteSenderLike, extensionId: string, requestedId: unknown): { tabId: number; conversationId: string } | null {
   const tabId = sender.tab?.id;
@@ -154,7 +154,7 @@ export function createConversationAudioMuteMessageHandler(
     if (!type || typeof message !== 'object' || message === null || !('conversationId' in message)) return null;
     const request = message as Record<string, unknown>;
     const identity = trustedIdentity(sender, extensionId, request.conversationId);
-    if (!identity) return null;
+    if (!identity) return { ok: false, reason: 'sender-unverified' };
     if (type === GET_CONVERSATION_AUDIO_MUTE) return store.load(identity.tabId, identity.conversationId);
     if (type !== SET_CONVERSATION_AUDIO_MUTE || typeof request.muted !== 'boolean') return null;
     return store.set(identity.tabId, identity.conversationId, request.muted,

@@ -75,6 +75,8 @@ mute本体はtab ID＋conversation ID別の`chrome.storage.session`だが、Brid
 
 共有watch identityごとのownerは単一とする。同じownerからの再登録は冪等、別ownerからの登録は明示的なowner conflictとし、変更は解除後の再登録に限る。owner欠損のlegacy watchは監視を維持しつつ音声をskipし、UIは手動解除・再登録を案内する。自動移譲や複数owner対応はしない。owner IDをログ・公開UI・MCP出力に出さず、新規MCP APIも追加しない。
 
+> **後続決定による更新（2026-11-22）:** 上記はPhase 0時点の設計判断であり、現在の要件では別conversationからの登録を拒否しない。同一watch identityのownerは単一のまま、trusted senderの後勝ちで既存watchを原子的に移管する。過去eventは旧ownerに保持し、ownerless legacyの自動割当は引き続き行わない。現行仕様はメイン計画Phase 4および後続実装記録を参照。
+
 ### 4. conversation routeとCodex作業中モード
 
 `src/shared/conversation-route.ts`はURL pathの`/c/<id>`からIDを抽出し、英数字・`_`・`-`のみのIDを受け入れる。`src/content/codex-work-mode-route.ts`はpopstate/pageshowと250ms確認でSPA routeを観測する。

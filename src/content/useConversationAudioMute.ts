@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { createChromeConversationAudioMuteClient, type ConversationAudioMuteClient } from '../shared/conversation-audio-mute-client.ts';
 
+function loadFailureMessage(reason: string): string {
+  if (reason === 'sender-unverified') return '会話URLとChromeタブ情報が一致しないため、ミュート状態を読み込めません。遷移完了後にページを再読み込みしてください。';
+  if (reason === 'runtime-unavailable') return '拡張機能から応答がありません。拡張機能とChatGPTタブを再読み込みしてください。';
+  if (reason === 'invalid-response') return 'ミュート状態の応答を確認できません。拡張機能とChatGPTタブを再読み込みしてください。';
+  return '保存領域からミュート状態を読み込めませんでした。';
+}
+
 export interface ConversationAudioMuteController {
   readonly muted: boolean;
   readonly loaded: boolean;
@@ -37,7 +44,7 @@ export function useConversationAudioMute(conversationId: string | null): Convers
     if (!conversationId) return;
     void client.current!.load(conversationId).then((result) => {
       if (generation.current !== currentGeneration || conversationIdRef.current !== conversationId) return;
-      if (!result.ok) { setError('会話別ミュート状態を読み込めませんでした。'); return; }
+      if (!result.ok) { setError(loadFailureMessage(result.reason)); return; }
       revision.current += 1;
       mutedRef.current = result.value.muted;
       setMuted(result.value.muted);
@@ -65,7 +72,11 @@ export function useConversationAudioMute(conversationId: string | null): Convers
       revision.current += 1;
       mutedRef.current = previous;
       setMuted(previous);
-      setError('会話別ミュート状態を保存できませんでした。');
+      setError(result.reason === 'sender-unverified'
+        ? '会話URLとChromeタブ情報が一致しないため、ミュート状態を保存できません。'
+        : result.reason === 'runtime-unavailable'
+          ? '拡張機能から応答がありません。ミュート設定は変更されていません。'
+          : 'ミュート状態を保存できませんでした。');
       return;
     }
     revision.current += 1;

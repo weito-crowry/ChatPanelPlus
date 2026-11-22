@@ -7,6 +7,7 @@ import { BridgeSummaryBar } from './BridgeSummaryBar';
 import type { PanelControllerState } from './usePanelController';
 import type { RunningThreadSummary } from './codexbridge-running-summary.ts';
 import { conversationIdFromPath } from '../shared/conversation-route.ts';
+import { projectIdFromPathname } from '../shared/project-route.ts';
 
 const MIN_ICON_SVG = <svg className="panel-minimize-icon" viewBox="0 0 24 24" aria-hidden="true">
   <path d="m7 10 5 5 5-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -163,6 +164,7 @@ export function PanelView({
         <div id="panel-bridge-details" className="panel-bridge-details" hidden={!bridgeExpanded}>
           <CodexBridgeList
             foregroundEnabled={!currentViewState.minimized} conversationId={conversationId}
+            currentProjectId={projectIdFromPathname(window.location.pathname)}
             bridgeWatchSelection={bridgeWatchSelection} bridgeEventSelection={bridgeEventSelection}
             onSelectBridgeWatch={onSelectBridgeWatch} onSelectBridgeEvent={onSelectBridgeEvent}
             onSummaryChange={updateBridgeSummary} onConnectionChange={updateBridgeConnection}

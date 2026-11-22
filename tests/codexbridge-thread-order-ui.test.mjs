@@ -18,12 +18,14 @@ test('Bridge取得モードは実行中を既定にし、通常一覧とaccessib
 });
 
 test('running_onlyと通常cursor要求を分け、切替は選択と監視を保持する', async () => {
-  const source = await readFile(sourcePath, 'utf8');
+  const [source, filter] = await Promise.all([
+    readFile(sourcePath, 'utf8'), readFile(new URL('../src/content/CodexBridgeProjectFolderFilter.tsx', import.meta.url), 'utf8'),
+  ]);
   assert.match(source, /\.\.\.\(listMode === 'running' \? \{ runningOnly: true \} : \{\}\)/);
   assert.match(source, /const displayedThreads = sortCodexBridgeThreadsByActivity\(threads\)/);
   assert.doesNotMatch(source, /filterCodexBridgeThreads\(threads/);
-  assert.match(source, /displayedThreads\.map\(\(thread, index\) =>/);
-  assert.match(source, /const isSelected = selected\?\.targetId === thread\.targetId/);
+  assert.match(filter, /visibleThreads\.map\(\(thread, index\) =>/);
+  assert.match(filter, /const isSelected = selected\?\.targetId === thread\.targetId/);
   assert.match(source, /<CodexBridgeWatchPanel[\s\S]*?selected=\{selected \? \{/);
   const nextPage = source.match(/\{listMode === 'normal' && nextCursor && \([\s\S]*?次ページ[\s\S]*?\)\}/)?.[0];
   assert.ok(nextPage, 'next-page control remains available');
@@ -47,8 +49,10 @@ test('filter stylesheetを既存Shadow DOMのstyle要素へ注入する', async 
 });
 
 test('推定中は推定ラベルを表示し、確定中のstateは実行中と表示する', async () => {
-  const source = await readFile(sourcePath, 'utf8');
-  assert.match(source, /activity === 'estimated' \? '実行中の推定'/);
-  assert.match(source, /className=\{`phase6-thread-state is-\$\{activity\}`\}/);
+  const [source, filter] = await Promise.all([
+    readFile(sourcePath, 'utf8'), readFile(new URL('../src/content/CodexBridgeProjectFolderFilter.tsx', import.meta.url), 'utf8'),
+  ]);
+  assert.match(filter, /activity === 'estimated' \? '実行中の推定'/);
+  assert.match(filter, /className=\{`phase6-thread-state is-\$\{activity\}`\}/);
   assert.match(source, /value === 'in_progress' \|\| value === 'running'\) return '実行中'/);
 });
