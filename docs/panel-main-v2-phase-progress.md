@@ -16,7 +16,7 @@
 
 - ユーザー報告の2回目はreload・接続更新・30秒待機・A更新でもB一覧が読み込み中のまま、開始不可。A一覧/Bridge接続表示は正常で監視中/通知は0/0だった。先行観測から変わった理由や保存データの消失は確認されておらず、原ログも未収集。
 - ソースで確認したgeneration競合に対し、B一覧要求の優先度調停、単一flightの自動更新、25秒bounded timeout、失敗原因表示/再試行、route tokenによる遅延応答破棄を追加。失敗を0件にせず`—`とし、B開始は一覧の成功・current connection・current route等が有効な時だけ許可する。owner filter、sender URL/tab URL検証、保存済みwatch/eventは変更しない。
-- 実機の症状がこの競合だったかは未確定。C44でChrome実機再確認をNOT_RUNとして管理する。欠落/不正なwatch/event配列を成功0件扱いしない検査も追加。自動テストはisolated source-only copyで636/636 PASS、focused 38/38 PASS。`pnpm typecheck`・`pnpm lint`・`pnpm check:size` PASS。隔離suite前後でライブ`dist/`の11/11 relative path/size/SHA-256一致。build・正式配備・Chrome操作は未実施。
+- 実機の症状がこの競合だったかは未確定。欠落/不正なwatch/event配列を成功0件扱いしない検査も追加。隔離全suite 636/636、focused 38/38、`pnpm typecheck`・`pnpm lint`・`pnpm check:size` PASS。source-only suite前後はlive `dist/`11/11 hash一致。2026-11-22 source commit `39a38f5cd423576294fbd744b41b595a7a0a0578`を登録済みrepo直下`dist/`へ`pnpm build` exit 0で配備。backup `D:\weito\Documents\src\codexapp\ChatPanelPlus-dist-c44-predeploy-20261122-225802-220-e09b3e603f0a489b98ea9bc8ef2c6edb`はbuild前11/11 relative path/size/SHA-256一致、reparseなし。prebuild manifest `D:\weito\Documents\src\codexapp\ChatPanelPlus-dist-c44-predeploy-20261122-225802-220.manifest.csv`、postbuild manifest `D:\weito\Documents\src\codexapp\ChatPanelPlus-dist-c44-postbuild-20261122-225802-220.manifest.csv`は生成後11/11 hashを現物照合、bundle変更は`content.js`のみ。静的検証11 files、Manifest V3/0.1.5、必須6/6、HTML refs 5/5、CSS URL refs 0、C44/C37 markers PASS。Chrome reloadとC44はNOT_RUN、手動確認手順は最終チェックリストC44に記録。
 
 ## 最終受入の保留
 
