@@ -58,7 +58,7 @@
 | C38 running_only API連携・件数 | 新Bridge serviceのschema対応環境と旧service／未対応remote targetで、通常・展開・最小化の3状態を確認。実行中／通常一覧mode、target切替、更新、20件cursor、応答遅延、真の0件・失敗も試す。 | boolean schemaの対応確認後だけ実行中要求を送り、running_only結果を直接表示する。確定・推定を分けない。通常一覧は20件cursorのまま。旧schema／未対応remote／失敗時は件数`—`と理由を示し通常一覧へ切替可能。古い件数・別target値を残さず、Bridge返却範囲以上の完全性を称さない。 | NOT_RUN | CPP commit `4cee26e980e2bfaf32e0f2a299c86a0c4082073d`は自動検証済みでbundleへ配備済み。Bridge再起動はユーザー報告済みだがlive app `tools/list` schemaは未確認。Chrome reload・API実値・旧/remote target動作は未確認。 |
 
 | C44 B監視一覧のtimeout・再試行・route競合 | 監視一覧を遅延または無応答にし、5秒foreground更新・storage更新・明示再試行を重ねる。timeout後に再試行し、真の空一覧、storage/sender応答失敗、SPA会話切替も確認する。 | 初回/明示要求のloadingは低優先更新で永久化しない。25秒以内にtimeout等の理由と再試行が表示され、自動要求は積み上がらない。古いrouteのwatch/eventは出ず、失敗/未取得は`—`、成功した空一覧のみ0件。不正/欠落配列も成功0件にしない。WATCH_STARTはBの明示クリックだけで実行される。 | NOT_RUN | 自動検証636/636・focused 38/38、typecheck/lint/size PASS。C44 source commit `39a38f5cd423576294fbd744b41b595a7a0a0578`を登録済みrepo直下`dist/`へ`pnpm build` exit 0で配備。backup 11/11、postbuild manifestもdist現物11/11 hash照合。bundle変更`content.js`のみ。静的検証11 files・Manifest V3/0.1.5・必須6/6・HTML refs 5/5・C44/C37 marker PASS。Chrome手動reload/実機再確認はNOT_RUN。 |
-| C45 5秒foreground監視・終端後の自動解除 | 前面ChatGPTタブの監視周期を確認する。専用threadで`completed`、`failed`、`interrupted`を一件ずつ発生させ、event・通知・watch一覧・alarmを確認する。他watch併存、baselineが既終端、gap/unknown/inferred、event保存失敗も確認する。 | 前面pollは約5秒、Chrome alarmは30秒のまま。確実な新規終端遷移では一件のeventを保存して対象watchだけを解除し、別watchとevent ownerを保つ。音声の成功/失敗/muteにかかわらず解除し、保存失敗・不確実状態・初期baselineでは解除しない。最終watch解除時alarmを消し、他watchがあれば維持する。 | NOT_RUN | focused 49/49、隔離全suite 639/639、typecheck/lint/size PASS。正式dist backup/build記録は追記待ち。Chrome reloadと実機確認は未実施。 |
+| C45 5秒foreground監視・終端後の自動解除 | 前面ChatGPTタブの監視周期を確認する。専用threadで`completed`、`failed`、`interrupted`を一件ずつ発生させ、event・通知・watch一覧・alarmを確認する。他watch併存、baselineが既終端、gap/unknown/inferred、event保存失敗も確認する。 | 前面pollは約5秒、Chrome alarmは30秒のまま。確実な新規終端遷移では一件のeventを保存して対象watchだけを解除し、別watchとevent ownerを保つ。音声の成功/失敗/muteにかかわらず解除し、保存失敗・不確実状態・初期baselineでは解除しない。最終watch解除時alarmを消し、他watchがあれば維持する。 | NOT_RUN | focused 49/49、隔離全suite 639/639、typecheck/lint/size PASS。コードcommit `b2158ddcbfee1be23b7e54e6394950368141411e`をbackup 11/11 hash照合後に`pnpm build` exit 0で正式distへ配備。Manifest V3/0.1.5、必須6/6、11 files、HTML 3参照、bundle markers PASS。Chrome reloadと実機確認は未実施。 |
 
 ## C44 配備後の手動確認
 
@@ -66,6 +66,13 @@
 2. Aでthreadを選択し、Bが25秒以内に一覧を表示するか、timeout/送信元/保存失敗等の明示理由と「再試行」を表示することを確認する。
 3. 一覧が正常ならBの明示開始を行い、上部の「監視中」件数が更新されることを確認する。稼働中の別watchが通知を送る可能性があるため、再読み込みのタイミングに留意する。
 4. 再発時はBのエラー文言と画面状態を記録する。スクリーンショットや記録に会話本文、thread ID、owner情報、tokenを含めない。
+
+## C45 配備後の手動確認
+
+1. Chrome拡張を手動再読み込みし、対象ChatGPT会話をF5で読み直す。
+2. 前面でwatch中のスレッドが約5秒周期で更新されることを確認する。background alarmは30秒周期のまま。
+3. 専用threadでcompleted/failed/interruptedを確認し、該当watchだけが解除され、終了event・通知履歴が残ることを確認する。他watchがあれば監視中のまま残ることを確認する。
+4. 保存失敗・baseline既終端・gap/unknown状態では自動解除されないことを確認する。Chrome実機の結果をC45の判定欄へ記録する。
 
 ## 判断待ち・実装上の保留
 
