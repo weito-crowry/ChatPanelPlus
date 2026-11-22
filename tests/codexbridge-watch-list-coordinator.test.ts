@@ -49,7 +49,7 @@ test('初回LISTが始まる前に始まった自動要求は初回要求へ置�
   assert.equal(coordinator.finish(initial, true), true);
 });
 
-test('foreground要求は1件だけ進行し、失敗後は15秒pollを止め、成功した手動再試行で再開する', () => {
+test('foreground自動要求は1件だけ進行し、失敗後は停止して手動再試行の成功で再開する', () => {
   const coordinator = new WatchListRequestCoordinator();
   const foreground = coordinator.begin('conversation-A', 'foreground');
   assert.ok(foreground);

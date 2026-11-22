@@ -158,7 +158,7 @@ test('connection IDs keep same target/thread watches separate and a fresh worker
   assert.equal(h.alarms.creates, 1);
 });
 
-test('background waits about 30 seconds while foreground refresh runs at about 15 seconds', async () => {
+test('background alarm cadence stays at 30 seconds while foreground refresh polls every 5 seconds', async () => {
   const h = harness();
   await h.monitor.startWatch('target-1', 'thread-1');
   h.advance(29_999);
@@ -170,14 +170,18 @@ test('background waits about 30 seconds while foreground refresh runs at about 1
 
   const foreground = harness();
   await foreground.monitor.startWatch('target-1', 'thread-1');
-  foreground.advance(14_999);
+  foreground.advance(4_999);
   await foreground.monitor.refreshForeground();
   assert.equal(foreground.calls, 1);
   foreground.advance(1);
   await foreground.monitor.refreshForeground();
   assert.equal(foreground.calls, 2);
-  foreground.advance(15_000);
-  await foreground.monitor.refreshAlarm();
+  assert.equal((await foreground.monitor.list())[0]?.nextPollAt, foreground.now() + 5_000);
+  foreground.advance(4_999);
+  await foreground.monitor.refreshForeground();
+  assert.equal(foreground.calls, 2);
+  foreground.advance(1);
+  await foreground.monitor.refreshForeground();
   assert.equal(foreground.calls, 3);
 });
 
@@ -278,7 +282,7 @@ test('a long offline interval followed by a changed turn is recorded as a gap wi
   assert.equal(deriveCodexBridgeWatchTurnState(item), 'gap');
 });
 
-test('a baseline turn completing later is recognized, but an already-completed baseline remains baseline', async () => {
+test('a baseline turn completing later creates one event and removes its one-shot watch', async () => {
   let status = makeStatus('target-1', 'thread-1', 'turn-1', 'in_progress');
   const h = harness({ status: async () => status });
   const started = await h.monitor.startWatch('target-1', 'thread-1');
@@ -288,9 +292,9 @@ test('a baseline turn completing later is recognized, but an already-completed b
   status = makeStatus('target-1', 'thread-1', 'turn-1', 'completed');
   h.advance(30_000);
   await h.monitor.refreshAlarm();
-  const item = (await h.monitor.list())[0]!;
-  assert.equal(item.turnChange, 'same');
-  assert.equal(deriveCodexBridgeWatchTurnState(item), 'completed');
+  assert.deepEqual(await h.monitor.list(), []);
+  assert.equal((await h.monitor.listEvents())[0]?.status, 'completed');
+  assert.equal(h.alarms.active, false);
 });
 
 test('authentication and network failures preserve observations and never classify unknown access as terminal', async () => {
@@ -384,10 +388,16 @@ test('repeated failures back off while a missing token or network is not a termi
   assert.equal(item.fetchOutcome, 'timeout');
   assert.equal(item.failureCount, 1);
   const firstRetry = item.nextPollAt;
-  h.advance(15_000);
+  h.advance(4_999);
   await h.monitor.refreshForeground();
   assert.equal(h.calls, 1);
-  h.advance(15_000);
+  h.advance(1);
+  await h.monitor.refreshForeground();
+  assert.equal(h.calls, 1);
+  h.advance(24_999);
+  await h.monitor.refreshForeground();
+  assert.equal(h.calls, 1);
+  h.advance(1);
   await h.monitor.refreshForeground();
   item = (await h.monitor.list())[0]!;
   assert.equal(h.calls, 2);

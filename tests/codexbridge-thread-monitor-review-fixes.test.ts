@@ -81,15 +81,15 @@ test('a confirmed no-turn baseline can observe a new turn start and completion',
   observed = status({ state: 'running', currentExecution: execution('turn-b', 'running', 'live') });
   now += 30_000;
   await monitor.refreshAlarm();
-  let item = (await monitor.list())[0]!;
+  const item = (await monitor.list())[0]!;
   assert.equal(deriveCodexBridgeWatchTurnState(item), 'running');
 
   observed = status({ lastTurn: turn('turn-b') });
   now += 30_000;
   await monitor.refreshAlarm();
-  item = (await monitor.list())[0]!;
-  assert.equal(item.turnChange, 'advanced');
-  assert.equal(deriveCodexBridgeWatchTurnState(item), 'completed');
+  assert.equal((await monitor.listEvents())[0]?.turnId, 'turn-b');
+  assert.equal((await monitor.listEvents())[0]?.status, 'completed');
+  assert.deepEqual(await monitor.list(), []);
 });
 
 test('an unknown first baseline migrates conservatively and does not invent a new completion', async () => {

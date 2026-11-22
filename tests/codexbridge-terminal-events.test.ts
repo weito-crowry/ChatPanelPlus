@@ -77,6 +77,8 @@ test('a completed baseline does not create an event or prepare audio', async () 
   const result = await h.monitor.startWatch('target-1', 'thread-1');
   assert.equal(result.ok, true);
   assert.equal((await h.monitor.listEvents()).length, 0);
+  assert.equal((await h.monitor.list()).length, 1);
+  assert.equal(h.alarms.active, true);
   assert.equal(preparationCalls, 0);
   assert.ok(CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY in h.storage.values);
 });
@@ -107,9 +109,11 @@ test('an actively observed baseline turn and a later new terminal turn notify on
   assert.equal(events[0]?.turnId, 'turn-a');
   assert.equal(events[0]?.notificationState, 'played');
   assert.equal(notificationCalls, 1);
+  assert.deepEqual(await h.monitor.list(), []);
+  assert.equal(h.alarms.active, false);
 });
 
-test('別会話の再登録はwatch ownerを移管し、過去eventと旧owner権限を維持する', async () => {
+test('終端後の再登録は新しいwatchになり、過去eventとowner別権限を維持する', async () => {
   const h = harness(status('turn-a', 'in_progress'));
   const ownerA = { ownerTabId: 4, ownerConversationId: 'conversation-A', ownerMuted: false, ownerMuteRevision: 0 } as const;
   const sameConversationOtherTab = { ...ownerA, ownerTabId: 9, ownerMuted: true, ownerMuteRevision: 3 } as const;
@@ -127,22 +131,32 @@ test('別会話の再登録はwatch ownerを移管し、過去eventと旧owner�
   h.advance(30_000);
   await h.monitor.refreshAlarm();
   const beforeTransfer = (await h.monitor.listEvents())[0]!;
-  const transferred = await h.monitor.startWatch('target-1', 'thread-1', ownerB);
-  assert.equal(transferred.ok, true);
-  if (!transferred.ok) return;
-  assert.equal(transferred.transferred, true);
-  assert.equal(transferred.created, false);
-  assert.equal(transferred.item.watchId, first.ok ? first.item.watchId : '');
-  assert.equal(transferred.item.lastObservedTurnId, 'turn-a');
   assert.equal((await h.monitor.listEvents())[0]?.ownerConversationId, 'conversation-A');
   const previousEvent = (await h.monitor.listEvents())[0]!;
   assert.equal(await h.monitor.clearEvents('conversation-B', [previousEvent.eventId]), false);
   assert.equal(await h.monitor.stopWatch('connection-A', 'target-1', 'thread-1', 'conversation-A'), false);
   assert.equal(await h.monitor.updateOwnerMute(4, 'conversation-A', true, 1), undefined);
-  assert.equal((await h.monitor.read('connection-A', 'target-1', 'thread-1'))?.ownerConversationId, 'conversation-B');
-  assert.equal((await h.monitor.read('connection-A', 'target-1', 'thread-1'))?.ownerMuted, false);
+
+  const nextWatch = await h.monitor.startWatch('target-1', 'thread-1', ownerB);
+  assert.equal(nextWatch.ok, true);
+  if (!nextWatch.ok) return;
+  assert.equal(nextWatch.created, true);
+  assert.equal(nextWatch.transferred, false);
+  assert.notEqual(nextWatch.item.watchId, first.item.watchId);
+  assert.equal(nextWatch.item.lastObservedTurnId, 'turn-a');
+  assert.equal(nextWatch.item.ownerConversationId, 'conversation-B');
+  assert.equal(nextWatch.item.ownerMuted, false);
+
   assert.equal(await h.monitor.updateOwnerMute(10, 'conversation-B', true, 2), undefined);
   assert.equal((await h.monitor.read('connection-A', 'target-1', 'thread-1'))?.ownerMuted, true);
+  const sameOwnerAgain = await h.monitor.startWatch('target-1', 'thread-1', { ...ownerB, ownerTabId: 12, ownerMuted: false });
+  assert.equal(sameOwnerAgain.ok && sameOwnerAgain.transferred, false);
+  if (sameOwnerAgain.ok) assert.deepEqual([sameOwnerAgain.item.ownerTabId, sameOwnerAgain.item.ownerMuted], [10, true]);
+
+  assert.equal(await h.monitor.stopWatch('connection-A', 'target-1', 'thread-1', 'conversation-B'), true);
+  const reassigned = await h.monitor.startWatch('target-1', 'thread-1', { ...ownerB, ownerMuted: true, ownerMuteRevision: 2 });
+  assert.equal(reassigned.ok, true);
+  if (reassigned.ok) assert.equal(reassigned.item.lastObservedTurnId, 'turn-a');
 
   h.setStatus(status('turn-b', 'in_progress'));
   h.advance(30_000);
@@ -156,17 +170,8 @@ test('別会話の再登録はwatch ownerを移管し、過去eventと旧owner�
   assert.equal(events.find((event) => event.turnId === 'turn-b')?.ownerMuted, true);
   assert.equal(await h.monitor.clearEvents('conversation-A', [previousEvent.eventId]), true);
   assert.deepEqual((await h.monitor.listEvents()).map((event) => event.turnId), ['turn-b']);
-
-  const sameOwnerAgain = await h.monitor.startWatch('target-1', 'thread-1', { ...ownerB, ownerTabId: 12, ownerMuted: false });
-  assert.equal(sameOwnerAgain.ok && sameOwnerAgain.transferred, false);
-  if (sameOwnerAgain.ok) assert.deepEqual([sameOwnerAgain.item.ownerTabId, sameOwnerAgain.item.ownerMuted], [10, true]);
   assert.equal(beforeTransfer.ownerConversationId, 'conversation-A');
-
-  // A later explicit stop followed by start still creates a new watch identity.
-  assert.equal(await h.monitor.stopWatch('connection-A', 'target-1', 'thread-1', 'conversation-B'), true);
-  assert.equal(await h.monitor.updateOwnerMute(4, 'conversation-A', true, 1), undefined);
-  const reassigned = await h.monitor.startWatch('target-1', 'thread-1', ownerB);
-  assert.equal(reassigned.ok, true);
+  assert.deepEqual(await h.monitor.list(), []);
   assert.equal((await h.monitor.listEvents()).length, 1);
 });
 
@@ -181,6 +186,7 @@ test('event ACK is owner-scoped and idempotent while a concurrent new event rema
   assert.equal(await h.monitor.acknowledgeEvents('conversation-B', [first.eventId], '2026-11-21T00:00:00.000Z'), false);
   assert.equal(await h.monitor.acknowledgeEvents('conversation-A', [first.eventId], '2026-11-21T00:00:00.000Z'), true);
   assert.equal(await h.monitor.acknowledgeEvents('conversation-A', [first.eventId], '2026-11-21T00:01:00.000Z'), true);
+  await h.monitor.startWatch('target-1', 'thread-1', owner);
   h.setStatus(status('turn-b', 'in_progress'));
   h.advance(30_000);
   await h.monitor.refreshAlarm();
@@ -192,7 +198,7 @@ test('event ACK is owner-scoped and idempotent while a concurrent new event rema
   assert.equal(events.filter((event) => !event.acknowledgedAt).length, 1);
 });
 
-test('通知clearはowner eventだけを削除しwatch baselineと新着・他owner eventを保持する', async () => {
+test('通知clearはowner eventだけを削除しwatch解除後も新着・他owner eventを保持する', async () => {
   const h = harness(status('turn-a', 'in_progress'));
   const owner = { ownerTabId: 4, ownerConversationId: 'conversation-A', ownerMuted: false, ownerMuteRevision: 0 } as const;
   await h.monitor.startWatch('target-1', 'thread-1', owner);
@@ -212,9 +218,7 @@ test('通知clearはowner eventだけを削除しwatch baselineと新着・他ow
 
   assert.equal(await h.monitor.clearEvents('conversation-A', [original.eventId]), true);
   assert.deepEqual((await h.monitor.listEvents()).map((event) => event.eventId).sort(), ['foreign-event', 'new-event']);
-  const watches = await h.monitor.list();
-  assert.equal(watches.length, 1);
-  assert.equal(watches[0]?.lastObservedTurnId, 'turn-a');
+  assert.deepEqual(await h.monitor.list(), []);
   h.advance(30_000);
   await h.monitor.refreshAlarm();
   assert.deepEqual((await h.monitor.listEvents()).map((event) => event.eventId).sort(), ['foreign-event', 'new-event']);
@@ -237,6 +241,7 @@ test('live terminal turns complete when current execution is specifically unconf
     await h.monitor.refreshAlarm();
     assert.equal((await h.monitor.listEvents()).length, 1);
     assert.equal((await h.monitor.listEvents())[0]?.status, terminal);
+    assert.deepEqual(await h.monitor.list(), []);
     assert.equal(playbackCalls, 1);
   }
 });
@@ -252,6 +257,7 @@ test('unconfirmed execution with another turn or another reason stays nontermina
     h.advance(30_000);
     await h.monitor.refreshAlarm();
     assert.equal((await h.monitor.listEvents()).length, 0);
+    assert.equal((await h.monitor.list()).length, 1);
   }
 
   const oldTerminalAndNewExecution = harness(status('turn-a', 'completed'));
@@ -301,6 +307,7 @@ test('version 2 events with the same four-part key normalize and do not replay a
   assert.equal(events[0]?.status, 'completed');
   assert.equal(events[0]?.notificationState, 'played');
   assert.equal(prepareCalls, 0);
+  assert.deepEqual(await h.monitor.list(), []);
   const persisted = h.storage.values[CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY] as { events: unknown[] };
   assert.equal(persisted.events.length, 1);
 });
@@ -336,6 +343,7 @@ test('disabled sound keeps the event visible and records that audio was skipped'
   assert.equal(event?.status, 'completed');
   assert.equal(event?.notificationState, 'skipped');
   assert.equal(event?.notificationReason, 'disabled');
+  assert.deepEqual(await h.monitor.list(), []);
 });
 
 test('a persisted audio request survives worker interruption without automatic replay', async () => {
@@ -418,6 +426,7 @@ test('inferred, unknown, not_loaded, estimated, live-next-turn, authentication f
   gap.advance(120_000);
   await gap.monitor.refreshAlarm();
   assert.equal((await gap.monitor.listEvents()).length, 0);
+  assert.equal((await gap.monitor.list()).length, 1);
 });
 
 test('unwatch during a delayed status request ignores the old response and its event', async () => {
@@ -445,6 +454,7 @@ test('確認済み履歴のみ128件を保持し、未確認eventを追加して
   const owner = { ownerTabId: 4, ownerConversationId: 'conversation-A', ownerMuted: false, ownerMuteRevision: 0 } as const;
   await h.monitor.startWatch('target-1', 'thread-1', owner);
   for (let index = 0; index < 130; index += 1) {
+    if (index > 0) await h.monitor.startWatch('target-1', 'thread-1', owner);
     h.setStatus(status(`turn-${index}`, 'completed'));
     h.advance(30_000);
     await h.monitor.refreshAlarm();
@@ -454,6 +464,7 @@ test('確認済み履歴のみ128件を保持し、未確認eventを追加して
   assert.equal((await h.monitor.listEvents()).length, 128);
   assert.ok((await h.monitor.listEvents()).every((event) => Boolean(event.acknowledgedAt)));
   for (let index = 130; index < 260; index += 1) {
+    await h.monitor.startWatch('target-1', 'thread-1', owner);
     h.setStatus(status(`turn-${index}`, 'completed'));
     h.advance(30_000);
     await h.monitor.refreshAlarm();
@@ -471,6 +482,7 @@ test('未確認イベントは128件を超えても削除せず、件数の誤�
   const h = harness(status(null, null));
   await h.monitor.startWatch('target-1', 'thread-1');
   for (let index = 0; index < 130; index += 1) {
+    if (index > 0) await h.monitor.startWatch('target-1', 'thread-1');
     h.setStatus(status(`turn-${index}`, 'completed'));
     h.advance(30_000);
     await h.monitor.refreshAlarm();

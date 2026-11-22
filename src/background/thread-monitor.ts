@@ -286,16 +286,17 @@ export class CodexBridgeThreadMonitor {
     const task = this.withTarget(item.targetId, () => this.withRequestSlot(async () => {
       const active = (await this.read(item.connectionId, item.targetId, item.threadId))?.watchId === item.watchId;
       if (!active) return;
-      if (!access.readStatus) {
-        await this.saveFailure(item, access.failure ?? 'unknown', cadence);
+      if (!access.readStatus) { await this.saveFailure(item, access.failure ?? 'unknown', cadence); return; }
+      let status: CodexBridgeThreadStatus;
+      try {
+        status = await access.readStatus(item.targetId, item.threadId);
+      } catch (error) {
+        await this.saveFailure(item, mapError(error), cadence);
         return;
       }
       try {
-        const status = await access.readStatus(item.targetId, item.threadId);
         await this.saveSuccess(item, status, cadence, interval);
-      } catch (error) {
-        await this.saveFailure(item, mapError(error), cadence);
-      }
+      } catch { /* Keep the last persisted observation for terminal detection on the next poll. */ }
     }));
     this.pollFlights.set(flightKey, task);
     const cleanup = () => {
@@ -307,11 +308,11 @@ export class CodexBridgeThreadMonitor {
 
   private async saveSuccess(item: CodexBridgeWatchSnapshot, status: CodexBridgeThreadStatus, cadence: PollCadence, interval?: number): Promise<void> {
     const now = this.now();
-    const event = await this.storage.mutate((items, events) => {
+    const result = await this.storage.mutate((items, events) => {
       const index = items.findIndex((candidate) => candidate.watchId === item.watchId
         && codexBridgeWatchKey(candidate.connectionId, candidate.targetId, candidate.threadId)
           === codexBridgeWatchKey(item.connectionId, item.targetId, item.threadId));
-      if (index < 0) return { items, events, result: null };
+      if (index < 0) return { items, events, result: { event: null, unregistered: false } };
       const previous = items[index]!;
       const currentTurnId = status.lastTurn?.turnId ?? null;
       let baselineCaptured = previous.baselineCaptured;
@@ -346,20 +347,18 @@ export class CodexBridgeThreadMonitor {
         ...previous, ...statusEvidence(status), baselineCaptured, baselineTurnKind, baselineTurnId, baselineTurnStatus,
         lastObservedTurnId: currentTurnId ?? previous.lastObservedTurnId,
         turnChange, observedAt: timestamp(now), lastSuccessAt: timestamp(now), fetchOutcome: 'ok',
-        nextPollAt: now + (interval ?? (cadence === 'foreground' || this.foregroundUntil > now ? 15_000 : 30_000)),
+        nextPollAt: now + (interval ?? (cadence === 'foreground' || this.foregroundUntil > now ? CODEX_BRIDGE_THREAD_MONITOR_FOREGROUND_MS : 30_000)),
         failureCount: 0,
       };
       const next = [...items];
       next[index] = success;
       const terminalStatus = detectCodexBridgeTerminalStatus(previous, success, this.gapThresholdMs);
-      if (!terminalStatus) return { items: next, events, result: null };
+      if (!terminalStatus) return { items: next, events, result: { event: null, unregistered: false } };
       const eventKey = codexBridgeTerminalEventKey(success.connectionId, success.targetId, success.threadId,
         success.lastObservedTurnId!);
-      if (events.some((record) => codexBridgeTerminalEventKey(record.connectionId, record.targetId,
-        record.threadId, record.turnId) === eventKey)) {
-        return { items: next, events, result: null };
-      }
-      const created: CodexBridgeTerminalEvent = {
+      const duplicate = events.some((record) => codexBridgeTerminalEventKey(record.connectionId, record.targetId,
+        record.threadId, record.turnId) === eventKey);
+      const created: CodexBridgeTerminalEvent | null = duplicate ? null : {
         eventId: this.createEventId(), watchId: success.watchId, connectionId: success.connectionId,
         targetId: success.targetId, threadId: success.threadId, turnId: success.lastObservedTurnId!,
         status: terminalStatus, detectedAt: timestamp(now) ?? new Date(now).toISOString(),
@@ -371,9 +370,21 @@ export class CodexBridgeThreadMonitor {
             ownerMuted: success.ownerMuted, ownerMuteRevision: success.ownerMuteRevision,
           } : {}),
       };
-      return { items: next, events: [...events, created], result: created };
+      const remaining = items.filter((_, candidateIndex) => candidateIndex !== index);
+      return {
+        items: remaining,
+        events: created ? [...events, created] : events,
+        result: { event: created, unregistered: true },
+      };
     });
-    if (event) await this.notifyForEvent(event);
+    if (result.unregistered) {
+      try {
+        await this.syncAlarm();
+      } catch {
+        // Keep notification delivery independent of alarm API errors.
+      }
+    }
+    if (result.event) await this.notifyForEvent(result.event);
   }
 
   private async saveFailure(item: CodexBridgeWatchSnapshot, outcome: CodexBridgeWatchFetchOutcome, cadence: PollCadence): Promise<void> {
