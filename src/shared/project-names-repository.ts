@@ -17,7 +17,7 @@ export type ProjectNamesLoadResult =
 
 export type ProjectNameSaveResult =
   | { readonly ok: true }
-  | { readonly ok: false; readonly reason: 'invalid-entry' | 'corrupt-data' | 'storage-failed' };
+  | { readonly ok: false; readonly reason: 'invalid-entry' | 'conflict' | 'corrupt-data' | 'storage-failed' };
 
 interface NormalizedProjectNames {
   readonly names: Readonly<Record<string, string>>;
@@ -124,6 +124,32 @@ export class ProjectNamesRepository {
     } catch {
       return { ok: false, reason: 'storage-failed' };
     }
+  }
+
+  async deleteName(projectId: string, expectedName: string): Promise<ProjectNameSaveResult> {
+    if (!isProjectId(projectId) || !normalizeName(expectedName)) return { ok: false, reason: 'invalid-entry' };
+    const remove = () => this.deleteUnderLock(projectId.toLowerCase(), expectedName);
+    try { return this.locks ? await this.locks.request(`${PROJECT_NAMES_STORAGE_KEY}.write`, remove) : await remove(); }
+    catch { return { ok: false, reason: 'storage-failed' }; }
+  }
+
+  private async deleteUnderLock(projectId: string, expectedName: string): Promise<ProjectNameSaveResult> {
+    try {
+      const stored = await this.area.get([PROJECT_NAMES_STORAGE_KEY]);
+      const raw = stored[PROJECT_NAMES_STORAGE_KEY];
+      if (raw === undefined || typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { ok: false, reason: 'conflict' };
+      const normalized = normalizeProjectNames(raw);
+      if (!normalized) return { ok: false, reason: 'corrupt-data' };
+      const rawNames = raw as Record<string, unknown>;
+      const aliases = Object.entries(rawNames).filter(([id]) => normalizeCachedProjectId(id) === projectId);
+      if (aliases.length !== 1 || aliases[0]?.[0] !== projectId || aliases[0]?.[1] !== expectedName) {
+        return { ok: false, reason: 'conflict' };
+      }
+      const updated: Record<string, unknown> = { ...rawNames };
+      delete updated[projectId];
+      await this.area.set({ [PROJECT_NAMES_STORAGE_KEY]: updated });
+      return { ok: true };
+    } catch { return { ok: false, reason: 'storage-failed' }; }
   }
 
   private async saveUnderLock(projectId: string, projectName: string): Promise<ProjectNameSaveResult> {

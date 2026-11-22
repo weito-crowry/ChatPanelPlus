@@ -33,8 +33,11 @@ test('プロジェクトごとに複数パターンを追加・編集・削除�
 });
 
 test('Optionsの既存JSON import/exportとカスタムボタン設定契約は残る', async () => {
-  const page = await read('../options/src/OptionsPage.tsx');
+  const [page, editor] = await Promise.all([
+    read('../options/src/OptionsPage.tsx'),
+    read('../options/src/OptionsPanelEditor.tsx'),
+  ]);
   assert.match(page, /serializeSettings\(draft\)/);
   assert.match(page, /parseSettingsJson\(json\)/);
-  assert.match(page, /CustomButtonCreator/);
+  assert.match(editor, /CustomButtonCreator/);
 });

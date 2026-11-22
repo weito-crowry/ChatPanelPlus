@@ -10,6 +10,8 @@ export type ProjectFolderPatternsLoadResult =
 export type ProjectFolderPatternsSaveResult =
   | Readonly<{ ok: true }>
   | Readonly<{ ok: false; reason: 'invalid-project' | 'invalid-pattern' | 'conflict' | 'corrupt-data' | 'storage-failed' }>;
+export type ProjectFolderPatternsDeleteResult = Readonly<{ ok: true }>
+  | Readonly<{ ok: false; reason: 'invalid-project' | 'conflict' | 'corrupt-data' | 'storage-failed' }>;
 
 type ParsedPath = Readonly<{ root: string; segments: readonly string[] }>;
 export interface ProjectFolderPatternsStorageLike {
@@ -146,6 +148,14 @@ function normalizeStoredPatterns(value: unknown): Record<string, readonly string
   return result;
 }
 
+export function validateProjectFolderPatternsStore(value: unknown): Readonly<Record<string, readonly string[]>> | null {
+  return normalizeStoredPatterns(value);
+}
+
+function objectValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function samePatterns(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((pattern, index) => pattern === right[index]);
 }
@@ -181,6 +191,36 @@ export class ProjectFolderPatternsRepository {
       const result = this.tail.then(save, save);
       this.tail = result.then(() => undefined, () => undefined);
       return await result;
+    } catch { return { ok: false, reason: 'storage-failed' }; }
+  }
+
+  async deleteProjectPatterns(projectId: string, expectedValue: readonly string[]): Promise<ProjectFolderPatternsDeleteResult> {
+    if (!isProjectId(projectId)) return { ok: false, reason: 'invalid-project' };
+    const expected = normalizePatternList(expectedValue);
+    if (!expected) return { ok: false, reason: 'corrupt-data' };
+    const remove = () => this.deleteUnderLock(projectId.toLowerCase(), expected);
+    try {
+      if (this.locks) return await this.locks.request(`${PROJECT_FOLDER_PATTERNS_STORAGE_KEY}.write`, remove);
+      const result = this.tail.then(remove, remove);
+      this.tail = result.then(() => undefined, () => undefined);
+      return await result;
+    } catch { return { ok: false, reason: 'storage-failed' }; }
+  }
+
+  private async deleteUnderLock(projectId: string, expected: readonly string[]): Promise<ProjectFolderPatternsDeleteResult> {
+    try {
+      const stored = await this.area.get([PROJECT_FOLDER_PATTERNS_STORAGE_KEY]);
+      const raw = stored[PROJECT_FOLDER_PATTERNS_STORAGE_KEY];
+      const normalized = raw === undefined ? {} : normalizeStoredPatterns(raw);
+      if (!normalized) return { ok: false, reason: 'corrupt-data' };
+      if (!Object.hasOwn(normalized, projectId) || !samePatterns(normalized[projectId]!, expected)) return { ok: false, reason: 'conflict' };
+      if (!objectValue(raw) || !objectValue(raw.projects)) return { ok: false, reason: 'corrupt-data' };
+      const matching = Object.keys(raw.projects).filter((key) => key.toLowerCase() === projectId);
+      if (matching.length !== 1) return { ok: false, reason: 'conflict' };
+      const projects = { ...raw.projects };
+      delete projects[matching[0]!];
+      await this.area.set({ [PROJECT_FOLDER_PATTERNS_STORAGE_KEY]: { ...raw, projects } });
+      return { ok: true };
     } catch { return { ok: false, reason: 'storage-failed' }; }
   }
 

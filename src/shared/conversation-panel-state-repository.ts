@@ -39,7 +39,7 @@ export type ConversationPanelStateResult =
 
 export type ConversationPanelStateSaveResult =
   | { readonly ok: true }
-  | { readonly ok: false; readonly reason: 'invalid-conversation-id' | 'invalid-state' | 'corrupt-state' | 'unsupported-version' | 'storage-failed' };
+  | { readonly ok: false; readonly reason: 'invalid-conversation-id' | 'invalid-state' | 'conflict' | 'corrupt-state' | 'unsupported-version' | 'storage-failed' };
 
 const DEFAULT_PANEL_STATE: ConversationPanelState = {
   schemaVersion: 1,
@@ -74,7 +74,7 @@ function validWatchSelection(value: unknown): value is ConversationPanelWatchSel
     && validIdentifier(value.connectionId) && validIdentifier(value.targetId) && validIdentifier(value.threadId);
 }
 
-function validateState(value: unknown): ConversationPanelState | null {
+export function validateConversationPanelState(value: unknown): ConversationPanelState | null {
   if (!isObject(value) || value.schemaVersion !== 1 || !validTabId(value.selectedTabId)
     || typeof value.minimized !== 'boolean' || typeof value.bridgeExpanded !== 'boolean') return null;
   return {
@@ -86,6 +86,8 @@ function validateState(value: unknown): ConversationPanelState | null {
     bridgeEventSelection: validIdentifier(value.bridgeEventSelection, 96) ? value.bridgeEventSelection : null,
   };
 }
+
+const validateState = validateConversationPanelState;
 
 function readBucket(value: unknown): { readonly ok: true; readonly conversations: Record<string, unknown> }
   | { readonly ok: false; readonly reason: 'corrupt-state' | 'unsupported-version' } {
@@ -136,6 +138,34 @@ export class ConversationPanelStateRepository {
     const update = () => this.updateUnderLock(conversationId, patch);
     try { return this.locks ? await this.locks.request('chatPanelPlus.panelStateByConversation.write', update) : await update(); }
     catch { return { ok: false, reason: 'storage-failed' }; }
+  }
+
+  async deleteConversationState(conversationId: string, expected: ConversationPanelState): Promise<ConversationPanelStateSaveResult> {
+    if (!isConversationId(conversationId)) return { ok: false, reason: 'invalid-conversation-id' };
+    const validated = validateState(expected);
+    if (!validated) return { ok: false, reason: 'invalid-state' };
+    const remove = () => this.deleteUnderLock(conversationId, validated);
+    try { return this.locks ? await this.locks.request('chatPanelPlus.panelStateByConversation.write', remove) : await remove(); }
+    catch { return { ok: false, reason: 'storage-failed' }; }
+  }
+
+  private async deleteUnderLock(conversationId: string, expected: ConversationPanelState): Promise<ConversationPanelStateSaveResult> {
+    try {
+      const stored = await this.area.get([CONVERSATION_PANEL_STATE_STORAGE_KEY]);
+      const raw = stored[CONVERSATION_PANEL_STATE_STORAGE_KEY];
+      if (raw === undefined) return { ok: false, reason: 'conflict' };
+      const bucket = readBucket(raw);
+      if (!bucket.ok) return bucket;
+      const current = bucket.conversations[conversationId];
+      const validated = validateState(current);
+      if (!validated) return current === undefined
+        ? { ok: false, reason: 'conflict' } : { ok: false, reason: 'corrupt-state' };
+      if (JSON.stringify(validated) !== JSON.stringify(expected)) return { ok: false, reason: 'conflict' };
+      const conversations = structuredClone(bucket.conversations);
+      delete conversations[conversationId];
+      await this.area.set({ [CONVERSATION_PANEL_STATE_STORAGE_KEY]: { schemaVersion: 1, conversations } });
+      return { ok: true };
+    } catch { return { ok: false, reason: 'storage-failed' }; }
   }
 
   subscribe(conversationId: string | null, listener: (result: ConversationPanelStateResult) => void): () => void {

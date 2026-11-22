@@ -155,6 +155,13 @@ function validateAssets(value: unknown): SoundAsset[] | null {
   return assets;
 }
 
+export type SoundAssetMetadata = Omit<SoundAsset, 'data'>;
+export function validateSoundAssetMetadata(value: unknown): readonly SoundAssetMetadata[] | null {
+  const assets = validateAssets(value);
+  return assets?.map((asset) => ({ id: asset.id, name: asset.name, mimeType: asset.mimeType,
+    sizeBytes: asset.sizeBytes, durationSeconds: asset.durationSeconds })) ?? null;
+}
+
 function cloneAssets(assets: readonly SoundAsset[]): SoundAsset[] {
   return assets.map((asset) => ({ ...asset }));
 }

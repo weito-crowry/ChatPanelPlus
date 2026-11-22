@@ -128,7 +128,7 @@ function setPath(root: Record<string, unknown>, path: readonly string[], value: 
   }
 }
 
-function readViewState(value: unknown): StoredViewState | null {
+export function validateStoredViewState(value: unknown): StoredViewState | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const state = value as Record<string, unknown>;
   if (typeof state.minimized !== 'boolean') return null;
@@ -138,6 +138,8 @@ function readViewState(value: unknown): StoredViewState | null {
     || (!knownTabs.has(selected) && !/^custom-tab-[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(selected)))) return null;
   return { selectedTabId: selected as TabId | null, minimized: state.minimized };
 }
+
+const readViewState = validateStoredViewState;
 
 export class SettingsRepository {
   private readonly area: StorageAreaLike;

@@ -23,6 +23,9 @@ export type StatisticsRepositoryResult =
 export type StatisticsSaveResult =
   | { readonly ok: true; readonly conversation: StoredConversationStatistics }
   | { readonly ok: false; readonly reason: 'corrupt-data' | 'unsupported-version' | 'storage-failed' };
+export type StatisticsDeleteResult =
+  | { readonly ok: true; readonly conversation: StoredConversationStatistics }
+  | { readonly ok: false; readonly reason: 'conflict' | 'corrupt-data' | 'unsupported-version' | 'storage-failed' };
 
 export class ConversationStatisticsRepository {
   private readonly area: StatisticsStorageAreaLike;
@@ -69,6 +72,29 @@ export class ConversationStatisticsRepository {
     } catch {
       return { ok: false, reason: 'storage-failed' };
     }
+  }
+
+  async deleteConversation(conversationId: string, expected: StoredConversationStatistics): Promise<StatisticsDeleteResult> {
+    const validated = validateStatisticsStore({ schemaVersion: 1, conversations: { [conversationId]: expected } });
+    if (!validated.ok) {
+      return { ok: false, reason: 'corrupt-data' };
+    }
+    const expectedConversation = validated.store.conversations[conversationId]!;
+    const remove = async (): Promise<StatisticsDeleteResult> => {
+      const current = await this.readStore();
+      if (!current.ok) return { ok: false, reason: current.reason };
+      const existing = current.store.conversations[conversationId];
+      if (!existing || JSON.stringify(existing) !== JSON.stringify(expectedConversation)) return { ok: false, reason: 'conflict' };
+      const conversations = { ...current.store.conversations };
+      delete conversations[conversationId];
+      try {
+        await this.area.set({ [STATISTICS_STORAGE_KEY]: { schemaVersion: 1, conversations } });
+        this.baselines.delete(conversationId);
+        return { ok: true, conversation: existing };
+      } catch { return { ok: false, reason: 'storage-failed' }; }
+    };
+    try { return this.locks ? await this.locks.request('chatPanelPlus.statistics.write', remove) : await remove(); }
+    catch { return { ok: false, reason: 'storage-failed' }; }
   }
 
   private async saveUnderLock(
