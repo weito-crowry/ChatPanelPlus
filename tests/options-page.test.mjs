@@ -73,9 +73,10 @@ test('Options V2 keeps section contents mounted and provides accessible hash nav
 });
 
 test('saved-data manager only requests known keys and never renders session token or audio payload', async () => {
-  const [manager, model] = await Promise.all([
+  const [manager, model, refreshState] = await Promise.all([
     readFile(resolve(fileURLToPath(new URL('../options/src/OptionsDataManager.tsx', import.meta.url))), 'utf8'),
     readFile(resolve(fileURLToPath(new URL('../options/src/saved-data-manager.ts', import.meta.url))), 'utf8'),
+    readFile(resolve(fileURLToPath(new URL('../options/src/saved-data-refresh-state.ts', import.meta.url))), 'utf8'),
   ]);
   assert.ok(manager.includes('chrome.storage.local.get([...KNOWN_LOCAL_DATA_KEYS])'));
   assert.ok(manager.includes('chrome.storage.session.get([CODEX_BRIDGE_MCP_TOKEN_SESSION_KEY])'));
@@ -86,8 +87,11 @@ test('saved-data manager only requests known keys and never renders session toke
   assert.ok(!model.includes('asset.data'));
   assert.ok(model.includes('getOldEventCandidates'));
   assert.ok(manager.includes('window.confirm') && manager.includes('deleteConversationState') && manager.includes('deleteProjectPatterns'));
-  assert.ok(manager.includes('if (!approved) return;'));
-  assert.ok(manager.includes('refreshGeneration') && manager.includes('changeGeneration'));
+  assert.ok(manager.includes('if (!approved || !isSavedDataDeletionAllowed(refreshStateRef.current)) return;'));
+  assert.ok(manager.includes('finishSavedDataRefresh') && manager.includes('isSavedDataDeletionAllowed'));
+  assert.ok(manager.includes('deletionSnapshots.current = EMPTY_DELETE_SNAPSHOTS'));
+  assert.ok(manager.includes('setSelected(new Set()); setPreview(null)'));
+  assert.ok(refreshState.includes("'superseded' | 'failed' | 'fresh' | 'changed-during-read'"));
 });
 
 test('MCP接続確認はホスト権限を明示要求し、tokenをsession storageに閉じ込める', async () => {

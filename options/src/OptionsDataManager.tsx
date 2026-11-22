@@ -8,6 +8,10 @@ import type { StoredConversationStatistics } from '../../src/shared/conversation
 import { ProjectFolderPatternsRepository } from '../../src/shared/project-folder-patterns.ts';
 import { ProjectNamesRepository } from '../../src/shared/project-names-repository.ts';
 import {
+  beginSavedDataRefresh, finishSavedDataRefresh, initialSavedDataRefreshState,
+  isSavedDataDeletionAllowed, noteSavedDataChanged, setSavedDataBusy,
+} from './saved-data-refresh-state.ts';
+import {
   createSavedDataSnapshot, getOldEventCandidates, hasSavedTokenKey, KNOWN_LOCAL_DATA_KEYS,
   isKnownLocalStorageChange,
   type SavedDataSnapshot,
@@ -22,6 +26,7 @@ type DeleteSnapshots = {
   names: Record<string, string>;
 };
 const EMPTY: SavedDataSnapshot = { categories: [], session: { tokenPresent: false } };
+const EMPTY_DELETE_SNAPSHOTS: DeleteSnapshots = { panel: {}, statistics: {}, folders: {}, names: {} };
 const LABELS: Record<string, string> = {
   'chatPanelPlus.config': '共通設定', 'chatPanelPlus.viewState': '共有パネル状態',
   'chatPanelPlus.projectNames': '保存済みプロジェクト名', 'chatPanelPlus.projectFolderPatterns.v1': 'プロジェクト別フォルダ',
@@ -36,9 +41,9 @@ const makeLocks = () => navigator.locks
 
 export function OptionsDataManager({ active }: Props) {
   const [snapshot, setSnapshot] = useState<SavedDataSnapshot>(EMPTY);
-  const [loaded, setLoaded] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [stale, setStale] = useState(false);
+  const [refreshState, setRefreshState] = useState(initialSavedDataRefreshState);
+  const refreshStateRef = useRef(initialSavedDataRefreshState);
+  const { loaded, loading } = refreshState;
   const [status, setStatus] = useState('保存データを開くと、既知の保存領域を読み込みます。');
   const [page, setPage] = useState(0);
   const [categoryKey, setCategoryKey] = useState<string>('');
@@ -46,36 +51,53 @@ export function OptionsDataManager({ active }: Props) {
   const [preview, setPreview] = useState<readonly PendingDelete[] | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const deletionSnapshots = useRef<DeleteSnapshots>({ panel: {}, statistics: {}, folders: {}, names: {} });
-  const refreshGeneration = useRef(0);
-  const changeGeneration = useRef(0);
   const locks = useMemo(makeLocks, []);
 
+  function updateRefreshState(next: typeof initialSavedDataRefreshState) {
+    refreshStateRef.current = next;
+    setRefreshState(next);
+  }
+
   async function refresh() {
-    const generation = ++refreshGeneration.current;
-    const changeAtStart = changeGeneration.current;
-    setLoading(true); setStatus('保存データを読み込んでいます。');
+    const request = beginSavedDataRefresh(refreshStateRef.current);
+    updateRefreshState(request.state);
+    setStatus('保存データを読み込んでいます。');
     try {
       const [local, session] = await Promise.all([
         chrome.storage.local.get([...KNOWN_LOCAL_DATA_KEYS]),
         chrome.storage.session.get([CODEX_BRIDGE_MCP_TOKEN_SESSION_KEY]),
       ]);
-      if (generation !== refreshGeneration.current) return;
-      deletionSnapshots.current = buildDeleteSnapshots(local);
-      setSnapshot(createSavedDataSnapshot(local, { tokenPresent: hasSavedTokenKey(session) }));
-      setLoaded(true); setStale(changeGeneration.current !== changeAtStart); setSelected(new Set()); setPreview(null); setPage(0);
-      setStatus(changeGeneration.current !== changeAtStart
+      const nextSnapshots = buildDeleteSnapshots(local);
+      const nextSnapshot = createSavedDataSnapshot(local, { tokenPresent: hasSavedTokenKey(session) });
+      const completion = finishSavedDataRefresh(
+        refreshStateRef.current, request.generation, request.changeGenerationAtStart, true,
+      );
+      if (completion.outcome === 'superseded') return;
+      deletionSnapshots.current = nextSnapshots;
+      setSnapshot(nextSnapshot);
+      updateRefreshState(completion.state);
+      setSelected(new Set()); setPreview(null); setPage(0);
+      setStatus(completion.outcome === 'changed-during-read'
         ? '読込中に保存データが変わりました。もう一度更新してください。' : '既知の保存データを読み込みました。');
     } catch {
-      if (generation === refreshGeneration.current) setStatus('保存データを読み込めませんでした。削除操作はできません。');
-    } finally { if (generation === refreshGeneration.current) setLoading(false); }
+      const completion = finishSavedDataRefresh(
+        refreshStateRef.current, request.generation, request.changeGenerationAtStart, false,
+      );
+      if (completion.outcome === 'failed') {
+        deletionSnapshots.current = EMPTY_DELETE_SNAPSHOTS;
+        updateRefreshState(completion.state);
+        setSelected(new Set()); setPreview(null);
+        setStatus('保存データを読み込めませんでした。削除操作はできません。');
+      }
+    }
   }
 
   useEffect(() => { if (active && !loaded) void refresh(); }, [active, loaded]);
   useEffect(() => {
     const listener: Parameters<typeof chrome.storage.onChanged.addListener>[0] = (changes, areaName) => {
       if (isKnownLocalStorageChange(changes, areaName)) {
-        changeGeneration.current += 1;
-        setStale(true); setPreview(null); setStatus('保存データが別の操作で変わりました。削除前に再読み込みしてください。');
+        updateRefreshState(noteSavedDataChanged(refreshStateRef.current));
+        setPreview(null); setStatus('保存データが別の操作で変わりました。削除前に再読み込みしてください。');
       }
     };
     chrome.storage.onChanged.addListener(listener);
@@ -95,12 +117,12 @@ export function OptionsDataManager({ active }: Props) {
   }, [categories]);
 
   function toggle(key: string) {
-    if (stale || !current?.deletable) return;
+    if (!isSavedDataDeletionAllowed(refreshStateRef.current) || !current?.deletable) return;
     setSelected((items) => { const next = new Set(items); if (next.has(key)) next.delete(key); else next.add(key); return next; });
     setPreview(null);
   }
   function prepareDelete() {
-    if (stale || !current) return;
+    if (!isSavedDataDeletionAllowed(refreshStateRef.current) || !current) return;
     const targets = current.records.filter((record) => record.deletable && selected.has(`${current.key}\u0000${record.id}`))
       .map((record) => ({ key: current.key, id: record.id, label: LABELS[current.key] ?? current.key,
         summary: record.summary, impact: deletionImpact(current.key) }));
@@ -108,11 +130,11 @@ export function OptionsDataManager({ active }: Props) {
     setPreview(targets);
   }
   async function executeDelete() {
-    if (!preview || stale || loading) return;
+    if (!preview || !isSavedDataDeletionAllowed(refreshStateRef.current)) return;
     const targets = [...preview];
     const approved = window.confirm(`選択した${targets.length}件を削除します。\n\n${targets.map((item) => `${item.label}: ${item.id}（${item.impact}）`).join('\n')}\n\nこの操作を続けますか？`);
-    if (!approved) return;
-    setLoading(true); setPreview(null);
+    if (!approved || !isSavedDataDeletionAllowed(refreshStateRef.current)) return;
+    updateRefreshState(setSavedDataBusy(refreshStateRef.current, true)); setPreview(null);
     const results: string[] = [];
     try {
       const panelRepo = new ConversationPanelStateRepository(chrome.storage.local, chrome.storage.onChanged, locks);
@@ -138,7 +160,7 @@ export function OptionsDataManager({ active }: Props) {
       }
     } catch { results.push('保存データの削除処理に失敗しました。'); }
     finally {
-      setLoading(false); await refresh();
+      updateRefreshState(setSavedDataBusy(refreshStateRef.current, false)); await refresh();
       if (results.length) setStatus(results.join(' / '));
     }
   }
@@ -146,7 +168,7 @@ export function OptionsDataManager({ active }: Props) {
   return <section className="settings-card saved-data-manager" aria-labelledby="saved-data-title">
     <div className="saved-data-heading"><div><h2 id="saved-data-title">保存データ</h2><p>既知の拡張保存領域を閲覧します。自動削除はありません。</p></div>
       <button type="button" disabled={loading} onClick={() => void refresh()}>{loaded ? '保存データを更新' : '読み込む'}</button></div>
-    <p role="status" aria-live="polite">{stale ? '一覧が古くなっています。更新してください。' : status}</p>
+    <p role="status" aria-live="polite">{status}</p>
     {loaded && <>
       <div className="data-category-grid" aria-label="保存データの目次">{categories.map((item) => <button type="button" key={item.key}
         className={item.key === current?.key ? 'data-category active' : 'data-category'} aria-pressed={item.key === current?.key}
@@ -167,7 +189,7 @@ export function OptionsDataManager({ active }: Props) {
         <ul className="saved-data-records">{visibleRecords.map((record) => {
           const selectionKey = `${current.key}\u0000${record.id}`;
           return <li key={selectionKey}><div className="saved-record-row">
-            {current.deletable && record.deletable && <label><input type="checkbox" checked={selected.has(selectionKey)} disabled={stale || loading}
+            {current.deletable && record.deletable && <label><input type="checkbox" checked={selected.has(selectionKey)} disabled={!isSavedDataDeletionAllowed(refreshState)}
               onChange={() => toggle(selectionKey)} />削除対象</label>}
             <button type="button" className="saved-record-detail" aria-expanded={expanded === selectionKey}
               onClick={() => setExpanded(expanded === selectionKey ? null : selectionKey)}><strong>{record.id}</strong><span>{record.summary}</span></button>
@@ -176,11 +198,11 @@ export function OptionsDataManager({ active }: Props) {
         })}</ul>
         <div className="data-pagination"><button type="button" disabled={page <= 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>前へ</button>
           <span>{page + 1} / {pageCount}</span><button type="button" disabled={page + 1 >= pageCount} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}>次へ</button></div>
-        {current.deletable && <div className="data-delete-actions"><button type="button" disabled={stale || loading || selected.size === 0} onClick={prepareDelete}>削除内容を確認</button>
+        {current.deletable && <div className="data-delete-actions"><button type="button" disabled={!isSavedDataDeletionAllowed(refreshState) || selected.size === 0} onClick={prepareDelete}>削除内容を確認</button>
           {preview && <div className="delete-preview" role="group" aria-label="削除プレビュー">
             <strong>{preview.length}件の対象と影響を確認してください。</strong>
             <ul>{preview.map((item) => <li key={`${item.key}:${item.id}`}>{item.label}: {item.id} — {item.impact}</li>)}</ul>
-            <button type="button" disabled={stale || loading} onClick={() => void executeDelete()}>確認して削除</button>
+            <button type="button" disabled={!isSavedDataDeletionAllowed(refreshState)} onClick={() => void executeDelete()}>確認して削除</button>
             <button type="button" onClick={() => setPreview(null)}>取り消す</button>
           </div>}
         </div>}
