@@ -50,18 +50,25 @@ JSON長は概算値である。音源のbase64本文はUI・詳細・ログに�
 - 自動: 目次/URL選択、非表示中のstatefulセクション維持、グループ切替と既存ボタン編集契約、既知キー限定読み込み、secret/base64非表示、90日境界と日時なし除外、CAS競合、同一key内の他レコード保持、破損データ拒否、既存lock名の使用、初回/再読込失敗時の削除禁止と成功後の復帰を検証する。
 - 実データ: FakeStorageだけで削除テストを行う。実ユーザーのChrome storageへ書き込まない。
 - Chrome UI: `NOT_RUN`。Optionsの狭幅/広幅、hash戻る進む、タブ/ボタンドラフト、token・プロジェクト・音声状態のセクション移動、データ更新時のstale表示、確認取消、個別削除、保存データ詳細を確認する。
-- 正式dist: 未ビルド・未配備。全テストは `dist` 除外のsource-onlyコピーで実行し、正式dist 11ファイルのSHA-256一覧が前後一致することを検証する。
+- 正式dist: Options V2を登録済みrepo直下`dist/`へビルド・配備済み。Chrome拡張の再読み込みとOptions実機確認は`NOT_RUN`。全テストは`dist/`除外のsource-onlyコピーで実行し、テスト前後の正式dist 11ファイルのSHA-256一致を検証済み。
 
 ## 実装・自動検証記録
 
 - 2026-11-22: focused suite 27/27 PASS、隔離した全suite 620/620 PASS。`pnpm typecheck`、`pnpm lint`、`pnpm check:size`、`git diff --check` PASS。
 - 全suiteは`dist/`を含まない一時ソースコピーで実行し、元の`node_modules`だけをjunctionで利用した。登録済みlive `dist/`は11ファイルの相対path・byte length・SHA-256が実行前後で一致した。
 - 監視レコードの詳細はthread/targetと状態に限定し、接続ID・owner tab/conversation/muteの値は表示しない。保存サイズは安全な表示用要約からの概算であり、最大500件への表示制限があるカテゴリでは実保存容量より小さくなる場合がある。
-- Chrome画面の広狭表示、キーボード操作、実storage上の読み取り・確認・削除は`NOT_RUN`。正式distへのビルド・配備は行っていない。
+- Chrome画面の広狭表示、キーボード操作、実storage上の読み取り・確認・削除は`NOT_RUN`。今回の配備後も実ユーザーstorageへはアクセス・変更していない。
 
 ### refresh失敗時の削除停止修正
 
 - 最新の保存データ読込が失敗した場合、一覧を古い状態として保持しつつ削除用snapshot・選択対象・プレビューを破棄する。初回失敗でも「読み込めなかったため削除不可」を明示し、読込中・stale状態では選択と削除を停止する。
 - 新しい成功読込だけが削除を再開する。世代番号により、古い失敗応答がより新しい成功状態を上書きしない。`storage.onChanged`との競合では既存のstale判定を維持し、確認直後にも最新の削除許可を再確認する。
 - focused tests 12/12 PASS（Options契約7件＋状態遷移5件）、隔離全suite 625/625 PASS、`pnpm typecheck`・`pnpm lint`・`pnpm check:size`・`git diff --check` PASS。
-- 全suiteは`dist/`を除外した一時ソースコピーで実行。登録済みlive `dist/`は11/11ファイルの相対path・byte length・SHA-256が実行前後で一致。正式dist、Chrome、実ユーザーstorageは変更していない。
+- 同修正の全suiteは`dist/`を除外した一時ソースコピーで実行。テスト時点では登録済みlive `dist/` 11/11ファイルの相対path・byte length・SHA-256が実行前後で一致し、Chrome・実ユーザーstorageは変更していない（正式dist配備は後述の記録）。
+
+### Options V2正式dist配備記録（2026-11-22）
+
+- source commit `858f76cf8b73911e0527a3cfb7d3dff92cd87e5b`を対象に`pnpm typecheck`・`pnpm lint` PASS後、登録済みロード元`D:\weito\Documents\src\codexapp\ChatPanelPlus\dist`へ`pnpm build`を実行し、exit code 0。
+- 配備前backup: `D:\weito\Documents\src\codexapp\ChatPanelPlus-dist-options-v2-predeploy-20261122-f58ac4dae05649e6bf2b09f03cf18d24`。ビルド前に通常ディレクトリとreparse point不在を確認し、backupと元distのpath・byte length・SHA-256が11/11一致。
+- 配備後は11ファイル、Manifest V3/version 0.1.5、必須6ファイル、Options HTML script/style参照2件、CSS local URL参照0件を確認。Options bundle marker 4/4（目次・保存データ・削除確認・読込失敗時削除不可）、CSS marker 3/3、既存content marker 2/2（running_only・厳密なfinal_answer不在表示）。全11ファイルの配備後hash manifest: `D:\weito\Documents\src\codexapp\ChatPanelPlus-dist-options-v2-predeploy-20261122-f58ac4dae05649e6bf2b09f03cf18d24.postbuild.manifest.json`。
+- Chrome拡張とOptions画面の再読み込み・実機受入は`NOT_RUN`。ユーザー操作後に目次/幅別表示、編集と保存、既知データ閲覧、削除プレビュー/取消、読込失敗時の削除停止を確認する。実storageはこの配備作業で読み書きしていない。メインパネル/C37判定コードは変更せず、既知C37 `FAIL`を維持。
