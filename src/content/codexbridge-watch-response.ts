@@ -5,7 +5,7 @@ import {
   type CodexBridgeWatchSnapshot,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
 
-export type CodexBridgeWatchListFailureReason = 'sender-unverified' | 'storage-error' | 'invalid-response';
+export type CodexBridgeWatchListFailureReason = 'sender-unverified' | 'storage-error' | 'invalid-response' | 'timeout';
 export type CodexBridgeWatchListParseResult = Readonly<{ ok: true; data: CodexBridgeWatchListData }> |
   Readonly<{ ok: false; reason: CodexBridgeWatchListFailureReason }>;
 
@@ -26,6 +26,8 @@ export function parseCodexBridgeWatchListResponse(value: unknown): CodexBridgeWa
     return { ok: false, reason: 'invalid-response' };
   }
   if (!isRecord(value) || value.ok !== true || !isRecord(value.data) || !Array.isArray(value.data.items)
+    || !Array.isArray(value.data.events)
+    || !value.data.items.every(isWatchSnapshot) || !value.data.events.every(isCodexBridgeTerminalEvent)
     || !(typeof value.data.currentConnectionId === 'string' || value.data.currentConnectionId === null)
     || !isRecord(value.data.summary) || !Number.isSafeInteger(value.data.summary.watchingCount)
     || !Number.isSafeInteger(value.data.summary.unacknowledgedThreadCount)) {
@@ -34,8 +36,8 @@ export function parseCodexBridgeWatchListResponse(value: unknown): CodexBridgeWa
   return {
     ok: true,
     data: {
-      items: value.data.items.filter(isWatchSnapshot),
-      events: Array.isArray(value.data.events) ? value.data.events.filter(isCodexBridgeTerminalEvent) : [],
+      items: value.data.items,
+      events: value.data.events,
       currentConnectionId: value.data.currentConnectionId,
       summary: {
         watchingCount: value.data.summary.watchingCount as number,

@@ -54,26 +54,26 @@ test('A/B/Cカードは既存のowner・ACK・最終回答契約を保つ', asyn
 });
 
 test('Bの名前fallbackは空白を避け、IDをtooltipとkeyboard説明で得られる', async () => {
-  const [{ codexBridgeThreadDisplayName }, watch, list, folderFilter, presentation] = await Promise.all([
+  const [{ codexBridgeThreadDisplayName }, watchList, list, folderFilter, presentation] = await Promise.all([
     import('../src/content/codexbridge-thread-presentation.ts'),
-    read('../src/content/CodexBridgeWatchPanel.tsx'),
+    read('../src/content/CodexBridgeWatchList.tsx'),
     read('../src/content/CodexBridgeList.tsx'),
     read('../src/content/CodexBridgeProjectFolderFilter.tsx'),
     read('../src/content/codexbridge-thread-presentation.ts'),
   ]);
   assert.equal(codexBridgeThreadDisplayName('  タイトル  ', 'thread-1'), 'タイトル');
   assert.equal(codexBridgeThreadDisplayName('  ', 'thread-2'), 'thread-2');
-  assert.match(watch, /title=\{item\.threadId\}/);
-  assert.match(watch, /aria-describedby=\{threadIdDescriptionId\}/);
-  assert.match(watch, /スレッドID：\{item\.threadId\}/);
-  assert.match(watch, /codexBridgeWatchThreadLabel\(threadCandidates, item\.targetId, item\.threadId, true\)/);
+  assert.match(watchList, /title=\{item\.threadId\}/);
+  assert.match(watchList, /aria-describedby=\{threadIdDescriptionId\}/);
+  assert.match(watchList, /スレッドID：\{item\.threadId\}/);
+  assert.match(watchList, /codexBridgeWatchThreadLabel\(threadCandidates, item\.targetId, item\.threadId, true\)/);
   assert.match(folderFilter, /title=\{thread\.id\}/);
   assert.match(folderFilter, /thread\.title\?\.trim\(\) \|\| thread\.preview\?\.trim\(\) \|\| 'タイトル未取得'/);
   assert.match(folderFilter, /aria-describedby=\{idDescription\}/);
   assert.match(folderFilter, /スレッドID：\{thread\.id\}/);
   assert.match(list, /phase6-technical-details/);
   assert.match(presentation, /return candidate\.title\?\.trim\(\) \|\| '表示名未取得'/);
-  assert.match(watch, /phase6-technical-details/);
+  assert.match(watchList, /phase6-technical-details/);
 });
 
 test('Phase6 CSSはShadow DOMへ入り、狭幅・ダーク配色・focus表示を定義する', async () => {

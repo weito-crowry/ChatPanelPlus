@@ -47,3 +47,12 @@ The implementation commit `97ee87a2dc55af88b0bbb6a3a05ba8cfdae2d5cd` passed the 
 - watch一覧と会話別muteは別々に`sender.url`と`sender.tab.url`双方のChatGPT origin・conversation ID一致を検証する。SPA遷移中の不一致なら両方失敗し得るが、今回それが起きた証拠はなく仮説のまま。旧一覧経路はinvalid応答を無表示で捨てて接続ID未取得のdisabled状態にできた。現在の作業ソースは一覧失敗理由、再試行、muteのsender拒否、Bボタンのdisabled理由を表示する。sender検証条件は緩めていない。
 - 新しいB操作失敗は`監視開始:`、一覧/解除/通知操作はそれぞれの操作名を付けて表示する。Aのthread選択・取得開始で古い監視開始結果を整理し、一覧取得の遅延応答は現在の選択へ古い失敗を持ち越さない。自動foreground refreshは新しい監視開始失敗を消さない。新たなsender検証拒否は明示的に残す。
 - focused regressionはA選択/更新からWATCH_STARTが送られないこと、明示B操作だけが送ること、選択変更・A更新・明示再試行の表示整理、遅延失敗の選択越境防止を確認する。実Chromeでの原因確定と修正後表示は未実施。
+
+## B監視一覧の読み込み停止（2026-11-22）
+
+- ユーザー実機観測: 06:14頃の1回目はChatGPTページreloadで復旧。13:44頃の2回目はreload・Bridge接続更新・30秒待機・A一覧更新・手動状態確認でも復旧せず、B監視一覧と接続IDの読み込み表示が続き、開始操作が無効だった。A一覧とBridge上部の接続/実行中値は表示され、監視中・通知は`0/0`だった。先行観測では`1/1`だったが、保存データが消えた証拠はなく、当時の要求ログも未収集。
+- ソースで確定した競合: 初回/手動WATCH_LISTと15秒foreground更新、storage変更更新が同じgenerationを増やしていた。低優先更新が世代を先取りすると、初回/手動要求は古い応答扱いになり、loading解除も世代一致を条件とするため`true`のまま残る。foreground/storage経路自身はloadingを解除しない。実機での直接原因がこの競合だったかは未証明。
+- 修正: 初回・手動・明示操作をforeground/storage更新より優先し、現在会話routeごとに応答tokenを調停する。自動要求は同時に1件だけとし、失敗後は明示再試行まで自動pollを停止する。25秒のtimeoutでUI待機を解放し、sender検証・storage読込・不正応答・拡張応答なし・timeoutを区別して再試行を表示する。遅延した旧要求は状態を更新できず、SPA route不一致のwatch/eventを表示しない。
+- 失敗時は一覧・接続ID・summaryを未取得に戻し、件数は`—`とする。成功した空一覧だけを0件と表示する。Bの監視開始は選択thread、現在route、成功済み一覧、接続IDが揃い、処理中/失敗でない場合に限る。`WATCH_START`はBの明示操作のままで、A選択/更新や背景refreshは登録・解除・owner移管を行わない。senderのURL/tab URL照合とowner filterは変更していない。秘密値・会話本文・thread/owner IDを新たにログしない。
+- focused tests 38/38 PASS。source-only一時コピーの`pnpm test`は初回633/634（1件は一覧Markupを親`CodexBridgeWatchPanel`内で探す旧構造テスト）だったため、抽出先`CodexBridgeWatchList`を検査するよう意味を保って更新。さらに欠落/不正なwatch/event配列を成功0件として扱わない検証を加えて再実行636/636 PASS。`pnpm typecheck`、`pnpm lint`、`pnpm check:size` PASS。隔離テスト前後のライブ`dist/`は11/11相対path・byte size・SHA-256一致。
+- 今回の修正はまだ正式`dist/`へbuild/配備しておらず、Chrome再読み込み・実機再試験はNOT_RUN。C44に遅延/無応答、タイムアウト後再試行、SPA切替、真の空一覧と失敗表示、監視開始の明示操作を追加。実機の元データが削除されたと判断していない。

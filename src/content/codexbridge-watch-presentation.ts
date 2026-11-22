@@ -45,9 +45,10 @@ export function watchConnectionLabel(connectionId: string): string {
 
 export function watchListFailureLabel(reason: CodexBridgeWatchListFailureReason | 'runtime-unavailable'): string {
   if (reason === 'sender-unverified') return '監視一覧: 会話ページの送信元を確認できません。SPA遷移が完了してから再試行してください。';
-  if (reason === 'storage-error') return '監視一覧: 保存領域の読み取りに失敗しました。';
+  if (reason === 'storage-error') return '監視一覧: 保存領域の読み取りに失敗しました。データは削除していません。再試行してください。';
+  if (reason === 'timeout') return '監視一覧: 25秒以内に背景処理から応答がありませんでした。再試行してください。';
   if (reason === 'runtime-unavailable') return '監視一覧: 拡張機能から応答がありません。拡張機能とChatGPTタブを再読み込みしてください。';
-  return '監視一覧: 応答形式を確認できません。';
+  return '監視一覧: 応答が空または不正です。送信元検証または拡張機能の応答経路を確認して再試行してください。';
 }
 
 export function watchStartDisabledReason(input: Readonly<{
@@ -56,8 +57,8 @@ export function watchStartDisabledReason(input: Readonly<{
 }>): string {
   if (input.busy) return '監視操作を処理中です。';
   if (!input.conversationValid) return '会話IDを確認できません。会話ページの再読込後に再試行してください。';
-  if (input.loading) return '監視一覧と接続IDを読み込み中です.';
   if (input.listFailure) return '監視一覧を確認できません。上の再試行を行ってください。';
+  if (input.loading) return '監視一覧と接続IDを読み込み中です.';
   if (!input.connectionId) return 'Bridge接続IDが未取得です。接続状態を確認してください。';
   if (!input.selected) return 'Aのスレッド一覧で対象を選択してください。';
   return '';

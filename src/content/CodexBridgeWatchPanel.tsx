@@ -21,16 +21,19 @@ import { clearCodexBridgeEventIds } from './codexbridge-event-clear.ts';
 import {
   editorInsertionFailureLabel,
   filterOwnedWatchData,
-  watchConnectionLabel,
-  watchDateLabel,
   watchListFailureLabel,
-  watchOutcomeLabel,
   watchStartDisabledReason,
-  watchTurnStateLabel,
 } from './codexbridge-watch-presentation.ts';
 import { codexBridgeWatchThreadLabel } from './codexbridge-thread-presentation.ts';
+import { CodexBridgeWatchList } from './CodexBridgeWatchList.tsx';
 import { CodexBridgeWatchStartFeedback, codexBridgeWatchStartFailureLabel, currentCodexBridgeWatchStartIdentity } from './codexbridge-watch-start-feedback.ts';
 import { stopOwnedCodexBridgeWatch } from './codexbridge-watch-actions.ts';
+import {
+  CODEX_BRIDGE_WATCH_LIST_TIMEOUT_MS,
+  sendWatchListRequestWithTimeout,
+  WatchListRequestCoordinator,
+  type WatchListRequestKind,
+} from './codexbridge-watch-list-coordinator.ts';
 import {
   isRecord,
   parseCodexBridgeFinalAnswer,
@@ -40,6 +43,8 @@ import {
 import { CodexBridgeNotificationCard } from './CodexBridgeNotificationCard.tsx';
 import { captureSelectionForPaste, getBrowserEditorEnvironment, insertAtCaret } from './editor/adapter.ts';
 type SelectedThread = Readonly<{ targetId: string; threadId: string }>;
+const NO_WATCH_ITEMS: readonly CodexBridgeWatchSnapshot[] = [];
+const NO_WATCH_EVENTS: readonly CodexBridgeTerminalEvent[] = [];
 type Props = Readonly<{
   selected: SelectedThread | null;
   watchFeedbackResetToken?: number;
@@ -60,7 +65,7 @@ export function CodexBridgeWatchPanel({
   const [events, setEvents] = useState<readonly CodexBridgeTerminalEvent[]>([]);
   const [currentConnectionId, setCurrentConnectionId] = useState<string | null>(null);
   const [listLoading, setListLoading] = useState(false);
-  const [listFailure, setListFailure] = useState<CodexBridgeWatchListFailureReason | 'runtime-unavailable' | null>(null);
+  const [listFailure, setListFailure] = useState<CodexBridgeWatchListFailureReason | 'runtime-unavailable' | 'timeout' | null>(null);
   const [listConversationId, setListConversationId] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState('');
   const [error, setError] = useState('');
@@ -70,7 +75,7 @@ export function CodexBridgeWatchPanel({
   const [answerBusy, setAnswerBusy] = useState(false);
   const [answerMessage, setAnswerMessage] = useState('');
   const [eventOperationMessage, setEventOperationMessage] = useState('');
-  const listGeneration = useRef(0);
+  const listRequests = useRef(new WatchListRequestCoordinator());
   const answerGeneration = useRef(0);
   const clearInFlight = useRef(false);
   const watchStartFeedback = useRef(new CodexBridgeWatchStartFeedback());
@@ -89,6 +94,9 @@ export function CodexBridgeWatchPanel({
   const eventSelectionCallbackRef = useRef(onSelectBridgeEvent);
   eventSelectionCallbackRef.current = onSelectBridgeEvent;
   const threadIdDescriptionPrefix = useId();
+  const listIsCurrent = Boolean(conversationId && listConversationId === conversationId);
+  const currentItems = listIsCurrent ? items : NO_WATCH_ITEMS;
+  const currentEvents = listIsCurrent ? events : NO_WATCH_EVENTS;
 
   const currentWatchStartIdentity = () => currentCodexBridgeWatchStartIdentity(selectedRef.current, conversationIdRef.current);
   function setListData(data: CodexBridgeWatchListData, ownerConversationId: string) {
@@ -110,37 +118,62 @@ export function CodexBridgeWatchPanel({
     summaryCallbackRef.current?.(owned.summary);
   }
 
-  async function refreshList(showLoading = false, clearStartError = false) {
+  function reportListFailure(reason: CodexBridgeWatchListFailureReason | 'runtime-unavailable' | 'timeout') {
+    setItems([]); setEvents([]); setListConversationId(null); setCurrentConnectionId(null); setListFailure(reason);
+    summaryCallbackRef.current?.(null);
+  }
+
+  async function refreshList(kind: WatchListRequestKind = 'storage', clearStartError = false) {
     const requestConversationId = conversationIdRef.current;
-    if (!requestConversationId || conversationIdFromPath(window.location.pathname) !== requestConversationId) return;
+    if (!requestConversationId) { setListLoading(false); return; }
     if (clearStartError) setWatchStartError('');
-    const generation = ++listGeneration.current;
+    const coordinator = listRequests.current;
+    const token = coordinator.begin(requestConversationId, kind);
+    if (!token) return;
+    const showLoading = kind === 'initial' || kind === 'manual';
     if (showLoading) { setListLoading(true); setListFailure(null); }
+    if (conversationIdFromPath(window.location.pathname) !== requestConversationId) {
+      reportListFailure('sender-unverified');
+      coordinator.finish(token, false);
+      setListLoading(false);
+      return;
+    }
+    let succeeded = false;
     try {
-      const response: unknown = await chrome.runtime.sendMessage({ type: CODEX_BRIDGE_WATCH_LIST });
-      if (generation !== listGeneration.current || conversationIdRef.current !== requestConversationId
+      const result = await sendWatchListRequestWithTimeout<unknown>(
+        () => chrome.runtime.sendMessage({ type: kind === 'foreground' ? CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH : CODEX_BRIDGE_WATCH_LIST }),
+        CODEX_BRIDGE_WATCH_LIST_TIMEOUT_MS,
+      );
+      if (!coordinator.isCurrent(token) || conversationIdRef.current !== requestConversationId
         || conversationIdFromPath(window.location.pathname) !== requestConversationId) return;
-      const parsed = parseCodexBridgeWatchListResponse(response);
+      if (result.kind === 'timeout') { reportListFailure('timeout'); return; }
+      if (result.kind === 'send-error') { reportListFailure('runtime-unavailable'); return; }
+      const parsed = parseCodexBridgeWatchListResponse(result.response);
       if (!parsed.ok) {
-        setCurrentConnectionId(null);
-        setListFailure(parsed.reason);
+        reportListFailure(parsed.reason);
         return;
       }
       setListFailure(null);
       setListData(parsed.data, requestConversationId);
+      succeeded = true;
     } catch {
-      if (generation === listGeneration.current) {
-        setCurrentConnectionId(null);
-        setListFailure('runtime-unavailable');
-      }
+      if (coordinator.isCurrent(token) && conversationIdRef.current === requestConversationId
+        && conversationIdFromPath(window.location.pathname) === requestConversationId) reportListFailure('runtime-unavailable');
     } finally {
-      if (showLoading && generation === listGeneration.current) setListLoading(false);
+      if (coordinator.isCurrent(token) && conversationIdRef.current === requestConversationId) {
+        if (conversationIdFromPath(window.location.pathname) !== requestConversationId) {
+          reportListFailure('sender-unverified');
+          succeeded = false;
+        }
+        coordinator.finish(token, succeeded);
+        setListLoading(false);
+      }
     }
   }
 
   useEffect(() => {
     watchStartFeedback.current.invalidate();
-    listGeneration.current += 1;
+    listRequests.current.setRoute(conversationId);
     answerGeneration.current += 1;
     setItems([]);
     setEvents([]);
@@ -156,7 +189,7 @@ export function CodexBridgeWatchPanel({
     setWatchMessage('');
     setBusyKey('');
     summaryCallbackRef.current?.(null);
-    if (conversationId) void refreshList(true);
+    if (conversationId) void refreshList('initial');
   }, [conversationId]);
 
   useEffect(() => {
@@ -171,7 +204,7 @@ export function CodexBridgeWatchPanel({
   useEffect(() => {
     const onStorageChanged = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
       if (areaName !== 'local') return;
-      if (changes[CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY]) void refreshList();
+      if (changes[CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY]) void refreshList('storage');
     };
     chrome.storage.onChanged.addListener(onStorageChanged);
     return () => chrome.storage.onChanged.removeListener(onStorageChanged);
@@ -179,39 +212,16 @@ export function CodexBridgeWatchPanel({
   useEffect(() => {
     if (!conversationId || listConversationId !== conversationId
       || conversationIdFromPath(window.location.pathname) !== conversationId) return;
-    if (bridgeWatchSelection && !items.some((item) => item.ownerConversationId === conversationId
+    if (bridgeWatchSelection && !currentItems.some((item) => item.ownerConversationId === conversationId
       && item.connectionId === bridgeWatchSelection.connectionId && item.targetId === bridgeWatchSelection.targetId
       && item.threadId === bridgeWatchSelection.threadId)) watchSelectionCallbackRef.current(null);
-    if (bridgeEventSelection && !events.some((event) => event.ownerConversationId === conversationId
+    if (bridgeEventSelection && !currentEvents.some((event) => event.ownerConversationId === conversationId
       && event.eventId === bridgeEventSelection)) eventSelectionCallbackRef.current(null);
-  }, [conversationId, listConversationId, items, events, bridgeWatchSelection, bridgeEventSelection]);
+  }, [conversationId, listConversationId, currentItems, currentEvents, bridgeWatchSelection, bridgeEventSelection]);
   useEffect(() => {
     if (!foregroundEnabled) return;
     const isForeground = () => document.visibilityState === 'visible' && document.hasFocus();
-    const refreshForeground = () => {
-      const requestConversationId = conversationIdRef.current;
-      if (!isForeground() || !requestConversationId || conversationIdFromPath(window.location.pathname) !== requestConversationId) return;
-      const generation = ++listGeneration.current;
-      void chrome.runtime.sendMessage({ type: CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH })
-        .then((response: unknown) => {
-          if (generation !== listGeneration.current || conversationIdRef.current !== requestConversationId
-            || conversationIdFromPath(window.location.pathname) !== requestConversationId) return;
-          const parsed = parseCodexBridgeWatchListResponse(response);
-          if (parsed.ok) {
-            setListFailure(null);
-            setListData(parsed.data, requestConversationId);
-          } else {
-            setCurrentConnectionId(null);
-            setListFailure(parsed.reason);
-          }
-        })
-        .catch(() => {
-          if (generation === listGeneration.current) {
-            setCurrentConnectionId(null);
-            setListFailure('runtime-unavailable');
-          }
-        });
-    };
+    const refreshForeground = () => { if (isForeground()) void refreshList('foreground'); };
     const timer = window.setInterval(refreshForeground, CODEX_BRIDGE_THREAD_MONITOR_FOREGROUND_MS);
     document.addEventListener('visibilitychange', refreshForeground);
     window.addEventListener('focus', refreshForeground);
@@ -225,7 +235,8 @@ export function CodexBridgeWatchPanel({
 
   async function startWatch() {
     const ownerConversationId = conversationIdRef.current;
-    if (!selected || !ownerConversationId || conversationIdFromPath(window.location.pathname) !== ownerConversationId) return;
+    if (!selected || !ownerConversationId || listConversationId !== ownerConversationId || listLoading || listFailure
+      || !currentConnectionId || conversationIdFromPath(window.location.pathname) !== ownerConversationId) return;
     const key = `start:${selected.targetId}:${selected.threadId}`;
     const ticket = watchStartFeedback.current.begin({ ...selected, conversationId: ownerConversationId });
     const isCurrent = () => watchStartFeedback.current.isCurrent(ticket, currentWatchStartIdentity())
@@ -254,7 +265,7 @@ export function CodexBridgeWatchPanel({
       } else {
         setWatchStartError('');
       }
-      await refreshList();
+      await refreshList('action');
     } catch {
       if (watchStartFeedback.current.recordFailure(ticket, currentWatchStartIdentity())) {
         setWatchStartError('監視開始: 拡張機能から応答がありません。');
@@ -267,7 +278,7 @@ export function CodexBridgeWatchPanel({
   async function stopWatch(item: CodexBridgeWatchSnapshot) {
     await stopOwnedCodexBridgeWatch({ item, getConversationId: () => conversationIdRef.current,
       getPathname: () => window.location.pathname, sendMessage: (message) => chrome.runtime.sendMessage(message),
-      refreshList, setBusyKey, setError });
+      refreshList: () => refreshList('action'), setBusyKey, setError });
   }
   function selectWatch(item: CodexBridgeWatchSnapshot) {
     const ownerConversationId = conversationIdRef.current;
@@ -278,7 +289,7 @@ export function CodexBridgeWatchPanel({
   function selectEvent(eventId: string) {
     const ownerConversationId = conversationIdRef.current;
     if (!ownerConversationId || conversationIdFromPath(window.location.pathname) !== ownerConversationId
-      || !events.some((event) => event.eventId === eventId && event.ownerConversationId === ownerConversationId)) return;
+      || !currentEvents.some((event) => event.eventId === eventId && event.ownerConversationId === ownerConversationId)) return;
     answerGeneration.current += 1;
     eventSelectionCallbackRef.current(eventId);
     setAnswer(null);
@@ -287,7 +298,7 @@ export function CodexBridgeWatchPanel({
     setEventOperationMessage('');
   }
   async function fetchSelectedAnswer() {
-    const event = events.find((candidate) => candidate.eventId === bridgeEventSelection);
+    const event = currentEvents.find((candidate) => candidate.eventId === bridgeEventSelection);
     const currentConversationId = conversationIdRef.current;
     if (!event || !currentConversationId || event.ownerConversationId !== currentConversationId
       || conversationIdFromPath(window.location.pathname) !== currentConversationId) return;
@@ -322,7 +333,7 @@ export function CodexBridgeWatchPanel({
   async function acknowledgeVisibleEvents() {
     const currentConversationId = conversationIdRef.current;
     if (!currentConversationId || conversationIdFromPath(window.location.pathname) !== currentConversationId) return;
-    const eventIds = [...events.filter((event) => !event.acknowledgedAt
+    const eventIds = [...currentEvents.filter((event) => !event.acknowledgedAt
       && event.ownerConversationId === currentConversationId).map((event) => event.eventId)];
     if (!eventIds.length || busyKey) return;
     setBusyKey('acknowledge');
@@ -337,7 +348,7 @@ export function CodexBridgeWatchPanel({
         return isRecord(response) && response.ok === true;
       }, isCurrent);
       if (!isCurrent() || result.status === 'cancelled') return;
-      await refreshList();
+      await refreshList('action');
       if (result.status !== 'complete' && isCurrent()) {
         setError(`通知確認: ${result.confirmedCount}/${result.totalCount} 件を確認しました。一覧を再取得しました。未確認分は再試行できます。`);
       }
@@ -347,7 +358,7 @@ export function CodexBridgeWatchPanel({
     const ownerConversationId = conversationIdRef.current;
     if (!ownerConversationId || conversationIdFromPath(window.location.pathname) !== ownerConversationId
       || busyKey || clearInFlight.current) return;
-    const eventIds = [...new Set(events.filter((event) => event.ownerConversationId === ownerConversationId)
+    const eventIds = [...new Set(currentEvents.filter((event) => event.ownerConversationId === ownerConversationId)
       .map((event) => event.eventId))];
     if (!eventIds.length || !window.confirm(`現在の会話に属する終了通知 ${eventIds.length} 件を削除します。監視登録は残ります。`)) return;
     clearInFlight.current = true;
@@ -365,7 +376,7 @@ export function CodexBridgeWatchPanel({
         return isRecord(response) && response.ok === true && isRecord(response.data) && response.data.cleared === true;
       }, isCurrent);
       if (!isCurrent() || result.status === 'cancelled') return;
-      await refreshList();
+      await refreshList('action');
       if (!isCurrent()) return;
       if (result.status === 'complete') {
         setEventOperationMessage(`現在の会話の終了通知 ${result.clearedCount} 件を削除しました。監視登録は残っています。`);
@@ -404,14 +415,14 @@ export function CodexBridgeWatchPanel({
     }
     setAnswerMessage(editorInsertionFailureLabel(result.reason));
   }
-  const selectedWatch = selected && items.find((item) => item.connectionId === currentConnectionId
+  const selectedWatch = selected && currentItems.find((item) => item.connectionId === currentConnectionId
     && item.targetId === selected.targetId && item.threadId === selected.threadId);
-  const selectedEvent = events.find((event) => event.eventId === bridgeEventSelection
+  const selectedEvent = currentEvents.find((event) => event.eventId === bridgeEventSelection
     && event.ownerConversationId === conversationId) ?? null;
   const displayedAnswer = answer && selectedEvent && answer.eventId === selectedEvent.eventId ? answer.result : null;
   const routeConversationValid = Boolean(conversationId && conversationIdFromPath(window.location.pathname) === conversationId);
   const startDisabledReason = watchStartDisabledReason({
-    busy: busyKey !== '', conversationValid: routeConversationValid, loading: listLoading,
+    busy: busyKey !== '', conversationValid: routeConversationValid, loading: listLoading || !listIsCurrent,
     listFailure: listFailure !== null, connectionId: currentConnectionId, selected: selected !== null,
   });
   const startReasonId = `${threadIdDescriptionPrefix}-start-disabled-reason`;
@@ -427,7 +438,7 @@ export function CodexBridgeWatchPanel({
     <section className="codex-bridge-watch phase6-card phase6-card-b" aria-label="選択スレッド・監視中">
       <div className="codex-bridge-heading">
         <h2>B 選択スレッド・監視中</h2>
-        <span>{items.length}件</span>
+        <span>{listIsCurrent && !listFailure ? `${currentItems.length}件` : '—'}</span>
       </div>
       {selectedWatch
         ? <button type="button" className="codex-bridge-button" onClick={() => { void stopWatch(selectedWatch); }} disabled={busyKey !== ''}>
@@ -443,48 +454,20 @@ export function CodexBridgeWatchPanel({
         </>}
       {listLoading && <p className="codex-bridge-empty" role="status">監視一覧を読み込み中…</p>}
       {listFailure && <p className="codex-bridge-error" role="alert">{watchListFailureLabel(listFailure)}
-        <button type="button" className="codex-bridge-button" onClick={() => { void refreshList(true, true); }}>再試行</button>
+        <button type="button" className="codex-bridge-button" disabled={listLoading}
+          onClick={() => { void refreshList('manual', true); }}>再試行</button>
       </p>}
       {error && <p className="codex-bridge-error" role="alert">{error}</p>}
       {watchStartError && <p className="codex-bridge-error" role="alert">{watchStartError}</p>}
       {watchMessage && <p className="codex-bridge-note" role="status">{watchMessage}</p>}
-      {items.length === 0 && <p className="codex-bridge-empty">監視対象はありません。threadを選んで明示的に開始してください。</p>}
-      {items.length > 0 && <ul className="codex-bridge-watch-list" aria-label="監視対象一覧">
-        {items.map((item, index) => {
-          const sameConnection = item.connectionId === currentConnectionId;
-          const outcome = watchOutcomeLabel(item.fetchOutcome);
-          const isSelected = bridgeWatchSelection?.connectionId === item.connectionId
-            && bridgeWatchSelection.targetId === item.targetId && bridgeWatchSelection.threadId === item.threadId;
-          const threadIdDescriptionId = `${threadIdDescriptionPrefix}-watch-${index}`;
-          return <li key={item.watchId} className="codex-bridge-watch-item">
-            <div className="codex-bridge-watch-heading">
-              <button type="button" title={item.threadId} aria-describedby={threadIdDescriptionId}
-                className="codex-bridge-watch-select" aria-pressed={isSelected} onClick={() => selectWatch(item)}>
-                <strong>{codexBridgeWatchThreadLabel(threadCandidates, item.targetId, item.threadId, true)}</strong>
-              </button>
-              <span id={threadIdDescriptionId} className="phase6-sr-only">スレッドID：{item.threadId}</span>
-              <button type="button" className="codex-bridge-button" onClick={() => { void stopWatch(item); }}
-                disabled={busyKey !== ''} aria-label={`${item.threadId}の監視を解除`}>
-                {busyKey === `stop:${item.watchId}` ? '解除中…' : '解除'}
-              </button>
-            </div>
-            <small className="phase6-watch-status">{watchTurnStateLabel(item, sameConnection)}</small>
-            <details className="phase6-technical-details">
-              <summary>技術情報</summary>
-              <small>thread ID: {item.threadId} · target ID: {item.targetId}</small>
-              <small>connection ID: {watchConnectionLabel(item.connectionId)}</small>
-              <small>取得: {outcome} · {watchDateLabel(item.observedAt)} · 最終成功: {watchDateLabel(item.lastSuccessAt)}</small>
-              <small>baseline: {item.baselineTurnId ?? '不明'} · 最終観測: {item.lastObservedTurnId ?? '不明'}</small>
-              <small>codex_status: {item.statusState ?? '不明'} · last_turn: {item.lastTurnStatus ?? '不明'} / {item.lastTurnEvidence ?? '不明'}</small>
-              <small>current_execution: {item.currentExecutionState ?? '不明'} · turn_id: {item.currentExecutionTurnId ?? '不明'} / {item.currentExecutionEvidence ?? '不明'}</small>
-              <small>needs_attention: {item.needsAttention === true ? '要対応' : item.needsAttention === false ? '不要' : '不明'}</small>
-            </details>
-          </li>;
-        })}
-      </ul>}
+      {currentItems.length === 0 && listIsCurrent && !listLoading && !listFailure
+        && <p className="codex-bridge-empty">監視対象はありません。threadを選んで明示的に開始してください。</p>}
+      {currentItems.length > 0 && <CodexBridgeWatchList items={currentItems} currentConnectionId={currentConnectionId}
+        selection={bridgeWatchSelection} threadCandidates={threadCandidates} busyKey={busyKey}
+        onSelect={selectWatch} onStop={(item) => { void stopWatch(item); }} />}
     </section>
     <CodexBridgeNotificationCard
-      events={events} selectedEvent={selectedEvent} selectedEventId={bridgeEventSelection}
+      events={currentEvents} selectedEvent={selectedEvent} selectedEventId={bridgeEventSelection}
       currentConnectionId={currentConnectionId} busyKey={busyKey} answerBusy={answerBusy}
       answerMessage={answerMessage} operationMessage={eventOperationMessage} displayedAnswer={displayedAnswer}
       threadLabel={(targetId, threadId) => codexBridgeWatchThreadLabel(threadCandidates, targetId, threadId, false)}

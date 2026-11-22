@@ -23,3 +23,17 @@ test('正しいwatch一覧応答では接続ID nullと0件を成功値として�
     data: { items: [], events: [], currentConnectionId: null, summary: { watchingCount: 0, unacknowledgedThreadCount: 0 } },
   });
 });
+
+test('欠落または不正なwatch/event配列は成功した0件として扱わない', () => {
+  const base = { items: [], events: [], currentConnectionId: null,
+    summary: { watchingCount: 0, unacknowledgedThreadCount: 0 } };
+  assert.deepEqual(parseCodexBridgeWatchListResponse({ ok: true, data: { ...base, events: undefined } }), {
+    ok: false, reason: 'invalid-response',
+  });
+  assert.deepEqual(parseCodexBridgeWatchListResponse({ ok: true, data: { ...base, items: [null] } }), {
+    ok: false, reason: 'invalid-response',
+  });
+  assert.deepEqual(parseCodexBridgeWatchListResponse({ ok: true, data: { ...base, events: [null] } }), {
+    ok: false, reason: 'invalid-response',
+  });
+});

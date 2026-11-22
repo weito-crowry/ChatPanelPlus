@@ -7,6 +7,7 @@ import {
   eventStatusLabel,
   filterOwnedWatchData,
   finalAnswerLabel,
+  watchListFailureLabel,
 } from '../src/content/codexbridge-watch-presentation.ts';
 
 function item(ownerConversationId: string): CodexBridgeWatchSnapshot {
@@ -39,4 +40,11 @@ test('移動した通知・回答・挿入ラベルを維持する', () => {
   assert.match(finalAnswerLabel({ status: 'no-final-answer', completeness: 'unconfirmed' }), /完全性は未確認です/);
   assert.equal(editorInsertionFailureLabel('ime-composing'), 'IME変換中のため挿入しませんでした。');
   assert.equal(editorInsertionFailureLabel('unknown'), '入力欄へ挿入できませんでした。');
+});
+
+test('B一覧の失敗理由をtimeout・送信元・保存領域・不正応答に分ける', () => {
+  assert.match(watchListFailureLabel('timeout'), /25秒以内.*再試行/);
+  assert.match(watchListFailureLabel('sender-unverified'), /送信元.*SPA/);
+  assert.match(watchListFailureLabel('storage-error'), /保存領域.*削除していません/);
+  assert.match(watchListFailureLabel('invalid-response'), /応答が空または不正.*送信元検証/);
 });

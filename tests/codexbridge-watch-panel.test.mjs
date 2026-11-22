@@ -47,7 +47,7 @@ test('通知クリアは確認後、現在会話のevent ID snapshotだけを削
   assert.match(card, /onClick=\{onClear\}/);
   assert.match(source, /監視登録は残ります/);
   assert.match(source, /window\.confirm\(`現在の会話に属する終了通知/);
-  assert.match(source, /events\.filter\(\(event\) => event\.ownerConversationId === ownerConversationId\)/);
+  assert.match(source, /currentEvents\.filter\(\(event\) => event\.ownerConversationId === ownerConversationId\)/);
   assert.match(source, /type: CODEX_BRIDGE_WATCH_CLEAR_EVENTS,[\s\S]*?conversationId: ownerConversationId,[\s\S]*?eventIds: batch/);
   assert.match(source, /clearCodexBridgeEventIds\(eventIds/);
   assert.match(source, /clearInFlight\.current/);
@@ -97,9 +97,9 @@ test('選択変更・A更新・明示再試行で旧エラーを整理し、disa
   ]);
   assert.match(source, /watchStartFeedback\.current\.invalidate\(\);\s*setWatchStartError\(''\);\s*setWatchMessage\(''\);\s*\}, \[selected\?\.targetId, selected\?\.threadId\]\)/);
   assert.match(source, /setWatchStartError\(''\);\s*setWatchMessage\(''\);\s*\}, \[watchFeedbackResetToken\]\)/);
-  assert.match(source, /refreshList\(showLoading = false, clearStartError = false\)/);
+  assert.match(source, /refreshList\(kind: WatchListRequestKind = 'storage', clearStartError = false\)/);
   assert.match(source, /if \(clearStartError\) setWatchStartError\(''\)/);
-  assert.match(source, /refreshList\(true, true\)/);
+  assert.match(source, /refreshList\('manual', true\)/);
   assert.match(source, /recordFailure\(ticket, currentWatchStartIdentity\(\)\)/);
   assert.match(await readFile(feedbackPath, 'utf8'), /if \(reason === 'invalid-request'\) return/);
   assert.match(source, /watchStartFeedback\.current\.isCurrent\(ticket, currentWatchStartIdentity\(\)\)/);
@@ -112,6 +112,28 @@ test('選択変更・A更新・明示再試行で旧エラーを整理し、disa
   assert.match(presentation, /会話IDを確認できません/);
   assert.match(source, /role="alert">\{watchListFailureLabel\(listFailure\)\}/);
   assert.match(source, /再試行/);
+});
+
+test('B監視一覧は要求を調停・timeoutし、未取得/失敗を空一覧として表示しない', async () => {
+  const [source, coordinator, response] = await Promise.all([
+    readFile(sourcePath, 'utf8'),
+    readFile(fileURLToPath(new URL('../src/content/codexbridge-watch-list-coordinator.ts', import.meta.url)), 'utf8'),
+    readFile(fileURLToPath(new URL('../src/content/codexbridge-watch-response.ts', import.meta.url)), 'utf8'),
+  ]);
+  assert.match(source, /new WatchListRequestCoordinator\(\)/);
+  assert.match(source, /refreshList\('initial'\)/);
+  assert.match(source, /refreshList\('foreground'\)/);
+  assert.match(source, /refreshList\('storage'\)/);
+  assert.match(source, /sendWatchListRequestWithTimeout/);
+  assert.match(source, /coordinator\.finish\(token, succeeded\)/);
+  assert.match(source, /coordinator\.isCurrent\(token\)[\s\S]*?conversationIdFromPath\(window\.location\.pathname\) !== requestConversationId/);
+  assert.match(source, /listConversationId !== ownerConversationId \|\| listLoading \|\| listFailure[\s\S]*?\|\| !currentConnectionId/);
+  assert.match(source, /currentItems\.length === 0 && listIsCurrent && !listLoading && !listFailure/);
+  assert.match(source, /listIsCurrent && !listFailure \? `\$\{currentItems\.length\}件` : '—'/);
+  assert.match(source, /summaryCallbackRef\.current\?\.\(null\)/);
+  assert.match(coordinator, /CODEX_BRIDGE_WATCH_LIST_TIMEOUT_MS = 25_000/);
+  assert.match(coordinator, /this\.automaticPaused \|\| this\.active !== null/);
+  assert.match(response, /'sender-unverified' \| 'storage-error' \| 'invalid-response' \| 'timeout'/);
 });
 
 test('retrieved body completeness is labeled and Markdown whitespace remains visible', async () => {

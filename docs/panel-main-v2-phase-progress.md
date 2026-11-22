@@ -12,6 +12,12 @@
 | 5 最終統合・受入準備 | AUTO_REVIEW_COMPLETE / PARTIAL_USER_REPORTED | C30実装 `82c0dd7fc131dec320a47c4cd16b9c8a22e6b454`、受入 `docs/panel-main-v2-final-acceptance-checklist.md` | スピーカー操作を1個に統合。全体音声ON/OFFはOptionsへ残し、パネルは会話別muteだけを操作。全548/548、typecheck/lint PASS、隔離中live `dist/` 11/11 hash一致。バックアップ `ChatPanelPlus-dist-c30-predeploy-backup-20261121-220527-c5308142b8dd48208b4c600962dee589` 11/11照合後`pnpm build` exit 0で配備。Chrome C30確認はNOT_RUN。 |
 | 6 パネル外観・Bridge表示 | CPP_AUTO_TESTS_AND_DEPLOY_PASS / C37_FAIL / C31_C36_NOT_RUN / BRIDGE_SCHEMA_UNVERIFIED / C38_NOT_RUN | 仕様docs `fcafcca4bf17be62f34b15220be2879e966722bf`、UI `3aca9ca05b52b0ca4232aee3b80d72dae6f62f70`、running_only CPP `4cee26e980e2bfaf32e0f2a299c86a0c4082073d` | UI 552/552、Phase6 focused 34/34、running_only連携前回全suite 563/563・focused 50/50、typecheck/lint・サイズ検査PASS。今回`pnpm typecheck`/`pnpm lint` PASS、`pnpm build` exit 0。登録済みlive `dist/`の新規backup `D:\weito\Documents\src\codexapp\ChatPanelPlus-dist-phase6-runningonly-predeploy-backup-20261122-072227-7ce881baefb7451d8d5438a8d5f9e510`とbuild前に11/11 path/size/SHA-256一致。配備後11ファイル、Manifest V3/version 0.1.5、必須6ファイル、HTML参照2件、marker 8/8。Bridge再起動はユーザー報告済みだがlive app `tools/list` schemaは未確認。Chrome reload・C31–C36/C38実機受入はNOT_RUN。C37 final-answer不一致はFAIL・原因未特定のまま。 |
 
+## B監視一覧の読み込み停止修正（2026-11-22）
+
+- ユーザー報告の2回目はreload・接続更新・30秒待機・A更新でもB一覧が読み込み中のまま、開始不可。A一覧/Bridge接続表示は正常で監視中/通知は0/0だった。先行観測から変わった理由や保存データの消失は確認されておらず、原ログも未収集。
+- ソースで確認したgeneration競合に対し、B一覧要求の優先度調停、単一flightの自動更新、25秒bounded timeout、失敗原因表示/再試行、route tokenによる遅延応答破棄を追加。失敗を0件にせず`—`とし、B開始は一覧の成功・current connection・current route等が有効な時だけ許可する。owner filter、sender URL/tab URL検証、保存済みwatch/eventは変更しない。
+- 実機の症状がこの競合だったかは未確定。C44でChrome実機再確認をNOT_RUNとして管理する。欠落/不正なwatch/event配列を成功0件扱いしない検査も追加。自動テストはisolated source-only copyで636/636 PASS、focused 38/38 PASS。`pnpm typecheck`・`pnpm lint`・`pnpm check:size` PASS。隔離suite前後でライブ`dist/`の11/11 relative path/size/SHA-256一致。build・正式配備・Chrome操作は未実施。
+
 ## 最終受入の保留
 
 - Chrome実機受入はユーザー実施待ちで、Phase 2〜5の未確認項目は`docs/panel-main-v2-final-acceptance-checklist.md`に`NOT_RUN`として集約した。Phase 1のユーザー報告によるPASSは別記録で維持する。

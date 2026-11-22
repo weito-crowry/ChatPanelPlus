@@ -57,6 +57,8 @@
 | C43 B監視エラーとdisabled理由 | Bでwatch一覧/mute読込を確認後、Aで別thread選択と一覧更新を行う。Bの明示開始成功・拒否、SPA遷移時のsender/tab URL不一致も確認する。 | Aの操作はWATCH_STARTを送らない。古いowner-conflict表示は選択変更・A更新・明示再試行で整理され、新しい開始拒否は`監視開始:`理由付きで残る。一覧/mute失敗はsender検証を緩めず説明・再試行を示す。Bボタンの無効理由は選択なし、会話ID不明、一覧取得中/失敗、接続ID未取得、処理中を区別する。 | NOT_RUN | 自動回帰ではA選択/更新からのSTARTなし、B明示開始のみ、失敗表示の寿命と古い非同期応答の抑止を確認。スクリーンショットの実行時原因とChrome再確認は未確定。 |
 | C38 running_only API連携・件数 | 新Bridge serviceのschema対応環境と旧service／未対応remote targetで、通常・展開・最小化の3状態を確認。実行中／通常一覧mode、target切替、更新、20件cursor、応答遅延、真の0件・失敗も試す。 | boolean schemaの対応確認後だけ実行中要求を送り、running_only結果を直接表示する。確定・推定を分けない。通常一覧は20件cursorのまま。旧schema／未対応remote／失敗時は件数`—`と理由を示し通常一覧へ切替可能。古い件数・別target値を残さず、Bridge返却範囲以上の完全性を称さない。 | NOT_RUN | CPP commit `4cee26e980e2bfaf32e0f2a299c86a0c4082073d`は自動検証済みでbundleへ配備済み。Bridge再起動はユーザー報告済みだがlive app `tools/list` schemaは未確認。Chrome reload・API実値・旧/remote target動作は未確認。 |
 
+| C44 B監視一覧のtimeout・再試行・route競合 | 監視一覧を遅延または無応答にし、15秒foreground更新・storage更新・明示再試行を重ねる。timeout後に再試行し、真の空一覧、storage/sender応答失敗、SPA会話切替も確認する。 | 初回/明示要求のloadingは低優先更新で永久化しない。25秒以内にtimeout等の理由と再試行が表示され、自動要求は積み上がらない。古いrouteのwatch/eventは出ず、失敗/未取得は`—`、成功した空一覧のみ0件。不正/欠落配列も成功0件にしない。WATCH_STARTはBの明示クリックだけで実行される。 | NOT_RUN | 自動検証636/636・focused 38/38、typecheck/lint/size PASS。実機再現条件でのChrome確認待ち。今回の修正は未配備。 |
+
 ## 判断待ち・実装上の保留
 
 | 項目 | 現状 | 必要な判断／影響 |
