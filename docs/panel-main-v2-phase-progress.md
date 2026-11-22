@@ -50,4 +50,11 @@
 - 2026-11-22 Options V2ユーザー実機受入報告: 目次切替、保存データ種別/件数、未保存ボタン名ドラフトのセクション往復保持、会話別パネル状態の選択、削除プレビュー（件数/ID/影響）と取消後の保持、project folder pattern登録、F5後の保存、通知/音声設定、完了音試聴と選択デバイス再生をPASS。いずれもユーザー報告による実機観測。
 - 部分観測: データ管理チェックボックスは初回グレーアウト、保存データ更新後に選択可能。stale検出と整合するが原因未確定。stale理由/更新導線の表示、削除プレビューの確認/取消ボタン横並びを改善候補として記録（今回UI変更なし）。
 - NOT_RUN: 実データ最終削除、初期化/JSON import/export個別確認、幅別responsive、ブラウザー戻る/進む、複数画面競合。C37は別管理で既知`FAIL`を維持し、今回のOptions受入に含めない。
+
+## 監視周期短縮・終端後のワンショット解除（2026-11-23）
+
+- 前面foreground pollingを5秒へ短縮し、Chrome alarmsの30秒周期とbackoff/同時要求制限は維持する。確実な新規`completed`/`failed`/`interrupted`遷移では、owner snapshot付きeventの保存と同じstorage mutation内で対象watchIdの1件だけを解除する。
+- event保存失敗時はwatchを残し、成功状態をMCP読取失敗へ混同せず次のpollで再判定する。通知再生結果にかかわらずeventを保管し、最終watch解除時はalarm同期を試みる。既終端baselineと不確実状態は自動解除しない。
+- コード・テストcommit `b2158dd`。focused monitor/terminal/coordinator tests 49/49 PASS、隔離source-only `pnpm test` 639/639 PASS、`pnpm typecheck`・`pnpm lint`・`pnpm check:size` PASS。隔離suite前後で正式live `dist/`は11/11 relative path・byte size・SHA-256一致（manifestはCodexData Tempの`cpp-one-shot-*\live-dist-before.csv`と`live-dist-after.csv`）。
+- 正式`dist/`へのbackup/buildはこの時点では未実施。全テストPASS後の配備結果とChrome実機NOT_RUNを完了後に追記する。最終チェックリストC45は手動受入NOT_RUN。
 - 2026-11-22 follow-up（追加4要望、watch owner後勝ち移管、B監視エラー調査）: projectId別folder pattern、viewport内panel scroll、owner限定通知clear、C37の`latest_agent_message`意味の記録、atomic owner transferと旧event owner維持、Bエラー/disabled理由の整理を実装。commit `97ee87a2dc55af88b0bbb6a3a05ba8cfdae2d5cd`、隔離全suite 601/601、関連focused 93/93、typecheck/lint/size PASS。backup `D:\weito\Documents\src\codexapp\ChatPanelPlus-dist-pre-c39-c43-20261122-20261122-093145-34a03d4d1f33425f87970380cf367a08` はbuild前11/11 path/size/SHA-256一致、reparse pointなし。登録済みrepo直下`dist/`へ`pnpm build` exit 0で配備。配備後11 files、Manifest V3/version 0.1.5、必須6/6、HTML refs 5/5、CSS URL refs 0、feature markers 12/12、C37 strict-parser checks 4/4。post-build hash manifestは`D:\weito\Documents\src\codexapp\ChatPanelPlus-dist-pre-c39-c43-20261122-20261122-093145-34a03d4d1f33425f87970380cf367a08.postbuild.manifest.json`。今回の配備先はユーザー確認済みのrepo直下`dist/`。`AGENTS.md`/`README.md`/`pnpm deploy:chrome`は兄弟Probeを指す既存不整合があるため同コマンドは不使用。Chrome未reload、C39–C43 NOT_RUN。Bridge再起動後の実行中0表示はユーザー報告の部分観測で、このbuildのC38はNOT_RUN。C37はFAIL／原因未特定。スクリーンショットの直接原因も未確定。
