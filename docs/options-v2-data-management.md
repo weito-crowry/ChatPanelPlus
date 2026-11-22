@@ -49,7 +49,7 @@ JSON長は概算値である。音源のbase64本文はUI・詳細・ログに�
 
 - 自動: 目次/URL選択、非表示中のstatefulセクション維持、グループ切替と既存ボタン編集契約、既知キー限定読み込み、secret/base64非表示、90日境界と日時なし除外、CAS競合、同一key内の他レコード保持、破損データ拒否、既存lock名の使用、初回/再読込失敗時の削除禁止と成功後の復帰を検証する。
 - 実データ: FakeStorageだけで削除テストを行う。実ユーザーのChrome storageへ書き込まない。
-- Chrome UI: `NOT_RUN`。Optionsの狭幅/広幅、hash戻る進む、タブ/ボタンドラフト、token・プロジェクト・音声状態のセクション移動、データ更新時のstale表示、確認取消、個別削除、保存データ詳細を確認する。
+- Chrome UI: 下記2026-11-22のユーザー実機受入記録に列挙した項目はPASS。幅別表示、hash戻る/進む、複数画面競合、最終削除、reset、JSON import/exportの個別確認は未受入。
 - 正式dist: Options V2を登録済みrepo直下`dist/`へビルド・配備済み。Chrome拡張の再読み込みとOptions実機確認は`NOT_RUN`。全テストは`dist/`除外のsource-onlyコピーで実行し、テスト前後の正式dist 11ファイルのSHA-256一致を検証済み。
 
 ## 実装・自動検証記録
@@ -72,3 +72,14 @@ JSON長は概算値である。音源のbase64本文はUI・詳細・ログに�
 - 配備前backup: `D:\weito\Documents\src\codexapp\ChatPanelPlus-dist-options-v2-predeploy-20261122-f58ac4dae05649e6bf2b09f03cf18d24`。ビルド前に通常ディレクトリとreparse point不在を確認し、backupと元distのpath・byte length・SHA-256が11/11一致。
 - 配備後は11ファイル、Manifest V3/version 0.1.5、必須6ファイル、Options HTML script/style参照2件、CSS local URL参照0件を確認。Options bundle marker 4/4（目次・保存データ・削除確認・読込失敗時削除不可）、CSS marker 3/3、既存content marker 2/2（running_only・厳密なfinal_answer不在表示）。全11ファイルの配備後hash manifest: `D:\weito\Documents\src\codexapp\ChatPanelPlus-dist-options-v2-predeploy-20261122-f58ac4dae05649e6bf2b09f03cf18d24.postbuild.manifest.json`。
 - Chrome拡張とOptions画面の再読み込み・実機受入は`NOT_RUN`。ユーザー操作後に目次/幅別表示、編集と保存、既知データ閲覧、削除プレビュー/取消、読込失敗時の削除停止を確認する。実storageはこの配備作業で読み書きしていない。メインパネル/C37判定コードは変更せず、既知C37 `FAIL`を維持。
+
+### ユーザー実機受入（2026-11-22）
+
+以下はユーザーからの実機確認報告に基づくPASSであり、個別の画面証跡は未添付。
+
+- PASS: 目次切替、保存データの種類/件数表示、未保存のボタン名ドラフトが別セクション往復後も保持されること。
+- PASS: 会話別パネル状態の削除対象選択、削除プレビューの件数/対象ID/影響表示、プレビュー取消後のデータ保持。実際の削除はしていない。
+- PASS: プロジェクト別フォルダパターンの登録とF5後の永続化。
+- PASS: 通知・音声設定の表示、完了音試聴、選択した出力デバイスからの再生（ユーザー報告）。
+- 部分観測・原因未確定: データ管理のチェックボックスが初回表示で無効だったが、「保存データを更新」を押すと選択可能になった。known-key変更によるstale検出とは整合するものの、発生原因は確定していない。改善候補はstale理由/更新導線の明示と、削除プレビューの「確認して削除」「取り消す」ボタンの横並び化。今回はUIを変更していない。
+- NOT_RUN: 実データの最終削除、Options初期化、JSON import/exportの個別実機確認、幅別responsive、ブラウザー戻る/進む、複数Options画面間の競合確認。C37 final_answer不一致は別管理の既知`FAIL`であり、この受入に含めない。
