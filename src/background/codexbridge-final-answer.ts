@@ -19,6 +19,23 @@ function hasExactKeys(value: Record<string, unknown>, expected: readonly string[
   return keys.length === expected.length && expected.every((key) => Object.prototype.hasOwnProperty.call(value, key));
 }
 
+function expectedNativeThreadId(targetId: string, publicThreadId: string): string | null {
+  // Bridge uses `${target_id}::${native_thread_id}` for remote public IDs; local IDs are native IDs.
+  const prefix = `${targetId}::`;
+  const nativeThreadId = publicThreadId.startsWith(prefix) ? publicThreadId.slice(prefix.length) : publicThreadId;
+  return nativeThreadId.length > 0 ? nativeThreadId : null;
+}
+
+function hasResponseKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+  nativeThreadId: string | null,
+): boolean {
+  if (hasExactKeys(value, expected)) return true;
+  return nativeThreadId !== null && value.native_thread_id === nativeThreadId
+    && hasExactKeys(value, [...expected, 'native_thread_id']);
+}
+
 function validFinalAnswerItemId(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 256 && value.trim() === value
     && value !== '.' && value !== '..' && !/[/\\\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(value);
@@ -48,13 +65,14 @@ export function parseCodexBridgeFinalAnswerResponse(
   expectedThreadId: string,
   expectedTurnId: string,
 ): CodexBridgeFinalAnswerResult {
+  const nativeThreadId = expectedNativeThreadId(expectedTargetId, expectedThreadId);
   if (!isRecord(payload) || payload.target_id !== expectedTargetId || payload.thread_id !== expectedThreadId
     || payload.turn_id !== expectedTurnId || typeof payload.status !== 'string') {
     return malformedDedicatedResponse();
   }
 
   if (payload.status === 'retrieved') {
-    if (!hasExactKeys(payload, ['target_id', 'thread_id', 'turn_id', 'status', 'source', 'item_id', 'text'])
+    if (!hasResponseKeys(payload, ['target_id', 'thread_id', 'turn_id', 'status', 'source', 'item_id', 'text'], nativeThreadId)
       || payload.source !== CODEX_BRIDGE_FINAL_ANSWER_SOURCE || !validFinalAnswerItemId(payload.item_id)
       || typeof payload.text !== 'string' || payload.text.trim().length === 0 || hasUnpairedSurrogate(payload.text)) {
       return malformedDedicatedResponse();
@@ -64,7 +82,7 @@ export function parseCodexBridgeFinalAnswerResponse(
   }
 
   if (!['pending', 'incomplete', 'unavailable'].includes(payload.status)
-    || !hasExactKeys(payload, ['target_id', 'thread_id', 'turn_id', 'status', 'reason'])
+    || !hasResponseKeys(payload, ['target_id', 'thread_id', 'turn_id', 'status', 'reason'], nativeThreadId)
     || !isCodexBridgeFinalAnswerReason(payload.reason)) {
     return malformedDedicatedResponse();
   }

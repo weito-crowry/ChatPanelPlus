@@ -84,6 +84,32 @@ test('advertised codex_final_answer returns confirmed exact text without request
   assert.deepEqual(callNames(requests), ['codex_final_answer']);
 });
 
+test('retrieved MCP response accepts Bridge native_thread_id for the exact remote thread', async () => {
+  const publicTargetId = 'notebook';
+  const publicThreadId = 'notebook::native-thread-7';
+  const { client, requests } = createClient({
+    onCall(name, args) {
+      assert.equal(name, 'codex_final_answer');
+      assert.deepEqual(args, { target_id: publicTargetId, thread_id: publicThreadId, turn_id: turnId });
+      return {
+        target_id: publicTargetId,
+        thread_id: publicThreadId,
+        turn_id: turnId,
+        status: 'retrieved',
+        item_id: 'item-final-7',
+        source,
+        text: 'exact final text from Bridge',
+        native_thread_id: 'native-thread-7',
+      };
+    },
+  });
+
+  assert.deepEqual(await client.readFinalAnswer(publicTargetId, publicThreadId, turnId), {
+    status: 'retrieved', text: 'exact final text from Bridge', completeness: 'confirmed',
+  });
+  assert.deepEqual(callNames(requests), ['codex_final_answer']);
+});
+
 test('dedicated response rejects identity, provenance, item, and shape mismatches without returning answer text', () => {
   const corrupt = [
     retrieved('secret answer', { target_id: 'other-target' }),
@@ -92,6 +118,8 @@ test('dedicated response rejects identity, provenance, item, and shape mismatche
     retrieved('secret answer', { source: 'codex_status.latest_agent_message' }),
     retrieved('secret answer', { item_id: '' }),
     retrieved('secret answer', { item_id: '../outside' }),
+    retrieved('secret answer', { native_thread_id: 'different-native-thread' }),
+    retrieved('secret answer', { native_thread_id: threadId, unexpected: true }),
     retrieved('\ud800'),
     retrieved('secret answer', { unexpected: true }),
   ];
@@ -107,7 +135,9 @@ test('dedicated answer accepts the UTF-16 boundary and rejects oversize or blank
   const accepted = parseCodexBridgeFinalAnswerResponse(retrieved(exactlyAtLimit), targetId, threadId, turnId);
   assert.deepEqual(accepted, { status: 'retrieved', text: exactlyAtLimit, completeness: 'confirmed' });
 
-  const tooLarge = parseCodexBridgeFinalAnswerResponse(retrieved(`${exactlyAtLimit}x`), targetId, threadId, turnId);
+  const tooLarge = parseCodexBridgeFinalAnswerResponse(
+    retrieved(`${exactlyAtLimit}x`, { native_thread_id: threadId }), targetId, threadId, turnId,
+  );
   assert.deepEqual(tooLarge, { status: 'incomplete', reason: 'text-too-large', completeness: 'unconfirmed' });
   assert.equal('text' in tooLarge, false);
   assert.deepEqual(parseCodexBridgeFinalAnswerResponse(retrieved(' \n\t '), targetId, threadId, turnId), {
@@ -136,6 +166,37 @@ test('pending, incomplete, and unavailable responses require safe reason and con
     target_id: targetId, thread_id: threadId, turn_id: turnId,
     status: 'pending', reason: 'turn_terminal_not_observed', text: 'must not escape',
   }, targetId, threadId, turnId), { status: 'failed', reason: 'protocol-error' });
+});
+
+test('matching native_thread_id is the only optional identity field on non-retrieved responses', () => {
+  for (const [status, reason] of [
+    ['pending', 'turn_terminal_not_observed'],
+    ['incomplete', 'terminal_status_conflict'],
+    ['unavailable', 'storage_unavailable'],
+  ] as const) {
+    const result = parseCodexBridgeFinalAnswerResponse({
+      target_id: targetId, thread_id: threadId, turn_id: turnId, status, reason, native_thread_id: threadId,
+    }, targetId, threadId, turnId);
+    assert.equal(result.status, status);
+    assert.equal('reason' in result && result.reason === reason, true);
+    assert.equal('text' in result, false);
+  }
+});
+
+test('mismatched remote native_thread_id is rejected against the public thread identity', () => {
+  const payload = {
+    target_id: 'notebook',
+    thread_id: 'notebook::native-thread-7',
+    turn_id: turnId,
+    status: 'retrieved',
+    source,
+    item_id: 'item-final-7',
+    text: 'must not escape',
+    native_thread_id: 'different-native-thread',
+  };
+  assert.deepEqual(parseCodexBridgeFinalAnswerResponse(payload, 'notebook', 'notebook::native-thread-7', turnId), {
+    status: 'failed', reason: 'protocol-error',
+  });
 });
 
 test('legacy history is used when the new tool is not advertised and remains unconfirmed', async () => {
@@ -198,6 +259,21 @@ test('storage unavailable, pending, incomplete, and corrupt dedicated responses 
     });
     const result = await client.readFinalAnswer(targetId, threadId, turnId);
     assert.equal(result.status, partial.status === 'unavailable' && partial.target_id ? 'failed' : partial.status);
+    assert.deepEqual(callNames(requests), ['codex_final_answer']);
+  }
+});
+
+test('corrupt retrieved identity or unknown fields do not fall back to history', async () => {
+  for (const partial of [
+    { status: 'retrieved', native_thread_id: 'different-native-thread' },
+    { status: 'retrieved', native_thread_id: threadId, unexpected: true },
+  ]) {
+    const { client, requests } = createClient({
+      onCall() { return retrieved('must not escape', partial); },
+    });
+    assert.deepEqual(await client.readFinalAnswer(targetId, threadId, turnId), {
+      status: 'failed', reason: 'protocol-error',
+    });
     assert.deepEqual(callNames(requests), ['codex_final_answer']);
   }
 });
