@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { CodexBridgeAutoWatchMatchResult } from '../src/content/codexbridge-auto-watch-completion.ts';
 import { harness as statisticsHarness, turn, FakeElement, FakeMutationObserver } from './conversation-statistics-controller-fixture.ts';
 
 const THREAD_A = '01a207cf-52ab-7900-a91d-3288982ab221';
 const THREAD_B = '01a207d0-12ab-7c00-a911-3288982ab222';
 const UNRELATED_UUID = '01a207d1-12ab-7c00-a911-3288982ab223';
 const notice = { conversationId: 'owner', turnKey: 'completed-turn', assistantMessageId: 'assistant-id' };
+
+function latestMutationObserver(): FakeMutationObserver | null {
+  return FakeMutationObserver.latest;
+}
 
 test('本文候補ではなくBridge running IDを正として照合し、無関係UUIDの数に影響されない', async () => {
   const api = await import('../src/content/codexbridge-auto-watch-completion.ts') as Record<string, unknown>;
@@ -66,12 +71,12 @@ test('句読点がBridge IDの末尾にもなる重複境界は曖昧として�
   });
 });
 
-test('Bridge候補の応答後に初めてDOMを読み、空候補なら本文を調べない', async () => {
+test('Bridge要求開始後にcontent内snapshotを取り、候補応答後だけID照合する', async () => {
   const api = await import('../src/content/codexbridge-auto-watch-completion.ts') as Record<string, unknown>;
   const matchAfterBridge = api.matchCompletedAnswerAfterBridgeCandidates as
     ((request: () => Promise<unknown>, getPage: () => unknown, targetId: string, conversationId: string,
       event: typeof notice) => Promise<unknown>) | undefined;
-  assert.equal(typeof matchAfterBridge, 'function', 'Bridge candidates must be fetched before reading the answer DOM');
+  assert.equal(typeof matchAfterBridge, 'function', 'Bridge lookup must begin before answer text is inspected');
   const h = statisticsHarness('/c/owner');
   h.document.root.append(turn(notice.turnKey, '質問', `ID ${THREAD_A}`, notice.assistantMessageId));
   const order: string[] = [];
@@ -84,7 +89,7 @@ test('Bridge候補の応答後に初めてDOMを読み、空候補なら本文�
     return { ok: true, data: { connectionId: 'connection-A', threadIds: [THREAD_A] } };
   }, () => page,
   'target-1', 'owner', notice);
-  assert.deepEqual(order, ['bridge-read', 'body-read']);
+  assert.deepEqual(order, ['bridge-read', 'body-read', 'body-read', 'body-read', 'body-read']);
   assert.deepEqual(matched, { status: 'ready', connectionId: 'connection-A', threadIds: [THREAD_A] });
 
   order.length = 0;
@@ -92,7 +97,7 @@ test('Bridge候補の応答後に初めてDOMを読み、空候補なら本文�
     order.push('bridge-read');
     return { ok: true, data: { connectionId: null, threadIds: [] } };
   }, () => page, 'target-1', 'owner', notice);
-  assert.deepEqual(order, ['bridge-read']);
+  assert.deepEqual(order, ['bridge-read', 'body-read']);
   assert.deepEqual(noCandidates, { status: 'skipped', reason: 'no-running-candidates' });
 });
 
@@ -134,25 +139,65 @@ test('Bridgeの異常reasonに識別子が混入した場合は診断コード�
   assert.equal(JSON.stringify(progress).includes(THREAD_A), false);
 });
 
-test('Bridge候補取得中に完了turn DOMが変化したら本文を照合しない', async () => {
+test('候補取得中の属性・非本文UI・同一semantic textの再描画は照合を妨げない', async () => {
   const api = await import('../src/content/codexbridge-auto-watch-completion.ts') as Record<string, unknown>;
   const matchAfterBridge = api.matchCompletedAnswerAfterBridgeCandidates as
     ((request: () => Promise<unknown>, getPage: () => unknown, targetId: string, conversationId: string,
       event: typeof notice) => Promise<unknown>) | undefined;
   assert.equal(typeof matchAfterBridge, 'function');
-  const h = statisticsHarness('/c/owner');
-  const completedTurn = turn(notice.turnKey, '質問', `ID ${THREAD_A}`, notice.assistantMessageId);
-  h.document.root.append(completedTurn);
-  FakeMutationObserver.latest = null;
-  const matched = await matchAfterBridge!(async () => {
-    FakeMutationObserver.latest?.notify(completedTurn, completedTurn);
-    return { ok: true, data: { connectionId: 'connection-A', threadIds: [THREAD_A] } };
-  }, () => ({ document: h.document, pathname: h.window.location.pathname, targetId: 'target-1', conversationId: 'owner' }),
-  'target-1', 'owner', notice);
-  assert.deepEqual(matched, { status: 'skipped', reason: 'dom-changed' });
+  for (const change of ['style', 'aria', 'answer-button', 'hover-toolbar', 'dil-controls', 'loading-layout', 'rerender', 'reparent'] as const) {
+    const h = statisticsHarness('/c/owner');
+    const completedTurn = turn(notice.turnKey, '質問', `ID ${THREAD_A}`, notice.assistantMessageId);
+    h.document.root.append(completedTurn);
+    const assistant = completedTurn.querySelectorAll('[data-chatgpt-selection-message-id]')[0]!;
+    const body = completedTurn.querySelectorAll('[data-dil-message-id]')[0]!;
+    let resolveCandidates!: (value: unknown) => void;
+    const candidates = new Promise<unknown>((resolve) => { resolveCandidates = resolve; });
+    FakeMutationObserver.latest = null;
+    const matching = matchAfterBridge!(() => candidates,
+      () => ({ document: h.document, pathname: h.window.location.pathname, targetId: 'target-1', conversationId: 'owner' }),
+      'target-1', 'owner', notice);
+    const observer = latestMutationObserver();
+    if (change === 'style') {
+      completedTurn.setAttribute('style', 'outline: 1px solid');
+      observer?.notify(completedTurn, completedTurn);
+    } else if (change === 'aria') {
+      assistant.setAttribute('aria-busy', 'false');
+      observer?.notify(assistant, assistant);
+    } else if (change === 'answer-button') {
+      const button = new FakeElement('button', {}, 'コピー');
+      body.append(button);
+      observer?.notify(body, button);
+    } else if (change === 'hover-toolbar') {
+      const toolbar = new FakeElement('div', { role: 'toolbar' });
+      toolbar.append(new FakeElement('button', {}, '操作'));
+      assistant.append(toolbar);
+      observer?.notify(assistant, toolbar);
+    } else if (change === 'dil-controls') {
+      const control = new FakeElement('button', { 'aria-label': 'copy' }, 'Copy');
+      body.append(control);
+      observer?.notify(body, control);
+    } else if (change === 'loading-layout') {
+      const status = new FakeElement('div', { 'data-testid': 'response-status' }, 'Response ready');
+      assistant.append(status);
+      observer?.notify(assistant, status);
+    } else if (change === 'reparent') {
+      const holder = new FakeElement('section');
+      h.document.root.append(holder);
+      completedTurn.remove();
+      holder.append(completedTurn);
+      observer?.notify(h.document.root, holder, [completedTurn]);
+    } else {
+      body.replaceChildren(new FakeElement('p', {}, `ID ${THREAD_A}`));
+      observer?.notify(body, body.children[0]!);
+    }
+    resolveCandidates({ ok: true, data: { connectionId: 'connection-A', threadIds: [THREAD_A, THREAD_B] } });
+    assert.deepEqual(await matching,
+      { status: 'ready', connectionId: 'connection-A', threadIds: [THREAD_A] }, change);
+  }
 });
 
-test('候補取得待ちのmain配下にある無関係な属性・子要素・テキスト変更は本文照合を妨げない', async () => {
+test('候補取得待ちのmain配下にある無関係な属性・子要素・テキスト変更は照合を妨げない', async () => {
   const api = await import('../src/content/codexbridge-auto-watch-completion.ts') as Record<string, unknown>;
   const matchAfterBridge = api.matchCompletedAnswerAfterBridgeCandidates as
     ((request: () => Promise<unknown>, getPage: () => unknown, targetId: string, conversationId: string,
@@ -161,62 +206,144 @@ test('候補取得待ちのmain配下にある無関係な属性・子要素・�
   const h = statisticsHarness('/c/owner');
   const completedTurn = turn(notice.turnKey, '質問', `ID ${THREAD_A}`, notice.assistantMessageId);
   h.document.root.append(completedTurn);
-  FakeMutationObserver.latest = null;
   const matched = await matchAfterBridge!(async () => {
-    FakeMutationObserver.latest?.queueRecords(
-      { type: 'attributes', target: h.document.root, addedNodes: [], removedNodes: [] } as unknown as MutationRecord,
-      { type: 'childList', target: h.document.root, addedNodes: [new FakeElement('div', { 'data-testid': 'react-ui' })], removedNodes: [] } as unknown as MutationRecord,
-      { type: 'characterData', target: new FakeElement('div', {}, 'React UI text'), addedNodes: [], removedNodes: [] } as unknown as MutationRecord,
-    );
+    h.document.root.setAttribute('aria-label', 'main updated');
+    h.document.root.append(new FakeElement('div', { 'data-testid': 'react-ui' }, 'React UI text'));
     return { ok: true, data: { connectionId: 'connection-A', threadIds: [THREAD_A] } };
   }, () => ({ document: h.document, pathname: h.window.location.pathname, targetId: 'target-1', conversationId: 'owner' }),
   'target-1', 'owner', notice);
   assert.deepEqual(matched, { status: 'ready', connectionId: 'connection-A', threadIds: [THREAD_A] });
 });
 
-test('回答turnの本文変更・移動・削除・同一key置換・main置換は候補取得待ちでも拒否する', async () => {
+test('候補取得中の本文差分・assistant identity/state変更・turn/root変更は拒否する', async () => {
   const api = await import('../src/content/codexbridge-auto-watch-completion.ts') as Record<string, unknown>;
   const matchAfterBridge = api.matchCompletedAnswerAfterBridgeCandidates as
     ((request: () => Promise<unknown>, getPage: () => unknown, targetId: string, conversationId: string,
       event: typeof notice) => Promise<unknown>) | undefined;
   assert.equal(typeof matchAfterBridge, 'function');
 
-  for (const change of ['text', 'move', 'remove', 'replace', 'root'] as const) {
+  for (const change of ['text', 'clear', 'message-id', 'in-progress', 'move-out', 'remove', 'replace', 'root'] as const) {
     const h = statisticsHarness('/c/owner');
     const completedTurn = turn(notice.turnKey, '質問', `ID ${THREAD_A}`, notice.assistantMessageId);
     h.document.root.append(completedTurn);
     FakeMutationObserver.latest = null;
-    const matched = await matchAfterBridge!(async () => {
-      const observer = FakeMutationObserver.latest!;
-      if (change === 'text') {
-        const body = completedTurn.querySelectorAll('[data-dil-message-id]')[0]!;
-        body.text = `ID ${THREAD_B}`;
-        observer.queueRecords({ type: 'characterData', target: body, addedNodes: [], removedNodes: [] } as unknown as MutationRecord);
-      } else if (change === 'remove') {
-        completedTurn.remove();
-        observer.queueRecords({ type: 'childList', target: h.document.root, addedNodes: [], removedNodes: [completedTurn] } as unknown as MutationRecord);
-      } else if (change === 'move') {
-        const holder = new FakeElement('section');
-        h.document.root.append(holder);
-        completedTurn.remove();
-        holder.append(completedTurn);
-        observer.queueRecords({ type: 'childList', target: h.document.root, addedNodes: [holder], removedNodes: [completedTurn] } as unknown as MutationRecord);
-      } else if (change === 'replace') {
-        const replacement = turn(notice.turnKey, '質問', `ID ${THREAD_A}`, notice.assistantMessageId);
-        completedTurn.remove();
-        h.document.root.append(replacement);
-        observer.queueRecords({ type: 'childList', target: h.document.root, addedNodes: [replacement], removedNodes: [completedTurn] } as unknown as MutationRecord);
-      } else {
-        const replacementRoot = new FakeElement('main');
-        replacementRoot.append(turn(notice.turnKey, '質問', `ID ${THREAD_A}`, notice.assistantMessageId));
-        replacementRoot.setOwnerDocument(h.document);
-        h.document.root = replacementRoot;
-      }
-      return { ok: true, data: { connectionId: 'connection-A', threadIds: [THREAD_A, THREAD_B] } };
-    }, () => ({ document: h.document, pathname: h.window.location.pathname, targetId: 'target-1', conversationId: 'owner' }),
-    'target-1', 'owner', notice);
-    assert.deepEqual(matched, { status: 'skipped', reason: 'dom-changed' }, change);
+    let resolveCandidates!: (value: unknown) => void;
+    const candidates = new Promise<unknown>((resolve) => { resolveCandidates = resolve; });
+    const matching = matchAfterBridge!(() => candidates,
+      () => ({ document: h.document, pathname: h.window.location.pathname, targetId: 'target-1', conversationId: 'owner' }),
+      'target-1', 'owner', notice);
+    const body = completedTurn.querySelectorAll('[data-dil-message-id]')[0]!;
+    const assistant = completedTurn.querySelectorAll('[data-chatgpt-selection-message-id]')[0]!;
+    if (change === 'text') {
+      body.text = `ID ${THREAD_B}`;
+      latestMutationObserver()?.notify(body, body);
+    } else if (change === 'clear') {
+      body.text = '';
+      latestMutationObserver()?.notify(body, body);
+    } else if (change === 'message-id') {
+      assistant.setAttribute('data-chatgpt-selection-message-id', 'replacement-assistant');
+      body.setAttribute('data-dil-message-id', 'replacement-assistant');
+      latestMutationObserver()?.notify(assistant, assistant);
+    } else if (change === 'in-progress') {
+      completedTurn.querySelectorAll('[data-talvt-turn-state]')[0]!.setAttribute('data-talvt-turn-state', 'in_progress');
+      latestMutationObserver()?.notify(completedTurn, completedTurn);
+    } else if (change === 'remove') {
+      completedTurn.remove();
+      latestMutationObserver()?.notify(h.document.root, completedTurn);
+    } else if (change === 'move-out') {
+      const holder = new FakeElement('section');
+      completedTurn.remove();
+      holder.append(completedTurn);
+      latestMutationObserver()?.notify(h.document.root, holder, [completedTurn]);
+    } else if (change === 'replace') {
+      const replacement = turn(notice.turnKey, '質問', `ID ${THREAD_A}`, notice.assistantMessageId);
+      completedTurn.remove();
+      h.document.root.append(replacement);
+      latestMutationObserver()?.notify(h.document.root, replacement, [completedTurn]);
+    } else {
+      const replacementRoot = new FakeElement('main');
+      replacementRoot.append(turn(notice.turnKey, '質問', `ID ${THREAD_A}`, notice.assistantMessageId));
+      replacementRoot.setOwnerDocument(h.document);
+      h.document.root = replacementRoot;
+    }
+    resolveCandidates({ ok: true, data: { connectionId: 'connection-A', threadIds: [THREAD_A, THREAD_B] } });
+    const matched = await matching as CodexBridgeAutoWatchMatchResult;
+    assert.equal(matched.status, 'skipped', change);
+    if (matched.status !== 'skipped') assert.fail(`Expected a skip for ${change}`);
+    assert.ok(matched.reason === 'dom-changed' || matched.reason === 'answer-not-confirmed', change);
   }
+});
+
+test('候補応答後の本文読み取り中に別IDへ変わった場合は照合を拒否する', async () => {
+  const api = await import('../src/content/codexbridge-auto-watch-completion.ts') as Record<string, unknown>;
+  const matchAfterBridge = api.matchCompletedAnswerAfterBridgeCandidates as
+    ((request: () => Promise<unknown>, getPage: () => unknown, targetId: string, conversationId: string,
+      event: typeof notice) => Promise<unknown>) | undefined;
+  assert.equal(typeof matchAfterBridge, 'function');
+  const h = statisticsHarness('/c/owner');
+  const completedTurn = turn(notice.turnKey, '質問', `ID ${THREAD_A}`, notice.assistantMessageId);
+  h.document.root.append(completedTurn);
+  const body = completedTurn.querySelectorAll('[data-dil-message-id]')[0]!;
+  const cloneBody = body.cloneNode.bind(body);
+  let reads = 0;
+  body.cloneNode = (deep = false) => {
+    const clone = cloneBody(deep);
+    if (reads++ === 2) clone.text = `ID ${THREAD_B}`;
+    return clone;
+  };
+  const matched = await matchAfterBridge!(async () => ({
+    ok: true, data: { connectionId: 'connection-A', threadIds: [THREAD_A, THREAD_B] },
+  }), () => ({ document: h.document, pathname: h.window.location.pathname, targetId: 'target-1', conversationId: 'owner' }),
+  'target-1', 'owner', notice);
+  assert.deepEqual(matched, { status: 'skipped', reason: 'dom-changed' });
+  assert.equal(reads >= 3, true);
+});
+
+test('Bridge照会後のSPA会話route変更では本文を照合しない', async () => {
+  const api = await import('../src/content/codexbridge-auto-watch-completion.ts') as Record<string, unknown>;
+  const matchAfterBridge = api.matchCompletedAnswerAfterBridgeCandidates as
+    ((request: () => Promise<unknown>, getPage: () => unknown, targetId: string, conversationId: string,
+      event: typeof notice) => Promise<unknown>) | undefined;
+  assert.equal(typeof matchAfterBridge, 'function');
+  const h = statisticsHarness('/c/owner');
+  h.document.root.append(turn(notice.turnKey, '質問', `ID ${THREAD_A}`, notice.assistantMessageId));
+  const order: string[] = [];
+  const answerBody = h.document.root.querySelectorAll('[data-dil-message-id]')[0]!;
+  const cloneAnswerBody = answerBody.cloneNode.bind(answerBody);
+  answerBody.cloneNode = (deep = false) => { order.push('body-read'); return cloneAnswerBody(deep); };
+  const matched = await matchAfterBridge!(async () => {
+    order.push('bridge-read');
+    h.window.location.pathname = '/c/other';
+    return { ok: true, data: { connectionId: 'connection-A', threadIds: [THREAD_A] } };
+  }, () => ({ document: h.document, pathname: h.window.location.pathname, targetId: 'target-1',
+    conversationId: h.window.location.pathname === '/c/owner' ? 'owner' : 'other' }),
+  'target-1', 'owner', notice);
+  assert.deepEqual(order, ['bridge-read']);
+  assert.deepEqual(matched, { status: 'skipped', reason: 'invalid-route' });
+});
+
+test('Bridge要求を先行し、本文snapshot後に候補応答・安定化読み取りを行う', async () => {
+  const api = await import('../src/content/codexbridge-auto-watch-completion.ts') as Record<string, unknown>;
+  const matchAfterBridge = api.matchCompletedAnswerAfterBridgeCandidates as
+    ((request: () => Promise<unknown>, getPage: () => unknown, targetId: string, conversationId: string,
+      event: typeof notice) => Promise<unknown>) | undefined;
+  assert.equal(typeof matchAfterBridge, 'function');
+  const h = statisticsHarness('/c/owner');
+  h.document.root.append(turn(notice.turnKey, '質問', `ID ${THREAD_A}`, notice.assistantMessageId));
+  const order: string[] = [];
+  const answerBody = h.document.root.querySelectorAll('[data-dil-message-id]')[0]!;
+  const cloneAnswerBody = answerBody.cloneNode.bind(answerBody);
+  answerBody.cloneNode = (deep = false) => { order.push('body-read'); return cloneAnswerBody(deep); };
+  let resolveCandidates!: (value: unknown) => void;
+  const candidates = new Promise<unknown>((resolve) => { resolveCandidates = resolve; });
+  const matching = matchAfterBridge!(() => { order.push('bridge-request'); return candidates; },
+    () => ({ document: h.document, pathname: h.window.location.pathname, targetId: 'target-1', conversationId: 'owner' }),
+    'target-1', 'owner', notice);
+  assert.deepEqual(order, ['bridge-request', 'body-read']);
+  resolveCandidates({ ok: true, data: { connectionId: 'connection-A', threadIds: [THREAD_A, THREAD_B] } });
+  assert.deepEqual(await matching,
+    { status: 'ready', connectionId: 'connection-A', threadIds: [THREAD_A] });
+  assert.deepEqual(order, ['bridge-request', 'body-read', 'body-read', 'body-read', 'body-read']);
 });
 
 test('回答本文のcode要素内にある完全一致IDも取得する', async () => {

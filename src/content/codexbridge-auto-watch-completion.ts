@@ -63,7 +63,11 @@ export type CodexBridgeAutoWatchDomContext = Readonly<{
 type CompletionListener = (notice: CodexBridgeAutoWatchCompletionNotice) => void;
 type CompletionCheckListener = (check: CodexBridgeAutoWatchCompletionCheck) => void;
 type CandidateSet = Readonly<{ connectionId: string | null; threadIds: readonly string[] }>;
-type CompletedTurnDomGuard = Readonly<{ root: Element; turn: Element; changed: () => boolean; dispose: () => void }>;
+type CompletedTurnDomGuard = Readonly<{
+  root: Element;
+  turn: Element;
+  isCurrent: (page: CodexBridgeAutoWatchDomContext, turnKey: string) => boolean;
+}>;
 const listeners = new Set<CompletionListener>();
 const completionCheckListeners = new Set<CompletionCheckListener>();
 const recentCompletionKeys = new Set<string>();
@@ -86,14 +90,6 @@ export function publishCodexBridgeAutoWatchCompletionCheck(
 export function subscribeCodexBridgeAutoWatchCompletionCheck(listener: CompletionCheckListener): () => void {
   completionCheckListeners.add(listener);
   return () => completionCheckListeners.delete(listener);
-}
-
-function mutationAffectsTurn(turn: Element, record: MutationRecord): boolean {
-  if (turn.contains(record.target)) return true;
-  for (const node of [...record.addedNodes, ...record.removedNodes]) {
-    if (node === turn || turn.contains(node) || node.contains(turn)) return true;
-  }
-  return false;
 }
 
 function validCompletionIdentity(event: AnswerCompletionEvent, conversationId: string | null): boolean {
@@ -192,21 +188,27 @@ function createCompletedTurnDomGuard(page: CodexBridgeAutoWatchDomContext, turnK
   if (!root) return null;
   const turn = findUniqueTurnElement(root, turnKey);
   if (!turn) return null;
-  const Observer = page.document.defaultView?.MutationObserver ?? globalThis.MutationObserver;
-  if (typeof Observer !== 'function') return null;
-  let didChange = false;
-  const observer = new Observer((records) => {
-    if (records.some((record) => mutationAffectsTurn(turn, record))) didChange = true;
-  });
-  observer.observe(root, { attributes: true, childList: true, characterData: true, subtree: true });
   return {
-    root, turn,
-    changed: () => {
-      if (observer.takeRecords?.().some((record) => mutationAffectsTurn(turn, record))) didChange = true;
-      return didChange;
-    },
-    dispose: () => observer.disconnect(),
+    root,
+    turn,
+    isCurrent: (currentPage, expectedTurnKey) => currentPage.document === page.document
+      && currentPage.pathname === page.pathname
+      && currentPage.targetId === page.targetId
+      && currentPage.conversationId === page.conversationId
+      && currentPage.document.querySelector('main') === root
+      && turn.isConnected
+      && findUniqueTurnElement(root, expectedTurnKey) === turn,
   };
+}
+
+function isExpectedCompletionPage(page: CodexBridgeAutoWatchDomContext | null, targetId: string,
+  conversationId: string, pathname: string): page is CodexBridgeAutoWatchDomContext {
+  return Boolean(page && page.targetId === targetId && page.conversationId === conversationId
+    && page.pathname === pathname && conversationIdFromPath(page.pathname) === conversationId);
+}
+
+function waitForAnswerStability(): Promise<void> {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, 0));
 }
 
 function charBefore(text: string, index: number): string {
@@ -307,6 +309,11 @@ export async function matchCompletedAnswerAfterBridgeCandidates(
   event: AnswerCompletionEvent,
   onProgress?: (progress: CodexBridgeAutoWatchCompletionProgress) => void,
 ): Promise<CodexBridgeAutoWatchMatchResult> {
+  type SkipReason = Extract<CodexBridgeAutoWatchMatchResult, { status: 'skipped' }>['reason'];
+  const skip = (reason: SkipReason): CodexBridgeAutoWatchMatchResult => {
+    reportProgress(onProgress, { stage: 'match', status: 'skipped', reason });
+    return { status: 'skipped', reason };
+  };
   if (!isCodexBridgeWatchIdentifier(targetId) || targetId.length > 512 || !isConversationId(conversationId)
     || !validCompletionIdentity(event, conversationId)) {
     reportProgress(onProgress, { stage: 'candidates', status: 'skipped', reason: 'invalid-route' });
@@ -319,71 +326,69 @@ export async function matchCompletedAnswerAfterBridgeCandidates(
     return { status: 'skipped', reason: 'invalid-route' };
   }
   const guard = createCompletedTurnDomGuard(initialPage, event.turnKey);
-  try {
-    let response: unknown;
-    try { response = await requestCandidates(); } catch {
-      reportProgress(onProgress, { stage: 'candidates', status: 'failed', reason: 'runtime-unavailable' });
-      return { status: 'failed', reason: 'runtime-unavailable' };
-    }
-    const candidates = parseCandidateResponse(response);
-    if (typeof candidates === 'object' && candidates !== null && 'failed' in candidates) {
-      reportProgress(onProgress, { stage: 'candidates', status: 'failed', reason: candidates.failed });
-      return { status: 'failed', reason: candidates.failed };
-    }
-    if (!candidates) {
-      reportProgress(onProgress, { stage: 'candidates', status: 'failed', reason: 'candidate-response-invalid' });
-      return { status: 'skipped', reason: 'candidate-response-invalid' };
-    }
-    reportProgress(onProgress, { stage: 'candidates', status: 'ok', count: candidates.threadIds.length });
-    if (!candidates.connectionId || !candidates.threadIds.length) {
-      reportProgress(onProgress, { stage: 'match', status: 'skipped', reason: 'no-running-candidates' });
-      return { status: 'skipped', reason: 'no-running-candidates' };
-    }
-    const page = getCurrentPage();
-    if (!page || page.targetId !== targetId || page.conversationId !== conversationId
-      || conversationIdFromPath(page.pathname) !== conversationId) {
-      reportProgress(onProgress, { stage: 'match', status: 'skipped', reason: 'invalid-route' });
-      return { status: 'skipped', reason: 'invalid-route' };
-    }
-    if (!guard) {
-      reportProgress(onProgress, { stage: 'match', status: 'skipped', reason: 'dom-unavailable' });
-      return { status: 'skipped', reason: 'dom-unavailable' };
-    }
-    const root = page.document.querySelector('main');
-    if (!root) {
-      reportProgress(onProgress, { stage: 'match', status: 'skipped', reason: 'dom-unavailable' });
-      return { status: 'skipped', reason: 'dom-unavailable' };
-    }
-    if (guard.changed() || root !== guard.root || !guard.turn.isConnected
-      || findUniqueTurnElement(root, event.turnKey) !== guard.turn) {
-      reportProgress(onProgress, { stage: 'match', status: 'skipped', reason: 'dom-changed' });
-      return { status: 'skipped', reason: 'dom-changed' };
-    }
-    const text = readCompletedAssistantMessageText(guard.turn, event.assistantMessageId);
-    if (text === null) {
-      reportProgress(onProgress, { stage: 'match', status: 'skipped', reason: 'answer-not-confirmed' });
-      return { status: 'skipped', reason: 'answer-not-confirmed' };
-    }
-    if (text.length > MAX_ANSWER_TEXT_CODE_UNITS) {
-      reportProgress(onProgress, { stage: 'match', status: 'skipped', reason: 'answer-too-large' });
-      return { status: 'skipped', reason: 'answer-too-large' };
-    }
-    const matched = matchKnownBridgeRunningThreadIds(text, targetId, candidates.threadIds);
-    if (matched.status === 'skipped') {
-      reportProgress(onProgress, { stage: 'match', status: 'skipped', reason: matched.reason });
-      return matched;
-    }
-    if (!matched.threadIds.length) {
-      reportProgress(onProgress, { stage: 'match', status: 'skipped', reason: 'no-matching-ids' });
-      return { status: 'skipped', reason: 'no-matching-ids' };
-    }
-    if (guard.changed()) {
-      reportProgress(onProgress, { stage: 'match', status: 'skipped', reason: 'dom-changed' });
-      return { status: 'skipped', reason: 'dom-changed' };
-    }
-    reportProgress(onProgress, { stage: 'match', status: 'ok', count: matched.threadIds.length });
-    return { status: 'ready', connectionId: candidates.connectionId, threadIds: matched.threadIds };
-  } finally {
-    guard?.dispose();
+  let candidateRequest: Promise<unknown>;
+  try { candidateRequest = requestCandidates(); } catch {
+    reportProgress(onProgress, { stage: 'candidates', status: 'failed', reason: 'runtime-unavailable' });
+    return { status: 'failed', reason: 'runtime-unavailable' };
   }
+  let completionTextSnapshot: string | null = null;
+  const snapshotPage = getCurrentPage();
+  if (guard && isExpectedCompletionPage(snapshotPage, targetId, conversationId, initialPage.pathname)
+    && guard.isCurrent(snapshotPage, event.turnKey)) {
+    completionTextSnapshot = readCompletedAssistantMessageText(guard.turn, event.assistantMessageId);
+  }
+  let response: unknown;
+  try { response = await candidateRequest; } catch {
+    reportProgress(onProgress, { stage: 'candidates', status: 'failed', reason: 'runtime-unavailable' });
+    return { status: 'failed', reason: 'runtime-unavailable' };
+  }
+  const candidates = parseCandidateResponse(response);
+  if (typeof candidates === 'object' && candidates !== null && 'failed' in candidates) {
+    reportProgress(onProgress, { stage: 'candidates', status: 'failed', reason: candidates.failed });
+    return { status: 'failed', reason: candidates.failed };
+  }
+  if (!candidates) {
+    reportProgress(onProgress, { stage: 'candidates', status: 'failed', reason: 'candidate-response-invalid' });
+    return { status: 'skipped', reason: 'candidate-response-invalid' };
+  }
+  reportProgress(onProgress, { stage: 'candidates', status: 'ok', count: candidates.threadIds.length });
+  if (!candidates.connectionId || !candidates.threadIds.length) return skip('no-running-candidates');
+
+  let page = getCurrentPage();
+  if (!isExpectedCompletionPage(page, targetId, conversationId, initialPage.pathname)) return skip('invalid-route');
+  if (!guard) return skip('dom-unavailable');
+  if (!guard.isCurrent(page, event.turnKey)) return skip('dom-changed');
+  if (completionTextSnapshot === null) return skip('answer-not-confirmed');
+  if (completionTextSnapshot.length > MAX_ANSWER_TEXT_CODE_UNITS) return skip('answer-too-large');
+
+  const text = readCompletedAssistantMessageText(guard.turn, event.assistantMessageId);
+  if (text === null) return skip('answer-not-confirmed');
+  if (text.length > MAX_ANSWER_TEXT_CODE_UNITS) return skip('answer-too-large');
+  if (text !== completionTextSnapshot) return skip('dom-changed');
+
+  await waitForAnswerStability();
+  page = getCurrentPage();
+  if (!isExpectedCompletionPage(page, targetId, conversationId, initialPage.pathname)) return skip('invalid-route');
+  if (!guard.isCurrent(page, event.turnKey)) return skip('dom-changed');
+  const stableText = readCompletedAssistantMessageText(guard.turn, event.assistantMessageId);
+  if (stableText === null) return skip('answer-not-confirmed');
+  if (stableText.length > MAX_ANSWER_TEXT_CODE_UNITS) return skip('answer-too-large');
+  if (stableText !== completionTextSnapshot || stableText !== text) return skip('dom-changed');
+
+  const matched = matchKnownBridgeRunningThreadIds(stableText, targetId, candidates.threadIds);
+  if (matched.status === 'skipped') {
+    reportProgress(onProgress, { stage: 'match', status: 'skipped', reason: matched.reason });
+    return matched;
+  }
+  if (!matched.threadIds.length) return skip('no-matching-ids');
+
+  page = getCurrentPage();
+  if (!isExpectedCompletionPage(page, targetId, conversationId, initialPage.pathname)) return skip('invalid-route');
+  if (!guard.isCurrent(page, event.turnKey)) return skip('dom-changed');
+  const finalText = readCompletedAssistantMessageText(guard.turn, event.assistantMessageId);
+  if (finalText === null) return skip('answer-not-confirmed');
+  if (finalText !== completionTextSnapshot || finalText !== stableText) return skip('dom-changed');
+
+  reportProgress(onProgress, { stage: 'match', status: 'ok', count: matched.threadIds.length });
+  return { status: 'ready', connectionId: candidates.connectionId, threadIds: matched.threadIds };
 }

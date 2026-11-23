@@ -52,6 +52,8 @@ export class FakeElement extends FakeEventTarget {
   checkVisibility(): boolean { return true; }
   getAttribute(name: string): string | null { return this.attributes[name] ?? null; }
   hasAttribute(name: string): boolean { return name in this.attributes; }
+  setAttribute(name: string, value: string): void { this.attributes[name] = value; }
+  removeAttribute(name: string): void { delete this.attributes[name]; }
   append(...children: FakeElement[]): void {
     for (const child of children) {
       child.parentElement = this;
@@ -59,6 +61,12 @@ export class FakeElement extends FakeEventTarget {
       child.setOwnerDocument(this.ownerDocument);
       this.children.push(child);
     }
+  }
+  replaceChildren(...children: FakeElement[]): void {
+    this.children.forEach((child) => { child.parentElement = null; child.isConnected = false; });
+    this.children.length = 0;
+    this.text = '';
+    this.append(...children);
   }
   setOwnerDocument(ownerDocument: EventTarget | null): void {
     this.ownerDocument = ownerDocument;

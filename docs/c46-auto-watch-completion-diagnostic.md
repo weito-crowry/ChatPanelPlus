@@ -1,24 +1,23 @@
 # C46 回答完了時の自動監視登録: 追加調査と次回受入
 
-## 実機で確認された事実
+## 2026-11-24 08:09:15 JST 実機で確認された失敗
 
-以下はユーザー提示の画面・説明に基づく。今回のcheckoutから実機状態を再取得したものではない。
+以下はユーザー提示のスクリーンショットと説明に基づく。今回のcheckoutからChromeやBridgeの状態を読み直したものではない。
 
-- A欄の2件は、ユーザーが「スレッド一覧を更新」ボタンを手動で押した後に表示された。自動更新の証拠にはしない。
-- B欄の回答完了時自動監視登録は0件だった。
-- Bridge側では対象 `01a20a77-f05a-71e1-bd3a-c90cf6ace7d5` と対照スレッドの2件が `live/in_progress` と確認されていた。
-- 完了済みChatGPT回答本文には対象IDが書かれていた。
-- ユーザーはChromeで `cfe2c00` を再読み込み済み。
+- イベントは「検出」、Bridge候補取得は「OK・2件」、本文照合は「スキップ（dom-changed）」、監視登録は「未実行」だった。
+- B監視は0件、自動登録はONだった。Bridge側では対象と対照の2件が`live/in_progress`だった。
 
-受入対象は「回答完了 → Bridge実行中ID取得 → 当該回答本文との照合 → 一致IDだけ監視登録」。今回もこの失敗が起きたが、個々の境界を実機で計測していないため、原因は確定していない。
+候補取得成功の後、本文照合に入る前のguardが中断した位置まで特定できる。スクリーンショットから実際のmutation種別までは判定できないため、特定の属性・装飾変更が起きたとは記録しない。
 
-## ソース調査と確定した不具合
+## ソース調査と確定した原因
 
-`createCompletedTurnDomGuard()` は `main` 全体の属性・子要素・文字変更を監視している。MutationObserver callbackは変更が完了turnに関係するかを確認するが、`changed()` が `takeRecords()` の戻り件数だけで `dom-changed` にしていた。そのため、Bridge候補待ちの間にChatGPT UIなどmain内の別要素が変わった場合も回答本文照合を中止し得る。
+`createCompletedTurnDomGuard()` は`main`内を監視し、`mutationAffectsTurn()`がmutation targetを対象turn内と判定すると変更済みにしていた。回答turn内の`style`/`aria`など属性、回答本文外のボタン・toolbar・状態UIの追加、本文DOMの同一内容再描画も同じ扱いになる。候補取得後は本文を読む前に`guard.changed()`を確認するため、意味的な本文変更がない場合も`dom-changed`で照合を中断していた。08:09:15の「候補OK 2件 → dom-changed → 登録未実行」はこの分岐と一致する。
 
-候補待ちにmain配下の無関係な属性・子要素・テキストレコードをキューイングする失敗テストを追加し、修正前は `dom-changed`、修正後は一致IDのみ `ready` になることを確認した。callbackと `takeRecords()` は同じturn関連判定を使う。turn本文変更、turnの移動・削除・同じkeyでの置換、main置換は引き続き拒否する。
+main直下など対象turn外の変更を除外する修正はcommit `12b82ea965180a940cb5d3c8785fa23380d8ac13`で済んでいる。今回の原因は、その後も残っていた「対象turn内部ならすべて変更扱い」の判定である。
 
-このコード不具合は確認できたが、C46実機FAILで実際にこの経路が発生したかは未確認である。
+修正ではMutationObserverのdirty判定に本文照合可否を委ねず、同じdocument/route/owner、main root、unique turnKeyと同一turn要素を再確認する。Bridge候補要求を先に開始し、本文はcontent内だけで一時snapshotする。Bridge候補応答後に対象assistant message IDと`complete`状態を各読み取りで再検証し、可視本文を読み直してsnapshotと比較する。短い1 taskの安定化後にも同じ内容であることを確認してからBridge候補IDと完全一致token照合し、照合後にもidentityと本文を再確認する。属性・装飾・非本文UI変更、同じmain内のturn再配置と同一semantic textの子要素再描画は通し、本文差分、assistant ID/state不一致、route/root/turn差し替えは拒否する。
+
+本文のUUIDを候補として抽出しない。本文snapshotはcontent内の一時値で、background・診断・storage・ログには渡さない。
 
 ## 他の境界のレビュー
 
@@ -27,7 +26,7 @@
 | 回答完了tracker | 既存の統計MutationObserverがturn identityを読み、`AnswerCompletionTracker` がin-progressからcompleteへの遷移を通知する。音声通知とは別経路。 | 遷移前のin-progressを観測していない場合はイベント未検出となる。診断に `no-active-cycle` または `assistant-message-unavailable` が出る。 |
 | 完了イベント購読 | 有効なconversation routeとイベントidentityを検査して同期listenerへ通知。Bの自動監視controlはeffectで購読する。 | 診断でイベント検出後、候補取得が未実行または待機中なら、この境界とruntime応答を確認する。 |
 | Bridge候補取得 | content scriptのruntime messageをbackgroundが拡張ID、tab、frame 0、ChatGPT origin/routeで検証する。候補取得はowner・ON設定・connection・live executionを再確認する。 | 診断の候補取得失敗コードにowner・接続・runtime経路が出る。 |
-| 回答本文取得 | 候補応答後、対象turn/message IDに結び付いた完了assistant本文だけを読む。hidden領域やボタンは除外し、本文内code要素の文字も読む。 | `answer-not-confirmed`、`dom-changed`、`no-matching-ids` 等で理由を区別する。 |
+| 回答本文取得 | 完了した対象turn/message IDに結び付いた可視assistant本文だけを読む。hidden領域やbutton/toolbarを除外し、本文内code要素の文字も読む。Bridge応答後にsemantic snapshotとの一致と短い安定性を確かめる。 | 本文差分やidentity不一致は`dom-changed`/`answer-not-confirmed`、候補不一致は`no-matching-ids`で理由を区別する。 |
 | 監視登録 | backgroundがsender由来owner、owner tab、connection、最新live executionを再検証し、候補一致分だけ登録する。応答は新規登録件数を返す。 | 診断の登録件数と理由コード、既存B欄の状態を確認する。0件だけでbackground到達失敗とは断定しない。 |
 
 ## 診断表示とデータ範囲
@@ -40,8 +39,8 @@ B欄の「直近の回答完了時照合」を折りたたみ技術情報とし�
 
 1. 今回の `pnpm build` 完了後、ユーザーがChromeの登録済み `D:\weito\Documents\src\codexapp\ChatPanelPlus\dist` を再読み込みし、ChatGPTページをF5する。
 2. 対象conversationのB欄で自動監視登録がON、対象マシンとownerが現在の会話であることを確認する。
-3. A欄の手動更新を押さずに、Bridge側で対象と対照の2スレッドがlive/in_progressの状態で、完了回答に対象IDを含める。
-4. B欄の「直近の回答完了時照合」を開き、時刻、イベント、候補取得、本文照合、監視登録の表示をスクリーンショットで共有する。診断にはIDや回答本文は表示されない。
+3. A欄の手動更新を押さずに、Bridge側で対象と対照の2スレッドがlive/in_progressの状態にし、完了回答本文には対象IDだけを完全一致で含める。
+4. B欄の「直近の回答完了時照合」を開き、候補2件・本文一致1件・監視登録1件、B監視が0から1件になること、対照候補が登録されないことを確認する。時刻、イベント、候補取得、本文照合、監視登録の画面を記録する。診断にはIDや回答本文は表示されない。
 5. 結果を次のように分類する。
    - イベント未検出: trackerの完了遷移検出を調べる。
    - 候補取得失敗: 表示されたowner/runtime/connection理由を調べる。
@@ -53,10 +52,10 @@ Chrome実機での今回の修正受入はまだ行っていない。A欄の手�
 
 ## 自動検証
 
-- `pnpm test`: PASS、753 tests。コマンド内の全buildも成功。
+- `pnpm test`: PASS、756/756 tests。コマンド内の全buildも成功。C46 bridge-first 16件、登録連携20件を含む。
 - `pnpm typecheck`: PASS。
 - `pnpm lint`: PASS。
 - `pnpm check:size`: PASS、269 filesを検査。
 - `pnpm build`: PASS、Options・Content Script・Service Worker・Offscreenをこのcheckoutの`dist/`へ生成。
-- `git diff --check`: PASS。commit前にstage-0を含め再確認する。
+- `git diff --check`: PASS。
 - Chrome実機受入: `NOT_RUN`。Chrome GUI、Bridge、本番データの操作なし。
