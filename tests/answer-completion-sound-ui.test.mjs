@@ -104,9 +104,12 @@ test('音声プレイヤー・完了Tracker・タブ表示通知は統計UIの�
   assert.ok(component.includes('soundPlayer.current?.setSoundId(answerCompletionSoundId)'));
   assert.ok(component.includes('soundPlayer.current?.setVolumePercent(answerCompletionSoundVolumePercent)'));
   assert.ok(component.includes('soundPlayer.current?.setEnabled(answerCompletionSoundEnabled)'));
+  const completionCheck = component.indexOf('onAnswerCompletionChecked: (eventDetected, reason, eventConversationId) => {');
+  const publishedCheck = component.indexOf('publishCodexBridgeAutoWatchCompletionCheck(', completionCheck);
   const completionCallback = component.indexOf('onAnswerCompleted: (event, eventConversationId) => {');
   const autoWatchCompletion = component.indexOf('publishCodexBridgeAutoWatchCompletion(', completionCallback);
   const soundDispatch = component.indexOf('dispatchAnswerCompletionNotifications({', completionCallback);
+  assert.ok(completionCheck >= 0 && publishedCheck > completionCheck);
   assert.ok(completionCallback >= 0 && autoWatchCompletion > completionCallback && soundDispatch > autoWatchCompletion);
   assert.ok(component.includes('notifyTab: () => tabCompletionIndicator.onAnswerCompleted()'));
   assert.ok(component.includes('soundEnabled: soundEnabled.current'));

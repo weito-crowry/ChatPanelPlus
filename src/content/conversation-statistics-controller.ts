@@ -22,7 +22,7 @@ import {
 import { ConversationStatisticsSession } from './conversation-statistics-session.ts';
 import { ConversationStatisticsHistoryManager } from './conversation-statistics-history-manager.ts';
 import type { ConversationStatisticsHistoryViewState, HistoryScanResult } from './conversation-statistics-history.ts';
-import { AnswerCompletionTracker, type AnswerCompletionEvent } from './answer-completion-sound.ts';
+import { AnswerCompletionTracker, type AnswerCompletionCheckReason, type AnswerCompletionEvent } from './answer-completion-sound.ts';
 import { observeConversationMutations } from './conversation-statistics-observer.ts';
 import {
   findComposerForm,
@@ -49,6 +49,8 @@ export interface ConversationStatisticsControllerOptions {
   readonly repository: ConversationStatisticsRepository;
   readonly onState: (state: ConversationStatisticsViewState) => void;
   readonly onAnswerCompleted?: (event: AnswerCompletionEvent, conversationId: string | null) => void;
+  readonly onAnswerCompletionChecked?: (eventDetected: boolean, reason: AnswerCompletionCheckReason | null,
+    conversationId: string | null) => void;
 }
 
 const SAVE_DEBOUNCE_MS = 400;
@@ -340,7 +342,12 @@ export class ConversationStatisticsController {
       for (const turn of candidates) {
         const identity = collectTurnIdentity(turn);
         if (!identity) continue;
-        const completion = this.answerCompletionTracker.observe(identity);
+        const observation = this.answerCompletionTracker.observeDetailed(identity);
+        if (observation.checked) {
+          try { this.options.onAnswerCompletionChecked?.(observation.eventDetected, observation.reason, this.conversationId); }
+          catch { /* Diagnostics must not affect statistics or completion notifications. */ }
+        }
+        const completion = observation.event;
         if (completion) {
           try { this.options.onAnswerCompleted?.(completion, this.conversationId); } catch { /* Sound callbacks must not affect statistics. */ }
         }

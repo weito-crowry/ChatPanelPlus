@@ -10,18 +10,31 @@ import {
   type CodexBridgeAutoWatchCompletionMessage,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import { conversationIdFromPath, isConversationId } from '../shared/conversation-route.ts';
-import type { AnswerCompletionEvent } from './answer-completion-sound.ts';
+import type { AnswerCompletionCheckReason, AnswerCompletionEvent } from './answer-completion-sound.ts';
 import { findUniqueTurnElement, readCompletedAssistantMessageText } from './conversation-statistics-dom.ts';
 
 const MAX_ANSWER_TEXT_CODE_UNITS = 65_536;
 const MAX_RECENT_COMPLETIONS = 256;
 const TOKEN_CONTINUATION = /[\p{L}\p{N}\p{M}\p{Pc}\p{Cf}\p{Dash_Punctuation}._~%/\\?&#=+@:]/u;
 const URL_TOKEN = /(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|www\.)[^\s<>"'`]+/giu;
+const CANDIDATE_FAILURES = new Set([
+  'ok', '401', '403', 'timeout', 'disconnected', 'unknown', 'permission-required', 'settings-unavailable',
+  'endpoint-not-found', 'session-expired', 'http-error', 'protocol-error', 'protocol-version-unsupported',
+  'readonly-tool-unavailable', 'readonly-probe-failed', 'running-only-unsupported', 'connection-changed',
+  'connection-unavailable', 'target-unavailable', 'owner-conflict', 'ownerless-watch', 'watch-limit',
+  'owner-tab-unavailable', 'storage-error',
+]);
 
 export type CodexBridgeAutoWatchCompletionNotice = Readonly<{
   conversationId: string;
   turnKey: string;
   assistantMessageId: string;
+}>;
+
+export type CodexBridgeAutoWatchCompletionCheck = Readonly<{
+  eventDetected: boolean;
+  reason: AnswerCompletionCheckReason | null;
+  occurredAt: number;
 }>;
 
 export type CodexBridgeAutoWatchCompletionPublishResult = Readonly<{ status: 'ready' }>
@@ -34,6 +47,12 @@ export type CodexBridgeAutoWatchMatchResult = Readonly<{ status: 'ready'; connec
     | 'too-many-matches' }>
   | Readonly<{ status: 'failed'; reason: string }>;
 
+export type CodexBridgeAutoWatchCompletionProgress =
+  | Readonly<{ stage: 'candidates'; status: 'ok'; count: number }>
+  | Readonly<{ stage: 'candidates'; status: 'failed' | 'skipped'; reason: string }>
+  | Readonly<{ stage: 'match'; status: 'ok'; count: number }>
+  | Readonly<{ stage: 'match'; status: 'skipped'; reason: string }>;
+
 export type CodexBridgeAutoWatchDomContext = Readonly<{
   document: Document;
   pathname: string;
@@ -42,10 +61,40 @@ export type CodexBridgeAutoWatchDomContext = Readonly<{
 }>;
 
 type CompletionListener = (notice: CodexBridgeAutoWatchCompletionNotice) => void;
+type CompletionCheckListener = (check: CodexBridgeAutoWatchCompletionCheck) => void;
 type CandidateSet = Readonly<{ connectionId: string | null; threadIds: readonly string[] }>;
 type CompletedTurnDomGuard = Readonly<{ root: Element; turn: Element; changed: () => boolean; dispose: () => void }>;
 const listeners = new Set<CompletionListener>();
+const completionCheckListeners = new Set<CompletionCheckListener>();
 const recentCompletionKeys = new Set<string>();
+
+export function publishCodexBridgeAutoWatchCompletionCheck(
+  pathname: string,
+  conversationId: string | null,
+  eventDetected: boolean,
+  reason: AnswerCompletionCheckReason | null,
+): Readonly<{ status: 'ready' }> | Readonly<{ status: 'skipped'; reason: 'invalid-route' }> {
+  if (!conversationId || !isConversationId(conversationId) || conversationIdFromPath(pathname) !== conversationId
+    || (eventDetected ? reason !== null : reason === null)) return { status: 'skipped', reason: 'invalid-route' };
+  const check: CodexBridgeAutoWatchCompletionCheck = { eventDetected, reason, occurredAt: Date.now() };
+  for (const listener of completionCheckListeners) {
+    try { listener(check); } catch { /* Diagnostics must not affect answer completion or audio. */ }
+  }
+  return { status: 'ready' };
+}
+
+export function subscribeCodexBridgeAutoWatchCompletionCheck(listener: CompletionCheckListener): () => void {
+  completionCheckListeners.add(listener);
+  return () => completionCheckListeners.delete(listener);
+}
+
+function mutationAffectsTurn(turn: Element, record: MutationRecord): boolean {
+  if (turn.contains(record.target)) return true;
+  for (const node of [...record.addedNodes, ...record.removedNodes]) {
+    if (node === turn || turn.contains(node) || node.contains(turn)) return true;
+  }
+  return false;
+}
 
 function validCompletionIdentity(event: AnswerCompletionEvent, conversationId: string | null): boolean {
   return Boolean(conversationId && isConversationId(conversationId)
@@ -120,7 +169,7 @@ function parseCandidateResponse(value: unknown): CandidateSet | null | Readonly<
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return { failed: 'runtime-unavailable' };
   const response = value as Record<string, unknown>;
   if (response.ok !== true) {
-    return Object.keys(response).length === 2 && typeof response.reason === 'string' && response.reason.length <= 96
+    return Object.keys(response).length === 2 && typeof response.reason === 'string' && CANDIDATE_FAILURES.has(response.reason)
       ? { failed: response.reason } : { failed: 'runtime-unavailable' };
   }
   if (Object.keys(response).length !== 2 || typeof response.data !== 'object' || response.data === null
@@ -147,15 +196,13 @@ function createCompletedTurnDomGuard(page: CodexBridgeAutoWatchDomContext, turnK
   if (typeof Observer !== 'function') return null;
   let didChange = false;
   const observer = new Observer((records) => {
-    if (records.some((record) => turn.contains(record.target)
-      || [...record.addedNodes, ...record.removedNodes].some((node) => node === turn
-        || turn.contains(node) || node.contains(turn)))) didChange = true;
+    if (records.some((record) => mutationAffectsTurn(turn, record))) didChange = true;
   });
   observer.observe(root, { attributes: true, childList: true, characterData: true, subtree: true });
   return {
     root, turn,
     changed: () => {
-      if (observer.takeRecords?.().length) didChange = true;
+      if (observer.takeRecords?.().some((record) => mutationAffectsTurn(turn, record))) didChange = true;
       return didChange;
     },
     dispose: () => observer.disconnect(),
@@ -247,43 +294,94 @@ export function matchKnownBridgeRunningThreadIds(
   return { status: 'ok', threadIds: [...matched] };
 }
 
+function reportProgress(onProgress: ((progress: CodexBridgeAutoWatchCompletionProgress) => void) | undefined,
+  progress: CodexBridgeAutoWatchCompletionProgress): void {
+  try { onProgress?.(progress); } catch { /* Diagnostic consumers must not affect matching. */ }
+}
+
 export async function matchCompletedAnswerAfterBridgeCandidates(
   requestCandidates: () => Promise<unknown>,
   getCurrentPage: () => CodexBridgeAutoWatchDomContext | null,
   targetId: string,
   conversationId: string,
   event: AnswerCompletionEvent,
+  onProgress?: (progress: CodexBridgeAutoWatchCompletionProgress) => void,
 ): Promise<CodexBridgeAutoWatchMatchResult> {
   if (!isCodexBridgeWatchIdentifier(targetId) || targetId.length > 512 || !isConversationId(conversationId)
-    || !validCompletionIdentity(event, conversationId)) return { status: 'skipped', reason: 'invalid-route' };
+    || !validCompletionIdentity(event, conversationId)) {
+    reportProgress(onProgress, { stage: 'candidates', status: 'skipped', reason: 'invalid-route' });
+    return { status: 'skipped', reason: 'invalid-route' };
+  }
   const initialPage = getCurrentPage();
   if (!initialPage || initialPage.targetId !== targetId || initialPage.conversationId !== conversationId
-    || conversationIdFromPath(initialPage.pathname) !== conversationId) return { status: 'skipped', reason: 'invalid-route' };
+    || conversationIdFromPath(initialPage.pathname) !== conversationId) {
+    reportProgress(onProgress, { stage: 'candidates', status: 'skipped', reason: 'invalid-route' });
+    return { status: 'skipped', reason: 'invalid-route' };
+  }
   const guard = createCompletedTurnDomGuard(initialPage, event.turnKey);
   try {
     let response: unknown;
-    try { response = await requestCandidates(); } catch { return { status: 'failed', reason: 'runtime-unavailable' }; }
+    try { response = await requestCandidates(); } catch {
+      reportProgress(onProgress, { stage: 'candidates', status: 'failed', reason: 'runtime-unavailable' });
+      return { status: 'failed', reason: 'runtime-unavailable' };
+    }
     const candidates = parseCandidateResponse(response);
     if (typeof candidates === 'object' && candidates !== null && 'failed' in candidates) {
+      reportProgress(onProgress, { stage: 'candidates', status: 'failed', reason: candidates.failed });
       return { status: 'failed', reason: candidates.failed };
     }
-    if (!candidates) return { status: 'skipped', reason: 'candidate-response-invalid' };
-    if (!candidates.connectionId || !candidates.threadIds.length) return { status: 'skipped', reason: 'no-running-candidates' };
+    if (!candidates) {
+      reportProgress(onProgress, { stage: 'candidates', status: 'failed', reason: 'candidate-response-invalid' });
+      return { status: 'skipped', reason: 'candidate-response-invalid' };
+    }
+    reportProgress(onProgress, { stage: 'candidates', status: 'ok', count: candidates.threadIds.length });
+    if (!candidates.connectionId || !candidates.threadIds.length) {
+      reportProgress(onProgress, { stage: 'match', status: 'skipped', reason: 'no-running-candidates' });
+      return { status: 'skipped', reason: 'no-running-candidates' };
+    }
     const page = getCurrentPage();
     if (!page || page.targetId !== targetId || page.conversationId !== conversationId
-      || conversationIdFromPath(page.pathname) !== conversationId) return { status: 'skipped', reason: 'invalid-route' };
-    if (!guard) return { status: 'skipped', reason: 'dom-unavailable' };
+      || conversationIdFromPath(page.pathname) !== conversationId) {
+      reportProgress(onProgress, { stage: 'match', status: 'skipped', reason: 'invalid-route' });
+      return { status: 'skipped', reason: 'invalid-route' };
+    }
+    if (!guard) {
+      reportProgress(onProgress, { stage: 'match', status: 'skipped', reason: 'dom-unavailable' });
+      return { status: 'skipped', reason: 'dom-unavailable' };
+    }
     const root = page.document.querySelector('main');
-    if (!root) return { status: 'skipped', reason: 'dom-unavailable' };
+    if (!root) {
+      reportProgress(onProgress, { stage: 'match', status: 'skipped', reason: 'dom-unavailable' });
+      return { status: 'skipped', reason: 'dom-unavailable' };
+    }
     if (guard.changed() || root !== guard.root || !guard.turn.isConnected
-      || findUniqueTurnElement(root, event.turnKey) !== guard.turn) return { status: 'skipped', reason: 'dom-changed' };
+      || findUniqueTurnElement(root, event.turnKey) !== guard.turn) {
+      reportProgress(onProgress, { stage: 'match', status: 'skipped', reason: 'dom-changed' });
+      return { status: 'skipped', reason: 'dom-changed' };
+    }
     const text = readCompletedAssistantMessageText(guard.turn, event.assistantMessageId);
-    if (text === null) return { status: 'skipped', reason: 'answer-not-confirmed' };
-    if (text.length > MAX_ANSWER_TEXT_CODE_UNITS) return { status: 'skipped', reason: 'answer-too-large' };
+    if (text === null) {
+      reportProgress(onProgress, { stage: 'match', status: 'skipped', reason: 'answer-not-confirmed' });
+      return { status: 'skipped', reason: 'answer-not-confirmed' };
+    }
+    if (text.length > MAX_ANSWER_TEXT_CODE_UNITS) {
+      reportProgress(onProgress, { stage: 'match', status: 'skipped', reason: 'answer-too-large' });
+      return { status: 'skipped', reason: 'answer-too-large' };
+    }
     const matched = matchKnownBridgeRunningThreadIds(text, targetId, candidates.threadIds);
-    if (matched.status === 'skipped') return matched;
-    if (!matched.threadIds.length) return { status: 'skipped', reason: 'no-matching-ids' };
-    if (guard.changed()) return { status: 'skipped', reason: 'dom-changed' };
+    if (matched.status === 'skipped') {
+      reportProgress(onProgress, { stage: 'match', status: 'skipped', reason: matched.reason });
+      return matched;
+    }
+    if (!matched.threadIds.length) {
+      reportProgress(onProgress, { stage: 'match', status: 'skipped', reason: 'no-matching-ids' });
+      return { status: 'skipped', reason: 'no-matching-ids' };
+    }
+    if (guard.changed()) {
+      reportProgress(onProgress, { stage: 'match', status: 'skipped', reason: 'dom-changed' });
+      return { status: 'skipped', reason: 'dom-changed' };
+    }
+    reportProgress(onProgress, { stage: 'match', status: 'ok', count: matched.threadIds.length });
     return { status: 'ready', connectionId: candidates.connectionId, threadIds: matched.threadIds };
   } finally {
     guard?.dispose();

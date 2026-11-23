@@ -1,7 +1,7 @@
 import { createStatisticsStore, type StatisticsStore } from '../src/shared/conversation-statistics.ts';
 import type { StatisticsSaveResult } from '../src/shared/conversation-statistics-repository.ts';
 import type { StoredConversationStatistics } from '../src/shared/conversation-statistics.ts';
-import type { AnswerCompletionEvent } from '../src/content/answer-completion-sound.ts';
+import type { AnswerCompletionCheckReason, AnswerCompletionEvent } from '../src/content/answer-completion-sound.ts';
 import { ConversationStatisticsController, type ConversationStatisticsViewState } from '../src/content/conversation-statistics-controller.ts';
 import { FakeEventTarget } from './fake-event-target.ts';
 
@@ -144,9 +144,16 @@ export class FakeMutationObserver {
   static latest: FakeMutationObserver | null = null;
   callback: (records: readonly MutationRecord[]) => void;
   disconnected = false;
+  private pendingRecords: MutationRecord[] = [];
   constructor(callback: (records: readonly MutationRecord[]) => void) { this.callback = callback; FakeMutationObserver.latest = this; }
   observe(): void {}
   disconnect(): void { this.disconnected = true; }
+  takeRecords(): MutationRecord[] {
+    const records = this.pendingRecords;
+    this.pendingRecords = [];
+    return records;
+  }
+  queueRecords(...records: MutationRecord[]): void { this.pendingRecords.push(...records); }
   notify(target: FakeElement, added: FakeElement, removed: FakeElement[] = []): void {
     this.callback([{ target, addedNodes: [added], removedNodes: removed } as unknown as MutationRecord]);
   }
@@ -181,6 +188,8 @@ export interface HarnessRepositoryOverrides {
   loadStore?: () => Promise<{ ok: true; store: StatisticsStore }>;
   saveConversation?: (conversationId: string, conversation: StoredConversationStatistics) => Promise<StatisticsSaveResult>;
   onAnswerCompleted?: (event: AnswerCompletionEvent, conversationId: string | null) => void;
+  onAnswerCompletionChecked?: (eventDetected: boolean, reason: AnswerCompletionCheckReason | null,
+    conversationId: string | null) => void;
 }
 
 export function harness(
@@ -215,6 +224,7 @@ export function harness(
     repository: repository as never,
     onState: (state) => states.push({ conversationId: state.conversationId, aggregate: state.aggregate, loading: state.loading, historyScan: state.historyScan }),
     onAnswerCompleted: repositoryOverrides.onAnswerCompleted,
+    onAnswerCompletionChecked: repositoryOverrides.onAnswerCompletionChecked,
   });
   return {
     document,

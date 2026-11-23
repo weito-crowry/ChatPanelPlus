@@ -9,6 +9,7 @@ const cardPath = fileURLToPath(new URL('../src/content/CodexBridgeNotificationCa
 const stylePath = fileURLToPath(new URL('../src/content/codexbridge-watch.css', import.meta.url));
 const presentationPath = fileURLToPath(new URL('../src/content/codexbridge-watch-presentation.ts', import.meta.url));
 const feedbackPath = fileURLToPath(new URL('../src/content/codexbridge-watch-start-feedback.ts', import.meta.url));
+const autoWatchControlPath = fileURLToPath(new URL('../src/content/CodexBridgeAutoWatchControl.tsx', import.meta.url));
 
 test('watch UI selects terminal events and fetches only after an explicit click', async () => {
   const [source, card] = await Promise.all([readFile(sourcePath, 'utf8'), readFile(cardPath, 'utf8')]);
@@ -19,6 +20,20 @@ test('watch UI selects terminal events and fetches only after an explicit click'
   assert.match(source, /type: CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER,[\s\S]*?eventId: event\.eventId/);
   assert.match(source, /event\.connectionId !== currentConnectionId/);
   assert.match(source, /answerGeneration\.current/);
+});
+
+test('自動監視の技術情報は直近照合の理由・件数・時刻だけを表示し保存しない', async () => {
+  const source = await readFile(autoWatchControlPath, 'utf8');
+  assert.match(source, /直近の回答完了時照合/);
+  assert.match(source, /phase6-technical-details/);
+  assert.match(source, /subscribeCodexBridgeAutoWatchCompletionCheck/);
+  assert.match(source, /count: number \| null/);
+  assert.match(source, /registeredCount|registration\.count/);
+  assert.match(source, /diagnosticScope\.current\.targetId !== targetId \|\| diagnosticScope\.current\.conversationId !== conversationId/);
+  assert.match(source, /diagnostic\?\.scope === diagnosticScope\.current\.version/);
+  assert.doesNotMatch(source, /chrome\.storage\.local\.set/);
+  assert.doesNotMatch(source, /setInterval|setTimeout/);
+  assert.doesNotMatch(source, /console\.(?:log|debug)\([^\n]*(?:turnKey|assistantMessageId|threadIds|text)/);
 });
 
 test('copy and insertion are independent user actions and the answer is rendered as text', async () => {

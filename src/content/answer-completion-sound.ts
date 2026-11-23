@@ -13,9 +13,15 @@ export interface AnswerCompletionEvent {
   readonly assistantMessageId: string;
 }
 
+export type AnswerCompletionCheckReason = 'no-active-cycle' | 'assistant-message-unavailable';
+export type AnswerCompletionObservation = Readonly<{ checked: false; event: null }>
+  | Readonly<{ checked: true; eventDetected: false; reason: AnswerCompletionCheckReason; event: null }>
+  | Readonly<{ checked: true; eventDetected: true; reason: null; event: AnswerCompletionEvent }>;
+
 interface TrackedTurn {
   assistantState: AssistantTurnState;
   activeCycle: boolean;
+  completionCheckReported: boolean;
 }
 
 type AnswerCompletionIdentity = Pick<TurnIdentity, 'turnKey' | 'assistantMessageId'> & {
@@ -34,30 +40,55 @@ export class AnswerCompletionTracker {
     for (const identity of initialIdentities) {
       if (!validIdentity(identity)) continue;
       const assistantState = identity.assistantState ?? 'unknown';
-      this.turns.set(identity.turnKey, { assistantState, activeCycle: assistantState === 'in_progress' });
+      this.turns.set(identity.turnKey, {
+        assistantState, activeCycle: assistantState === 'in_progress', completionCheckReported: false,
+      });
     }
   }
 
   observe(identity: AnswerCompletionIdentity): AnswerCompletionEvent | null {
-    if (!validIdentity(identity)) return null;
+    return this.observeDetailed(identity).event;
+  }
+
+  observeDetailed(identity: AnswerCompletionIdentity): AnswerCompletionObservation {
+    if (!validIdentity(identity)) return { checked: false, event: null };
     const assistantState = identity.assistantState ?? 'unknown';
     let tracked = this.turns.get(identity.turnKey);
     if (!tracked) {
-      tracked = { assistantState, activeCycle: assistantState === 'in_progress' };
+      tracked = {
+        assistantState, activeCycle: assistantState === 'in_progress', completionCheckReported: assistantState === 'complete',
+      };
       this.turns.set(identity.turnKey, tracked);
-      return null;
+      return assistantState === 'complete'
+        ? { checked: true, eventDetected: false, reason: 'no-active-cycle', event: null }
+        : { checked: false, event: null };
     }
-    if (assistantState === 'unknown') return null;
+    if (assistantState === 'unknown') return { checked: false, event: null };
     if (assistantState === 'in_progress') {
-      if (tracked.assistantState !== 'in_progress') tracked.activeCycle = true;
+      if (tracked.assistantState !== 'in_progress') {
+        tracked.activeCycle = true;
+        tracked.completionCheckReported = false;
+      }
       tracked.assistantState = 'in_progress';
-      return null;
+      return { checked: false, event: null };
     }
 
+    const changedToComplete = tracked.assistantState !== 'complete';
     tracked.assistantState = 'complete';
-    if (!tracked.activeCycle || !identity.assistantMessageId || identity.assistantMessageId.trim() !== identity.assistantMessageId) return null;
+    if (!tracked.activeCycle) {
+      if (!changedToComplete || tracked.completionCheckReported) return { checked: false, event: null };
+      tracked.completionCheckReported = true;
+      return { checked: true, eventDetected: false, reason: 'no-active-cycle', event: null };
+    }
+    if (!identity.assistantMessageId || identity.assistantMessageId.trim() !== identity.assistantMessageId) {
+      if (tracked.completionCheckReported) return { checked: false, event: null };
+      tracked.completionCheckReported = true;
+      return { checked: true, eventDetected: false, reason: 'assistant-message-unavailable', event: null };
+    }
     tracked.activeCycle = false;
-    return { turnKey: identity.turnKey, assistantMessageId: identity.assistantMessageId };
+    tracked.completionCheckReported = false;
+    const event = { turnKey: identity.turnKey, assistantMessageId: identity.assistantMessageId };
+    return { checked: true, eventDetected: true, reason: null, event };
   }
 }
 

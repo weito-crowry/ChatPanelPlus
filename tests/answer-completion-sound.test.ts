@@ -28,6 +28,26 @@ test('基準化後のin_progressからcompleteへの遷移は1回だけ通知す
   assert.equal(tracker.observe(complete), null);
 });
 
+test('完了サイクル診断はイベント有無と理由だけを返しturn・message IDを含めない', () => {
+  const tracker = new AnswerCompletionTracker();
+  tracker.reset([inProgress]);
+  assert.deepEqual(tracker.observeDetailed(complete), {
+    checked: true, eventDetected: true, reason: null,
+    event: { turnKey: 'turn-a', assistantMessageId: 'answer-a' },
+  });
+  assert.deepEqual(tracker.observeDetailed(complete), { checked: false, event: null });
+
+  tracker.reset([{ turnKey: 'turn-a', assistantState: 'in_progress' }]);
+  assert.deepEqual(tracker.observeDetailed({ turnKey: 'turn-a', assistantState: 'complete' }), {
+    checked: true, eventDetected: false, reason: 'assistant-message-unavailable', event: null,
+  });
+
+  tracker.reset([{ turnKey: 'turn-a', assistantState: 'unknown' }]);
+  assert.deepEqual(tracker.observeDetailed({ turnKey: 'turn-a', assistantState: 'complete' }), {
+    checked: true, eventDetected: false, reason: 'no-active-cycle', event: null,
+  });
+});
+
 test('同じTurn Keyの再生成は新しいin_progressを観測した場合に別通知する', () => {
   const tracker = new AnswerCompletionTracker();
   tracker.reset([complete]);

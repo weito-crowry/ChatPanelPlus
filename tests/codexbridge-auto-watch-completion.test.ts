@@ -61,6 +61,31 @@ test('AnswerCompletionTrackerは本文scanより前にidentity-only通知し、�
   unsubscribe();
 });
 
+test('完了イベント診断は現在routeにだけ時刻と理由コードを配りidentityを含めない', async () => {
+  const api = await import('../src/content/codexbridge-auto-watch-completion.ts') as Record<string, unknown>;
+  const subscribe = api.subscribeCodexBridgeAutoWatchCompletionCheck as
+    ((listener: (check: unknown) => void) => () => void) | undefined;
+  const publish = api.publishCodexBridgeAutoWatchCompletionCheck as
+    ((pathname: string, conversationId: string | null, eventDetected: boolean,
+      reason: 'no-active-cycle' | 'assistant-message-unavailable' | null) => unknown) | undefined;
+  assert.equal(typeof subscribe, 'function');
+  assert.equal(typeof publish, 'function');
+  const checks: unknown[] = [];
+  const unsubscribe = subscribe!((check) => checks.push(check));
+  assert.deepEqual(publish!('/c/owner', 'owner', false, 'no-active-cycle'), { status: 'ready' });
+  assert.deepEqual(publish!('/c/other', 'owner', true, null), { status: 'skipped', reason: 'invalid-route' });
+  assert.equal(checks.length, 1);
+  const check = checks[0] as Record<string, unknown>;
+  assert.deepEqual(Object.keys(check).sort(), ['eventDetected', 'occurredAt', 'reason']);
+  assert.deepEqual({ eventDetected: check.eventDetected, reason: check.reason }, {
+    eventDetected: false, reason: 'no-active-cycle',
+  });
+  assert.equal(typeof check.occurredAt, 'number');
+  assert.equal(JSON.stringify(checks).includes('owner'), false);
+  assert.equal(JSON.stringify(checks).includes(completionEvent.turnKey), false);
+  unsubscribe!();
+});
+
 test('refresh後の既存complete回答は再通知せず、route不一致でも候補requestを作らない', async () => {
   const h = harness('/c/owner');
   const completed = turn('old-complete-turn', '質問', `ID ${THREAD_A}`, 'old-assistant');

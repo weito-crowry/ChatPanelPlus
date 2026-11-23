@@ -12,7 +12,10 @@ import { DEFAULT_COMPLETION_SOUND_ID } from '../shared/answer-completion-sound-d
 import { DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT } from '../shared/answer-completion-sound-volume.ts';
 import { routeAnswerCompletionSound } from './answer-completion-output-device-route.ts';
 import { dispatchAnswerCompletionNotifications } from './answer-completion-notifications.ts';
-import { publishCodexBridgeAutoWatchCompletion } from './codexbridge-auto-watch-completion.ts';
+import {
+  publishCodexBridgeAutoWatchCompletion,
+  publishCodexBridgeAutoWatchCompletionCheck,
+} from './codexbridge-auto-watch-completion.ts';
 import { conversationIdFromPath } from '../shared/conversation-route.ts';
 import { TabCompletionIndicator } from './tab-completion-indicator.ts';
 import { calculateStatisticsPopoverPlacement, type StatisticsPopoverPlacement } from './conversation-statistics-popover-position.ts';
@@ -120,6 +123,11 @@ export function ConversationStatistics({
       window,
       repository: createChromeConversationStatisticsRepository(),
       onState: setState,
+      onAnswerCompletionChecked: (eventDetected, reason, eventConversationId) => {
+        publishCodexBridgeAutoWatchCompletionCheck(
+          window.location.pathname, eventConversationId, eventDetected, reason,
+        );
+      },
       onAnswerCompleted: (event, eventConversationId) => {
         try {
           const autoWatchResult = publishCodexBridgeAutoWatchCompletion(
