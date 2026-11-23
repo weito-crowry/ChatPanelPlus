@@ -9,8 +9,14 @@ import panelMainViewsStyles from './panel-main-views.css?inline';
 import codexBridgeWatchStyles from './codexbridge-watch.css?inline';
 import codexBridgeThreadFilterStyles from './codexbridge-thread-filter.css?inline';
 import panelPhase6Styles from './panel-phase6.css?inline';
+import { createCodexBridgeOwnerIdentityResponse } from '../shared/codexbridge-owner-identity.ts';
 
 const HOST_ID = 'chatpanelplus-extension-root';
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const response = createCodexBridgeOwnerIdentityResponse(message, sender.id, chrome.runtime.id, window.location.href);
+  if (response) sendResponse(response);
+});
 
 // Add ?cppDebugInteraction=1 to opt into event metadata logging without suppressing actions.
 startInteractionDiagnostics(window.location.search, document);

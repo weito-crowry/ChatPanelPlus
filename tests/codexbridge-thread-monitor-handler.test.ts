@@ -17,6 +17,7 @@ import {
   type CodexBridgeTerminalEvent,
   type CodexBridgeWatchOwnerMute,
 } from '../src/shared/codexbridge-thread-monitor-protocol.ts';
+import { CODEX_BRIDGE_OWNER_IDENTITY_PONG } from '../src/shared/codexbridge-owner-identity.ts';
 import { createCodexBridgeThreadMonitorMessageHandler, ownerTabMatchesConversation } from '../src/background/codexbridge-thread-monitor.ts';
 
 const item: CodexBridgeWatchSnapshot = {
@@ -69,8 +70,8 @@ function handlerFixture(connectionId = item.connectionId, sourceItems: readonly 
       return ownerConversationId === event.ownerConversationId && eventIds.every((id) => id === event.eventId);
     },
   };
-  async function getAutoStatus(targetId: string, conversationId: string) {
-    calls.push(`auto:get:${targetId}:${conversationId}`);
+  async function getAutoStatus(targetId: string, conversationId: string, tabId: number) {
+    calls.push(`auto:get:${targetId}:${conversationId}:${tabId}`);
     return { targetId, connectionId, enabled: false, ownerConversationId: conversationId, state: 'off' as const,
       failure: null, watchingThreadCount: 0 };
   }
@@ -78,7 +79,7 @@ function handlerFixture(connectionId = item.connectionId, sourceItems: readonly 
     getStatus: getAutoStatus,
     async setEnabled(targetId: string, tabId: number, conversationId: string, enabled: boolean) {
       calls.push(`auto:set:${targetId}:${tabId}:${conversationId}:${enabled}`);
-      return { ok: true as const, status: await getAutoStatus(targetId, conversationId) };
+      return { ok: true as const, status: await getAutoStatus(targetId, conversationId, tabId) };
     },
     async getRunningCandidates(targetId: string, tabId: number, conversationId: string, turnKey: string,
       assistantMessageId: string) {
@@ -314,9 +315,9 @@ test('自動登録のGET/SET/completionはtrusted current conversationだけに�
   assert.equal(await handle(completed, mismatched), null);
   await handle({ type: CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH }, trustedSender);
   assert.deepEqual(calls.slice(0, 6), [
-    'auto:get:target-1:test',
+    'auto:get:target-1:test:4',
     'auto:set:target-1:4:test:true',
-    'auto:get:target-1:test',
+    'auto:get:target-1:test:4',
     'auto:candidates:target-1:4:test:turn-1:answer-1',
     `auto:completed:target-1:${item.connectionId}:4:test:turn-1:answer-1:01a207cf-52ab-7900-a91d-3288982ab221`,
     'foreground',
@@ -340,12 +341,14 @@ test('自動登録completionの余分なfieldと32件超過を拒否する', asy
   assert.deepEqual(calls, []);
 });
 
-test('owner tab routeはmute/通知音の現在会話と一致するときだけ有効', async () => {
-  const tabs = { async get(tabId: number) { return { url: tabId === 4
-    ? 'https://chatgpt.com/c/test' : 'https://chatgpt.com/c/other' }; } };
+test('owner tab routeはmain-frame content scriptが返す会話identityと一致するときだけ有効', async () => {
+  const tabs = { async sendMessage(tabId: number, message: { nonce: string }, options: { frameId: number }) {
+    assert.equal(options.frameId, 0);
+    return { type: CODEX_BRIDGE_OWNER_IDENTITY_PONG, nonce: message.nonce,
+      conversationId: tabId === 4 ? 'test' : 'other' };
+  }, async get(tabId: number) { return { id: tabId }; } };
   assert.equal(await ownerTabMatchesConversation(tabs, 4, 'test'), true);
   assert.equal(await ownerTabMatchesConversation(tabs, 4, 'other'), false);
-  assert.equal(await ownerTabMatchesConversation({ async get() { return { url: 'https://user@chatgpt.com/c/test' }; } }, 4, 'test'), false);
-  assert.equal(await ownerTabMatchesConversation({ async get() { return { url: 'https://example.com/c/test' }; } }, 4, 'test'), false);
-  assert.equal(await ownerTabMatchesConversation({ async get() { throw new Error('tab closed'); } }, 4, 'test'), false);
+  assert.equal(await ownerTabMatchesConversation({ async sendMessage() { throw new Error('tab closed'); },
+    async get() { throw new Error('tab closed'); } }, 4, 'test'), false);
 });

@@ -30,6 +30,10 @@ import {
   type CodexBridgeAutoWatchMessage,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import { conversationIdFromPath, isConversationId } from '../shared/conversation-route.ts';
+import {
+  CODEX_BRIDGE_OWNER_IDENTITY_PING,
+  codexBridgeOwnerIdentityConversationId,
+} from '../shared/codexbridge-owner-identity.ts';
 import { createChromeSettingsRepository } from '../shared/settings-repository.ts';
 import { CodexBridgeMcpClient } from './mcp-client.ts';
 import { CodexBridgeAutoThreadRegistration } from './thread-monitor-auto-registration.ts';
@@ -79,15 +83,58 @@ function pageOrigin(value: string | undefined): string | null {
 }
 
 export async function ownerTabMatchesConversation(
-  tabs: Readonly<{ get(tabId: number): Promise<{ url?: string }> }>,
+  tabs: Readonly<{ get(tabId: number): Promise<unknown>; sendMessage(tabId: number, message: unknown, options: { frameId: number }): Promise<unknown> }>,
   tabId: number,
   conversationId: string,
+  timeoutMs = 1_000,
 ): Promise<boolean> {
+  const identity = await readOwnerTabIdentity(tabs, tabId, timeoutMs);
+  return identity.kind === 'identity' && identity.conversationId === conversationId;
+}
+
+type OwnerTabIdentityResult = Readonly<{ kind: 'identity'; conversationId: string }>
+  | Readonly<{ kind: 'closed' | 'unknown' }>;
+
+async function readOwnerTabIdentity(
+  tabs: Readonly<{ get(tabId: number): Promise<unknown>; sendMessage(tabId: number, message: unknown, options: { frameId: number }): Promise<unknown> }>,
+  tabId: number,
+  timeoutMs: number,
+): Promise<OwnerTabIdentityResult> {
+  if (!Number.isSafeInteger(tabId) || tabId < 0) return { kind: 'unknown' };
+  const nonce = crypto.randomUUID();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   try {
-    const url = new URL((await tabs.get(tabId)).url ?? '');
-    return url.origin === 'https://chatgpt.com' && !url.username && !url.password
-      && conversationIdFromPath(url.pathname) === conversationId;
-  } catch { return false; }
+    const response = await Promise.race([
+      tabs.sendMessage(tabId, { type: CODEX_BRIDGE_OWNER_IDENTITY_PING, nonce }, { frameId: 0 }),
+      new Promise<null>((resolve) => { timeoutId = setTimeout(() => resolve(null), timeoutMs); }),
+    ]);
+    if (response === null) return await ownerTabAfterMissingReply(tabs, tabId);
+    const actualConversationId = codexBridgeOwnerIdentityConversationId(response, nonce);
+    return actualConversationId ? { kind: 'identity', conversationId: actualConversationId } : { kind: 'unknown' };
+  } catch {
+    return ownerTabAfterMissingReply(tabs, tabId);
+  }
+  finally { if (timeoutId !== undefined) clearTimeout(timeoutId); }
+}
+
+async function ownerTabAfterMissingReply(
+  tabs: Readonly<{ get(tabId: number): Promise<unknown> }>, tabId: number,
+): Promise<OwnerTabIdentityResult> {
+  try {
+    await tabs.get(tabId);
+    return { kind: 'unknown' };
+  } catch { return { kind: 'closed' }; }
+}
+
+export async function ownerTabCanBeRebound(
+  tabs: Readonly<{ get(tabId: number): Promise<unknown>; sendMessage(tabId: number, message: unknown, options: { frameId: number }): Promise<unknown> }>,
+  tabId: number,
+  conversationId: string,
+  timeoutMs = 1_000,
+): Promise<boolean> {
+  if (!Number.isSafeInteger(tabId) || tabId < 0 || !isConversationId(conversationId)) return false;
+  const identity = await readOwnerTabIdentity(tabs, tabId, timeoutMs);
+  return identity.kind === 'closed' || (identity.kind === 'identity' && identity.conversationId !== conversationId);
 }
 
 function matchesTargetThread(targetId: string, threadId: string): boolean {
@@ -207,7 +254,7 @@ export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridg
     try {
       if (message.type === CODEX_BRIDGE_AUTO_WATCH_GET) {
         if (!options.autoRegistration) return { ok: false, reason: 'storage-error' };
-        return { ok: true, data: await options.autoRegistration.getStatus(message.targetId, identity.conversationId) };
+        return { ok: true, data: await options.autoRegistration.getStatus(message.targetId, identity.conversationId, identity.tabId) };
       }
       if (message.type === CODEX_BRIDGE_AUTO_WATCH_SET) {
         if (!options.autoRegistration) return { ok: false, reason: 'storage-error' };
@@ -377,6 +424,7 @@ export function createDefaultCodexBridgeThreadMonitor(
   const autoRegistration = new CodexBridgeAutoThreadRegistration(
     chrome.storage.local, chrome.alarms, monitor, resolveAccess, loadOwnerMute,
     (tabId, conversationId) => ownerTabMatchesConversation(chrome.tabs, tabId, conversationId),
+    (tabId, conversationId) => ownerTabCanBeRebound(chrome.tabs, tabId, conversationId),
   );
   const handleMessage = createCodexBridgeThreadMonitorMessageHandler({
     extensionId, monitor, resolveAccess, loadOwnerMute, autoRegistration,

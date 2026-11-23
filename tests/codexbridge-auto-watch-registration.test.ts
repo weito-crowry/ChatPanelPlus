@@ -289,14 +289,14 @@ test('Bridge失敗とrunning_only未対応は0件扱いせず状態に診断を�
   await enable(h);
   h.fetchFailure = Object.assign(new Error('unsupported'), { code: 'running-only-unsupported' });
   assert.equal(await register(h, [threadOneId]), 0);
-  const failed = await h.auto.getStatus(target.id, ownerA.ownerConversationId);
+  const failed = await h.auto.getStatus(target.id, ownerA.ownerConversationId, ownerA.ownerTabId);
   assert.equal(failed.state, 'error');
   assert.equal(failed.failure, 'running-only-unsupported');
   assert.equal(failed.watchingThreadCount, 0);
   h.fetchFailure = null;
   h.runningOnlyAvailable = false;
   assert.equal(await register(h, [threadOneId], { turnKey: 'unsupported-turn', assistantMessageId: 'unsupported-message' }), 0);
-  assert.equal((await h.auto.getStatus(target.id, ownerA.ownerConversationId)).state, 'error');
+  assert.equal((await h.auto.getStatus(target.id, ownerA.ownerConversationId, ownerA.ownerTabId)).state, 'error');
 });
 
 test('別ownerまたはownerlessの既存watchを移管せず、manual watchは維持する', async () => {
@@ -372,7 +372,7 @@ test('32件上限を守り、C45 terminal eventとwatch自動解除を継続す�
   }
   await enable(h);
   assert.equal(await register(h, [threadOneId]), 0);
-  assert.equal((await h.auto.getStatus(target.id, ownerA.ownerConversationId)).failure, 'watch-limit');
+  assert.equal((await h.auto.getStatus(target.id, ownerA.ownerConversationId, ownerA.ownerTabId)).failure, 'watch-limit');
   assert.equal((await h.monitor.list()).length, 32);
 
   const terminal = harness([liveThread(threadOneId, turnOneId)]);
