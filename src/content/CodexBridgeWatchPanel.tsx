@@ -19,10 +19,8 @@ import type { ConversationPanelWatchSelection } from '../shared/conversation-pan
 import { acknowledgeCodexBridgeEventIds } from './codexbridge-event-ack.ts';
 import { clearCodexBridgeEventIds } from './codexbridge-event-clear.ts';
 import {
-  editorInsertionFailureLabel,
-  filterOwnedWatchData,
-  watchListFailureLabel,
-  watchStartDisabledReason,
+  countCurrentOwnerTargetWatches, editorInsertionFailureLabel, filterOwnedWatchData,
+  watchListFailureLabel, watchStartDisabledReason,
 } from './codexbridge-watch-presentation.ts';
 import { codexBridgeWatchThreadLabel } from './codexbridge-thread-presentation.ts';
 import { CodexBridgeWatchList } from './CodexBridgeWatchList.tsx';
@@ -111,6 +109,8 @@ export function CodexBridgeWatchPanel({
   const listIsCurrent = Boolean(conversationId && listConversationId === conversationId);
   const currentItems = listIsCurrent ? items : NO_WATCH_ITEMS;
   const currentEvents = listIsCurrent ? events : NO_WATCH_EVENTS;
+  const autoWatchCount = countCurrentOwnerTargetWatches({ items: currentItems, ownerConversationId: conversationId,
+    connectionId: currentConnectionId, targetId: target?.id ?? null, snapshotIsCurrent: listIsCurrent, listFailure: listFailure !== null });
 
   const currentWatchStartIdentity = () => currentCodexBridgeWatchStartIdentity(selectedRef.current, conversationIdRef.current);
   function setListData(data: CodexBridgeWatchListData, ownerConversationId: string) {
@@ -459,7 +459,8 @@ export function CodexBridgeWatchPanel({
         <h2>B 選択スレッド・監視中</h2>
         <span>{listIsCurrent && !listFailure ? `${currentItems.length}件` : '—'}</span>
       </div>
-      <CodexBridgeAutoWatchControl targetId={target?.id ?? null} targetName={target?.name ?? null} conversationId={conversationId} />
+      <CodexBridgeAutoWatchControl targetId={target?.id ?? null} targetName={target?.name ?? null}
+        conversationId={conversationId} watchingThreadCount={autoWatchCount} />
       {selectedWatch
         ? <button type="button" className="codex-bridge-button" onClick={() => { void stopWatch(selectedWatch); }} disabled={busyKey !== ''}>
           {busyKey === `stop:${selectedWatch.watchId}` ? '解除中…' : '選択threadの監視を解除'}

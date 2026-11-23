@@ -111,6 +111,9 @@
 - owner tabが閉じた／別route／mute取得不能の場合はmuteをnullにし、通知音を鳴らさずevent履歴を保持する。通知時にもowner tab URLと会話routeを再検証。SPA遷移後に別会話へ設定やwatchを移さない。
 - 初期化/削除の扱いを確認：Options設定保存・既定値復元はconfig/view-state keyだけを更新し、自動watch keyと既存`chatPanelPlus.codexBridgeThreadMonitor.v1` watch/event keyを消さない。自動設定データのschema異常時は上書きせずerrorで停止する。
 - 自動検証PASS：`pnpm test` 694/694、`pnpm typecheck` PASS、`pnpm lint` PASS、source size 248 files（各500行/32768 bytes以下）、独立した`pnpm build` exit 0。
-- Chrome登録ロード元への反映・Chrome自動操作・実機受入・Bridge停止/再起動/変更は行っていない。C46 Chrome受入はNOT_RUN。C37主要正常系PASSを維持、C38 Chrome受入NOT_RUNとC45既存FAIL/再受入待ちは既存判定のまま。
+- 初回実装時点ではChrome登録ロード元への反映・Chrome自動操作・実機受入・Bridge停止/再起動/変更は行っていない。C46 Chrome受入はNOT_RUN。C37主要正常系PASSを維持、C38 Chrome受入NOT_RUNとC45既存FAIL/再受入待ちは既存判定のまま。
 - 追加実機観測（17:22:57 JST）：自動登録自体はPASSだが、新規2件のB状態は「不明」、監視中2・通知0。うち一件は17:21:24 JSTにBridgeでcompleted/liveだったがC終了eventがなく、別件はin_progress/liveだった。実機ではA一覧同期FAILも同時に観測。source回帰で実Bridge形状（`current_execution.turn_id`欠落、同一応答の`last_turn`がin_progress/live）を入力し、同Turn baseline→completed event→watch自動解除を確認。修正後Chrome NOT_RUN。
-- 同checkoutの最終source検証：`pnpm test` 713/713、`pnpm typecheck` PASS、`pnpm lint` PASS、`pnpm check:size` PASS（258 files、各500行/32768 bytes以下）、`pnpm build` exit 0。固定Chromeロード元と実機storageには触れず、修正後Chrome実機受入はNOT_RUN。
+- 17:22時点の同checkout source検証：`pnpm test` 713/713、`pnpm typecheck` PASS、`pnpm lint` PASS、`pnpm check:size` PASS（258 files、各500行/32768 bytes以下）、`pnpm build` exit 0。固定Chromeロード元と実機storageには触れず、当時の修正後Chrome実機受入はNOT_RUN。
+- 18:51 JST C46実機再受入：新規監視thread `01a207cf-52ab-7900-a91d-3288982ab221` の自動登録と、終了通知1件・B一覧からの自動解除はPASS。A欄・上部実行中0、B欄上部「監視中0」、B watch list 0件、C完了通知1件を確認。一方で自動監視設定欄に「実行中候補:0件・この会話の監視:1件」が残り、B一覧との件数不整合を確認。A開始時の0→1反映は未確認。
+- 件数不整合の原因は、自動監視欄が最後のauto-watch GETの`watchingThreadCount`を表示し、monitor storage変更ではそのstatusを更新しないこと。B欄のowner-filtered watch snapshotからowner・current connection・current targetが一致する件数を渡すsource修正と、snapshot未取得/失敗/identity不明では「未確認」とする回帰を追加。新しいnetwork probeや自動ON/OFF・watch移管の変更は加えていない。今回の件数修正後Chrome実機確認はNOT_RUN。固定Chromeロード元とBridge/watch/event storageには触れていない。
+- 件数修正後source検証：`pnpm test` 716/716、`pnpm typecheck` PASS、`pnpm lint` PASS、`pnpm check:size` PASS（259 files、各500行/32768 bytes以下）、`pnpm build` exit 0。

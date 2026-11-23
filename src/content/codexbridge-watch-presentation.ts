@@ -91,6 +91,19 @@ export function filterOwnedWatchData(
   return { items, events, summary: { watchingCount: items.length, unacknowledgedThreadCount: unacknowledgedThreads.size } };
 }
 
+export function countCurrentOwnerTargetWatches(input: Readonly<{
+  items: readonly Pick<CodexBridgeWatchSnapshot, 'ownerConversationId' | 'connectionId' | 'targetId'>[];
+  ownerConversationId: string | null;
+  connectionId: string | null;
+  targetId: string | null;
+  snapshotIsCurrent: boolean;
+  listFailure: boolean;
+}>): number | null {
+  if (!input.snapshotIsCurrent || input.listFailure || !input.ownerConversationId || !input.connectionId || !input.targetId) return null;
+  return input.items.filter((item) => item.ownerConversationId === input.ownerConversationId
+    && item.connectionId === input.connectionId && item.targetId === input.targetId).length;
+}
+
 export function eventStatusLabel(event: CodexBridgeTerminalEvent): string {
   const state: Record<CodexBridgeTerminalEvent['notificationState'], string> = {
     pending: '音声通知結果不明（再試行なし）', requested: '音声要求済み（再生結果不明、再試行なし）',

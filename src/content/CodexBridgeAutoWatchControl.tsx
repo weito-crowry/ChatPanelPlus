@@ -51,10 +51,11 @@ function failureLabel(failure: string | null): string {
   return `自動探索を一時停止しています。${codexBridgeReadErrorLabel(failure)}`;
 }
 
-export function CodexBridgeAutoWatchControl({ targetId, targetName, conversationId }: Readonly<{
+export function CodexBridgeAutoWatchControl({ targetId, targetName, conversationId, watchingThreadCount }: Readonly<{
   targetId: string | null;
   targetName: string | null;
   conversationId: string | null;
+  watchingThreadCount: number | null;
 }>) {
   const [status, setStatus] = useState<CodexBridgeAutoWatchStatus | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -142,7 +143,7 @@ export function CodexBridgeAutoWatchControl({ targetId, targetName, conversation
       <p className="codex-bridge-note">状態: {stateLabel} · 対象マシン: {targetName || targetId || '未選択'}</p>
       <p className="codex-bridge-note">owner ChatGPT会話: {currentStatus?.state === 'conflict' ? '別会話 (ID非表示)' : displayedOwner ?? '確認できません'}</p>
       {currentStatus?.enabled && <p className="codex-bridge-note">
-        実行中候補: {currentStatus.liveThreadCount === null ? '未確認' : `${currentStatus.liveThreadCount}件`} · この会話の監視: {currentStatus.watchingThreadCount}件
+        実行中候補: {currentStatus.liveThreadCount === null ? '未確認' : `${currentStatus.liveThreadCount}件`} · この会話の監視: {watchingThreadCount === null ? '未確認' : `${watchingThreadCount}件`}
       </p>}
       <button type="button" className="codex-bridge-button" onClick={() => { void toggle(); }}
         disabled={!routeValid || !targetId || busy || !statusIsCurrent}>
