@@ -40,6 +40,22 @@ test('late thread response for target A is ignored after selecting target B', as
   assert.equal(visibleTarget, 'machine-B');
 });
 
+test('late running_only response is ignored after switching to normal mode', async () => {
+  const tracker = new CodexBridgeRequestTracker();
+  tracker.selectTarget('machine-A');
+  const runningRequest = tracker.beginThreads('machine-A');
+  let visibleMode = '';
+  const delayedRunningResponse = Promise.resolve().then(() => {
+    if (tracker.isCurrentThreads(runningRequest)) visibleMode = 'running';
+  });
+
+  tracker.selectMode('normal');
+  const normalRequest = tracker.beginThreads('machine-A');
+  if (tracker.isCurrentThreads(normalRequest) && tracker.setNextCursor(normalRequest, 'cursor-2')) visibleMode = 'normal';
+  await delayedRunningResponse;
+  assert.equal(visibleMode, 'normal');
+});
+
 test('normal page response appends under its cursor and a newer refresh invalidates pending pages', () => {
   const merged = mergeCodexBridgeThreads(
     [thread('thread-1', 'old title')],

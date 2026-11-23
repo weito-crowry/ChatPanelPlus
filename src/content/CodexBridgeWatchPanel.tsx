@@ -42,6 +42,8 @@ import {
 } from './codexbridge-watch-response.ts';
 import { CodexBridgeNotificationCard } from './CodexBridgeNotificationCard.tsx';
 import { captureSelectionForPaste, getBrowserEditorEnvironment, insertAtCaret } from './editor/adapter.ts';
+import { CodexBridgeTerminalEventObserver } from './codexbridge-terminal-event-observer.ts';
+import type { CodexBridgeTerminalEventSignal } from './codexbridge-terminal-refresh.ts';
 type SelectedThread = Readonly<{ targetId: string; threadId: string }>;
 const NO_WATCH_ITEMS: readonly CodexBridgeWatchSnapshot[] = [];
 const NO_WATCH_EVENTS: readonly CodexBridgeTerminalEvent[] = [];
@@ -56,10 +58,11 @@ type Props = Readonly<{
   onSelectBridgeWatch: (selection: ConversationPanelWatchSelection | null) => void;
   onSelectBridgeEvent: (eventId: string | null) => void;
   onSummaryChange?: (summary: Readonly<{ watchingCount: number; unacknowledgedThreadCount: number }> | null) => void;
+  onTerminalEvents?: (events: readonly CodexBridgeTerminalEventSignal[]) => void;
 }>;
 export function CodexBridgeWatchPanel({
   selected, watchFeedbackResetToken = 0, foregroundEnabled, conversationId, bridgeWatchSelection, bridgeEventSelection,
-  threadCandidates = [], onSelectBridgeWatch, onSelectBridgeEvent, onSummaryChange,
+  threadCandidates = [], onSelectBridgeWatch, onSelectBridgeEvent, onSummaryChange, onTerminalEvents,
 }: Props) {
   const [items, setItems] = useState<readonly CodexBridgeWatchSnapshot[]>([]);
   const [events, setEvents] = useState<readonly CodexBridgeTerminalEvent[]>([]);
@@ -76,6 +79,7 @@ export function CodexBridgeWatchPanel({
   const [answerMessage, setAnswerMessage] = useState('');
   const [eventOperationMessage, setEventOperationMessage] = useState('');
   const listRequests = useRef(new WatchListRequestCoordinator());
+  const terminalEventObserver = useRef(new CodexBridgeTerminalEventObserver());
   const answerGeneration = useRef(0);
   const clearInFlight = useRef(false);
   const watchStartFeedback = useRef(new CodexBridgeWatchStartFeedback());
@@ -85,6 +89,8 @@ export function CodexBridgeWatchPanel({
   selectedRef.current = selected;
   const summaryCallbackRef = useRef(onSummaryChange);
   summaryCallbackRef.current = onSummaryChange;
+  const terminalEventsCallbackRef = useRef(onTerminalEvents);
+  terminalEventsCallbackRef.current = onTerminalEvents;
   const watchSelectionRef = useRef(bridgeWatchSelection);
   watchSelectionRef.current = bridgeWatchSelection;
   const eventSelectionRef = useRef(bridgeEventSelection);
@@ -101,6 +107,8 @@ export function CodexBridgeWatchPanel({
   const currentWatchStartIdentity = () => currentCodexBridgeWatchStartIdentity(selectedRef.current, conversationIdRef.current);
   function setListData(data: CodexBridgeWatchListData, ownerConversationId: string) {
     const owned = filterOwnedWatchData(data, ownerConversationId);
+    const newEvents = terminalEventObserver.current.observeSuccessfulSnapshot(ownerConversationId, data.currentConnectionId, owned.events);
+    if (newEvents.length) terminalEventsCallbackRef.current?.(newEvents.map(({ connectionId, eventId, targetId }) => ({ connectionId, eventId, targetId })));
     setItems(owned.items);
     setEvents(owned.events);
     setListConversationId(ownerConversationId);

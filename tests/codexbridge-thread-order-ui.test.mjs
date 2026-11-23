@@ -21,7 +21,7 @@ test('running_onlyと通常cursor要求を分け、切替は選択と監視を�
   const [source, filter] = await Promise.all([
     readFile(sourcePath, 'utf8'), readFile(new URL('../src/content/CodexBridgeProjectFolderFilter.tsx', import.meta.url), 'utf8'),
   ]);
-  assert.match(source, /\.\.\.\(listMode === 'running' \? \{ runningOnly: true \} : \{\}\)/);
+  assert.match(source, /\.\.\.\(terminalContext\.current\.mode === 'running' \? \{ runningOnly: true \} : \{\}\)/);
   assert.match(source, /const displayedThreads = sortCodexBridgeThreadsByActivity\(threads\)/);
   assert.doesNotMatch(source, /filterCodexBridgeThreads\(threads/);
   assert.match(filter, /visibleThreads\.map\(\(thread, index\) =>/);
@@ -32,6 +32,10 @@ test('running_onlyと通常cursor要求を分け、切替は選択と監視を�
   assert.match(source, /requestTracker\.current\?\.selectMode\(mode\)/);
   assert.match(source, /requestTracker\.current\?\.selectTarget\(value\)/);
   assert.match(source, /function changeListMode\(mode: CodexBridgeThreadListMode\)/);
+  assert.match(source, /onTerminalEvents=\{handleTerminalEvents\}/);
+  assert.match(source, /if \(action === 'threads'\) void loadThreads\(false, false\);[\s\S]*?else if \(action === 'summary' && requestedTargetId\) void loadRunningSummary\(requestedTargetId\)/);
+  assert.match(source, /setThreads\(updated\);[\s\S]*?reportRunningSummary\(\{ targetId: requestedTargetId, count: updated\.length, status: 'ready' \}\)/);
+  assert.match(source, /const selectedNow = selectedRef\.current;[\s\S]*?if \(found\) \{\s*updateSelected\(found\)[\s\S]*?else if \(!loadMore\) \{\s*setSelectedMissing\(true\)/);
 });
 
 test('未読込・実行中0件・通常ページ0件・要求失敗の案内を区別する', async () => {

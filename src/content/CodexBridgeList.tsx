@@ -19,6 +19,8 @@ import { CodexBridgeProjectFolderFilter } from './CodexBridgeProjectFolderFilter
 import { codexBridgeReadErrorLabel } from './codexbridge-read-error-label.ts';
 import type { ConversationPanelWatchSelection } from '../shared/conversation-panel-state-repository.ts';
 import type { RunningThreadSummary } from './codexbridge-running-summary.ts';
+import { conversationIdFromPath } from '../shared/conversation-route.ts';
+import { CodexBridgeTerminalRefreshCoordinator, type CodexBridgeTerminalEventSignal } from './codexbridge-terminal-refresh.ts';
 
 type ConnectionState = 'loading' | 'connected' | 'error';
 
@@ -104,10 +106,12 @@ export function CodexBridgeList({
   const [status, setStatus] = useState<CodexBridgeThreadStatus | null>(null);
   const [statusBusy, setStatusBusy] = useState(false);
   const [statusError, setStatusError] = useState('');
+  const terminalContext = useRef({ connection, mode: listMode, threadsBusy: false });
   const selectedRef = useRef<CodexBridgeThread | null>(null);
   const targetIdRef = useRef('');
   const targetListGeneration = useRef(0);
   const runningSummaryGeneration = useRef(0);
+  const terminalRefresh = useRef(new CodexBridgeTerminalRefreshCoordinator());
   const requestTracker = useRef<CodexBridgeRequestTracker | null>(null);
   if (!requestTracker.current) requestTracker.current = new CodexBridgeRequestTracker();
 
@@ -120,6 +124,9 @@ export function CodexBridgeList({
     onRunningSummaryChange?.(summary);
   }
 
+  function updateConnection(next: ConnectionState) { terminalContext.current.connection = next; setConnection(next); }
+  function updateThreadsBusy(busy: boolean) { terminalContext.current.threadsBusy = busy; setThreadsBusy(busy); }
+
   function invalidateRunningSummary(status: RunningThreadSummary['status'], targetId = targetIdRef.current || null) {
     runningSummaryGeneration.current += 1;
     reportRunningSummary({ targetId, count: null, status });
@@ -128,10 +135,11 @@ export function CodexBridgeList({
   function invalidateThreadData() {
     requestTracker.current?.invalidateThreads();
     requestTracker.current?.invalidateStatus();
+    terminalRefresh.current.clearPending();
     setThreads([]);
     setNextCursor(null);
     setThreadsLoaded(false);
-    setThreadsBusy(false);
+    updateThreadsBusy(false);
     setStatus(null);
     setStatusBusy(false);
     setThreadsError('');
@@ -142,13 +150,13 @@ export function CodexBridgeList({
 
   async function refreshTargets() {
     const generation = ++targetListGeneration.current;
-    setConnection('loading');
+    terminalRefresh.current.clearPending(); updateConnection('loading');
     setConnectionMessage('対象マシンを確認しています。');
     try {
       const response: unknown = await chrome.runtime.sendMessage({ type: CODEX_BRIDGE_MCP_GET_TARGETS });
       if (generation !== targetListGeneration.current) return;
       if (!isReadResponse<readonly CodexBridgeTarget[]>(response) || !response.ok || !Array.isArray(response.data)) {
-        setConnection('error');
+        updateConnection('error');
         setConnectionMessage(isReadResponse(response) && !response.ok
           ? codexBridgeReadErrorLabel(response.reason)
           : 'Bridgeから不正な応答が返りました。');
@@ -161,7 +169,7 @@ export function CodexBridgeList({
         ? activeTargetId
         : availableTargets[0]?.id ?? '';
       setTargets(availableTargets);
-      setConnection('connected');
+      updateConnection('connected');
       setConnectionMessage('Bridgeへ接続しています。');
       if (nextTargetId !== activeTargetId) {
         targetIdRef.current = nextTargetId;
@@ -171,7 +179,7 @@ export function CodexBridgeList({
         setThreads([]);
         setNextCursor(null);
         setThreadsLoaded(false);
-        setThreadsBusy(false);
+        updateThreadsBusy(false);
         setThreadsError('');
         updateSelected(null);
         setSelectedMissing(false);
@@ -181,7 +189,7 @@ export function CodexBridgeList({
       }
     } catch {
       if (generation === targetListGeneration.current) {
-        setConnection('error');
+        updateConnection('error');
         setConnectionMessage('Bridgeへ接続できません。');
         invalidateThreadData();
       }
@@ -197,17 +205,17 @@ export function CodexBridgeList({
     onConnectionChange?.({ state: connection, targetId: targetId || null, targetName });
   }, [connection, onConnectionChange, targetId, targets]);
 
-  async function loadThreads(loadMore: boolean) {
-    if (!targetId || threadsBusy || (loadMore && (listMode !== 'normal' || !nextCursor))) return;
-    setWatchFeedbackResetToken((current) => current + 1);
+  async function loadThreads(loadMore: boolean, resetWatchFeedback = true) {
     const requestedTargetId = targetIdRef.current;
+    if (!requestedTargetId || terminalContext.current.threadsBusy || (loadMore && (terminalContext.current.mode !== 'normal' || !nextCursor))) return;
+    if (resetWatchFeedback) setWatchFeedbackResetToken((current) => current + 1);
     const requestedCursor = loadMore ? nextCursor : null;
     const request = requestTracker.current!.beginThreads(requestedTargetId, requestedCursor);
     if (!requestTracker.current!.isCurrentThreads(request)) return;
-    if (listMode === 'running' && !loadMore) {
+    if (terminalContext.current.mode === 'running' && !loadMore) {
       invalidateRunningSummary('loading', requestedTargetId);
     }
-    setThreadsBusy(true);
+    updateThreadsBusy(true);
     setThreadsError('');
     if (!loadMore) {
       setThreads([]);
@@ -221,7 +229,7 @@ export function CodexBridgeList({
       const response: unknown = await chrome.runtime.sendMessage({
         type: CODEX_BRIDGE_MCP_GET_THREADS,
         targetId: requestedTargetId,
-        ...(listMode === 'running' ? { runningOnly: true } : {}),
+        ...(terminalContext.current.mode === 'running' ? { runningOnly: true } : {}),
         ...(requestedCursor ? { cursor: requestedCursor } : {}),
       });
       if (!requestTracker.current!.isCurrentThreads(request)) return;
@@ -231,7 +239,7 @@ export function CodexBridgeList({
         setThreadsError(isReadResponse(response) && !response.ok
           ? codexBridgeReadErrorLabel(response.reason)
           : 'Bridgeから不正な応答が返りました。');
-        if (listMode === 'running' && !loadMore) {
+        if (request.mode === 'running' && !loadMore) {
           const reason = isReadResponse(response) && !response.ok ? response.reason : null;
           reportRunningSummary({ targetId: requestedTargetId, count: null,
             status: reason === 'running-only-unsupported' ? 'unsupported' : 'error' });
@@ -243,7 +251,7 @@ export function CodexBridgeList({
       setThreads(updated);
       setNextCursor(response.data.nextCursor);
       setThreadsLoaded(true);
-      if (listMode === 'running' && !loadMore) {
+      if (request.mode === 'running' && !loadMore) {
         reportRunningSummary({ targetId: requestedTargetId, count: updated.length, status: 'ready' });
       }
       const selectedNow = selectedRef.current;
@@ -259,10 +267,17 @@ export function CodexBridgeList({
     } catch {
       if (requestTracker.current!.isCurrentThreads(request)) {
         setThreadsError('Bridgeへ接続できません。');
-        if (listMode === 'running' && !loadMore) reportRunningSummary({ targetId: requestedTargetId, count: null, status: 'error' });
+        if (request.mode === 'running' && !loadMore) reportRunningSummary({ targetId: requestedTargetId, count: null, status: 'error' });
       }
     } finally {
-      if (requestTracker.current!.isLatestThreads(request)) setThreadsBusy(false);
+      if (requestTracker.current!.isLatestThreads(request)) {
+        updateThreadsBusy(false);
+        if (terminalRefresh.current.finishRunningRequest(requestedTargetId, {
+          targetId: targetIdRef.current || null, mode: terminalContext.current.mode,
+          connected: terminalContext.current.connection === 'connected',
+          routeCurrent: Boolean(conversationId && conversationIdFromPath(window.location.pathname) === conversationId), threadsBusy: false,
+        })) void loadThreads(false, false);
+      }
     }
   }
 
@@ -289,15 +304,27 @@ export function CodexBridgeList({
     }
   }
 
+  function handleTerminalEvents(events: readonly CodexBridgeTerminalEventSignal[]) {
+    const requestedTargetId = targetIdRef.current || null;
+    const action = terminalRefresh.current.observe(events, {
+      targetId: requestedTargetId, mode: terminalContext.current.mode, connected: terminalContext.current.connection === 'connected',
+      routeCurrent: Boolean(conversationId && conversationIdFromPath(window.location.pathname) === conversationId),
+      threadsBusy: terminalContext.current.threadsBusy,
+    });
+    if (action === 'threads') void loadThreads(false, false);
+    else if (action === 'summary' && requestedTargetId) void loadRunningSummary(requestedTargetId);
+  }
+
   function changeListMode(mode: CodexBridgeThreadListMode) {
     if (mode === listMode) return;
     requestTracker.current?.selectMode(mode);
+    terminalContext.current.mode = mode; terminalRefresh.current.clearPending();
     runningSummaryGeneration.current += 1;
     setListMode(mode);
     setThreads([]);
     setNextCursor(null);
     setThreadsLoaded(false);
-    setThreadsBusy(false);
+    updateThreadsBusy(false);
     setThreadsError('');
     setSelectedMissing(Boolean(selectedRef.current));
     setStatus(null);
@@ -363,13 +390,13 @@ export function CodexBridgeList({
           <select value={targetId} onChange={(event) => {
             const value = event.currentTarget.value;
             targetIdRef.current = value;
-            requestTracker.current?.selectTarget(value);
+            requestTracker.current?.selectTarget(value); terminalRefresh.current.clearPending();
             invalidateRunningSummary('loading', value || null);
             setTargetId(value);
             setThreads([]);
             setNextCursor(null);
             setThreadsLoaded(false);
-            setThreadsBusy(false);
+            updateThreadsBusy(false);
             setThreadsError('');
             updateSelected(null);
             setSelectedMissing(false);
@@ -466,6 +493,7 @@ export function CodexBridgeList({
         onSelectBridgeEvent={onSelectBridgeEvent}
         threadCandidates={threads}
         onSummaryChange={onSummaryChange}
+        onTerminalEvents={handleTerminalEvents}
       />
     </section>
   );

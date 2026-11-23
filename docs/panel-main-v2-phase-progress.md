@@ -69,6 +69,14 @@
 - 未実装の改善案：監視の確実な終了event後に同一targetのrunning_onlyを再取得し、A一覧と件数を同期する。件数を単純減算しない。設計案の記録であり、実装済みとは扱わない。
 - C37の`FAIL`（原因未特定）は維持する。
 
+## C38 terminal event後のA実行中一覧更新（2026-11-23）
+
+- 原因：Aのrunning_only一覧と件数は初期表示・A操作時だけ取得しており、C45でBの監視解除とCの終了event保管が成功してもAへ更新通知する経路がなかった。
+- 実装：B/Cの成功したowner-filtered一覧snapshotを会話・connection別に比較し、新規terminal event IDだけをidentity-only callbackでAへ通知する。初回snapshotの過去event、ACK、clear後の再表示、event順変更、watch開始/解除だけのrefreshは通知しない。connection IDが変わった最初のsnapshotは履歴基準にする。
+- Aは現在の会話route・接続状態・target・modeを確認する。running modeでは既存requestTrackerを通す`running_only=true`要求を1回行い、その同じ応答から一覧とsummary件数を更新する。更新中に届いたterminal eventは現在requestの完了後に1回だけ続ける。normal modeではrunning summaryだけを再取得し、20件cursor・一覧・選択を変更しない。失敗・unsupportedは`—`、空配列は`0`を既存処理で維持する。
+- `mcp-client.ts`のboolean schema確認・session復旧時の再確認・unsupported応答は既存契約を再確認し、変更していない。local/remote schema未対応時の実機挙動は未確認。Service Worker復旧、SPA、同一会話複数tabはChrome実機未確認。
+- 自動テストPASS：`pnpm test` 668/668、`pnpm typecheck`、`pnpm lint`、`pnpm build` exit 0。Chrome実機NOT_RUN。distはbuildで更新したが、Chrome登録先`D:\weito\Documents\src\codexapp\ChatPanelPlus-Content-Probe-20261021`へは未反映。C38全体受入は`NOT_RUN`を維持し、C37とC44/C45の実機受入記録は変更しない。
+
 ## C37実機再受入と正式ロード元の確認（2026-11-23）
 
 - 時系列：上記の2026-11-22記録時点では、CPPのfinal-answer取得失敗と当時raw MCP応答が未収集だったため原因未特定としていた。履歴はその時点の観測として保持し、後続調査で判明した原因と修正を本節に追記する。
