@@ -123,10 +123,9 @@ export function ConversationStatistics({
       onAnswerCompleted: (event, eventConversationId) => {
         try {
           const autoWatchResult = publishCodexBridgeAutoWatchCompletion(
-            document, window.location.pathname, event, eventConversationId,
+            window.location.pathname, event, eventConversationId,
           );
-          if (autoWatchResult.status === 'skipped' && autoWatchResult.reason !== 'no-thread-ids'
-            && autoWatchResult.reason !== 'duplicate-event') {
+          if (autoWatchResult.status === 'skipped' && autoWatchResult.reason !== 'duplicate-event') {
             console.debug('[ChatPanelPlus] 回答完了時の自動監視登録をスキップしました:', autoWatchResult.reason);
           }
         } catch {

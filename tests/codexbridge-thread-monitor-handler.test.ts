@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   CODEX_BRIDGE_AUTO_WATCH_COMPLETED,
   CODEX_BRIDGE_AUTO_WATCH_GET,
+  CODEX_BRIDGE_AUTO_WATCH_GET_RUNNING_CANDIDATES,
   CODEX_BRIDGE_AUTO_WATCH_SET,
   CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH,
   CODEX_BRIDGE_WATCH_ACK_EVENTS,
@@ -79,9 +80,14 @@ function handlerFixture(connectionId = item.connectionId, sourceItems: readonly 
       calls.push(`auto:set:${targetId}:${tabId}:${conversationId}:${enabled}`);
       return { ok: true as const, status: await getAutoStatus(targetId, conversationId) };
     },
-    async registerCompletedAnswer(targetId: string, tabId: number, conversationId: string, turnKey: string,
+    async getRunningCandidates(targetId: string, tabId: number, conversationId: string, turnKey: string,
+      assistantMessageId: string) {
+      calls.push(`auto:candidates:${targetId}:${tabId}:${conversationId}:${turnKey}:${assistantMessageId}`);
+      return { ok: true as const, data: { connectionId, threadIds: ['thread-1'] } };
+    },
+    async registerCompletedAnswer(targetId: string, candidateConnectionId: string, tabId: number, conversationId: string, turnKey: string,
       assistantMessageId: string, threadIds: readonly string[]) {
-      calls.push(`auto:completed:${targetId}:${tabId}:${conversationId}:${turnKey}:${assistantMessageId}:${threadIds.join(',')}`);
+      calls.push(`auto:completed:${targetId}:${candidateConnectionId}:${tabId}:${conversationId}:${turnKey}:${assistantMessageId}:${threadIds.join(',')}`);
       return threadIds.length;
     },
     async stopWatch(connection: string, targetId: string, threadId: string, conversationId: string) {
@@ -157,6 +163,27 @@ test('start, stop, read, list, and foreground refresh are explicit bounded opera
     `read:${item.connectionId}:${item.targetId}:${item.threadId}`,
     'list', 'foreground', 'list',
   ]);
+});
+
+test('candidate endpoint returns owner-verified Bridge IDs before the final registration message', async () => {
+  const { handle, calls } = handlerFixture(item.connectionId, [item], [event], false, true);
+  const response = await handle({ type: 'CODEX_BRIDGE_AUTO_WATCH_GET_RUNNING_CANDIDATES', targetId: 'target-1',
+    conversationId: 'test', turnKey: 'completed-turn', assistantMessageId: 'assistant-message' }, trustedSender);
+  assert.deepEqual(response, { ok: true, data: { connectionId: item.connectionId, threadIds: ['thread-1'] } });
+  assert.deepEqual(calls, ['auto:candidates:target-1:4:test:completed-turn:assistant-message']);
+});
+
+test('candidate request rejects oversized identity fields and extra payload before calling the owner service', async () => {
+  const { handle, calls } = handlerFixture(item.connectionId, [item], [event], false, true);
+  const base = { type: CODEX_BRIDGE_AUTO_WATCH_GET_RUNNING_CANDIDATES, targetId: 'target-1', conversationId: 'test',
+    turnKey: 'turn-1', assistantMessageId: 'answer-1' };
+  assert.deepEqual(await handle({ ...base, body: 'must not cross the message boundary' }, trustedSender), {
+    ok: false, reason: 'invalid-request',
+  });
+  assert.deepEqual(await handle({ ...base, turnKey: ` ${'x'.repeat(1_024)}` }, trustedSender), {
+    ok: false, reason: 'invalid-request',
+  });
+  assert.deepEqual(calls, []);
 });
 
 test('trusted senderが別会話から登録を要求すると移管結果を返し、sender不一致は拒否する', async () => {
@@ -272,19 +299,26 @@ test('自動登録のGET/SET/completionはtrusted current conversationだけに�
     ok: true, data: { targetId: 'target-1', connectionId: item.connectionId, enabled: false, ownerConversationId: 'test',
       state: 'off', failure: null, watchingThreadCount: 0 },
   });
+  const candidateRequest = { type: CODEX_BRIDGE_AUTO_WATCH_GET_RUNNING_CANDIDATES, targetId: 'target-1', conversationId: 'test',
+    turnKey: 'turn-1', assistantMessageId: 'answer-1' };
+  assert.deepEqual(await handle(candidateRequest, trustedSender), {
+    ok: true, data: { connectionId: item.connectionId, threadIds: ['thread-1'] },
+  });
   const completed = {
-    type: CODEX_BRIDGE_AUTO_WATCH_COMPLETED, targetId: 'target-1', conversationId: 'test', turnKey: 'turn-1',
+    type: CODEX_BRIDGE_AUTO_WATCH_COMPLETED, targetId: 'target-1', candidateConnectionId: item.connectionId,
+    conversationId: 'test', turnKey: 'turn-1',
     assistantMessageId: 'answer-1', threadIds: ['01a207cf-52ab-7900-a91d-3288982ab221'],
   };
   assert.deepEqual(await handle(completed, trustedSender), { ok: true, data: { registeredCount: 1 } });
   const mismatched = { ...trustedSender, url: 'https://chatgpt.com/c/other', tab: { id: 8, url: 'https://chatgpt.com/c/other' } };
   assert.equal(await handle(completed, mismatched), null);
   await handle({ type: CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH }, trustedSender);
-  assert.deepEqual(calls.slice(0, 5), [
+  assert.deepEqual(calls.slice(0, 6), [
     'auto:get:target-1:test',
     'auto:set:target-1:4:test:true',
     'auto:get:target-1:test',
-    'auto:completed:target-1:4:test:turn-1:answer-1:01a207cf-52ab-7900-a91d-3288982ab221',
+    'auto:candidates:target-1:4:test:turn-1:answer-1',
+    `auto:completed:target-1:${item.connectionId}:4:test:turn-1:answer-1:01a207cf-52ab-7900-a91d-3288982ab221`,
     'foreground',
   ]);
   assert.equal(calls.some((call) => call.startsWith('auto:foreground:')), false);
@@ -293,7 +327,8 @@ test('自動登録のGET/SET/completionはtrusted current conversationだけに�
 test('自動登録completionの余分なfieldと32件超過を拒否する', async () => {
   const { handle, calls } = handlerFixture(item.connectionId, [item], [event], false, true);
   const base = {
-    type: CODEX_BRIDGE_AUTO_WATCH_COMPLETED, targetId: 'target-1', conversationId: 'test', turnKey: 'turn-1',
+    type: CODEX_BRIDGE_AUTO_WATCH_COMPLETED, targetId: 'target-1', candidateConnectionId: item.connectionId,
+    conversationId: 'test', turnKey: 'turn-1',
     assistantMessageId: 'answer-1', threadIds: ['01a207cf-52ab-7900-a91d-3288982ab221'],
   };
   assert.deepEqual(await handle({ ...base, text: 'must not cross the message boundary' }, trustedSender), {

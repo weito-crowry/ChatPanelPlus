@@ -9,6 +9,7 @@ import {
   CODEX_BRIDGE_WATCH_ACK_EVENT_IDS_LIMIT,
   CODEX_BRIDGE_WATCH_CLEAR_EVENTS,
   CODEX_BRIDGE_AUTO_WATCH_GET,
+  CODEX_BRIDGE_AUTO_WATCH_GET_RUNNING_CANDIDATES,
   CODEX_BRIDGE_AUTO_WATCH_SET,
   CODEX_BRIDGE_AUTO_WATCH_COMPLETED,
   CODEX_BRIDGE_WATCH_LIST,
@@ -17,6 +18,7 @@ import {
   CODEX_BRIDGE_WATCH_START,
   CODEX_BRIDGE_WATCH_STOP,
   createCodexBridgeConnectionId,
+  isCodexBridgeAutoWatchIdentity,
   isCodexBridgeWatchIdentifier,
   type CodexBridgeWatchListData,
   type CodexBridgeWatchMessage,
@@ -58,7 +60,8 @@ export type CodexBridgeThreadMonitorHandlerOptions = Readonly<{
     | { readonly ok: true; readonly muted: boolean; readonly revision: number }
     | { readonly ok: false }
   >;
-  autoRegistration?: Pick<CodexBridgeAutoThreadRegistration, 'getStatus' | 'setEnabled' | 'registerCompletedAnswer' | 'stopWatch'>;
+  autoRegistration?: Pick<CodexBridgeAutoThreadRegistration, 'getStatus' | 'setEnabled' | 'getRunningCandidates'
+    | 'registerCompletedAnswer' | 'stopWatch'>;
 }>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -115,15 +118,18 @@ function isMessage(value: unknown): value is CodexBridgeWatchMessage | CodexBrid
     && (value.type === CODEX_BRIDGE_AUTO_WATCH_GET
       ? keys.length === 3 : keys.length === 4 && typeof value.enabled === 'boolean')) return true;
   if (value.type === CODEX_BRIDGE_AUTO_WATCH_COMPLETED) {
-    return keys.length === 6 && isCodexBridgeWatchIdentifier(value.targetId) && value.targetId.length <= 512
+    return keys.length === 7 && isCodexBridgeWatchIdentifier(value.targetId) && value.targetId.length <= 512
+      && isCodexBridgeWatchIdentifier(value.candidateConnectionId) && value.candidateConnectionId.length <= 96
       && isConversationId(value.conversationId)
-      && typeof value.turnKey === 'string' && value.turnKey.length > 0 && value.turnKey.length <= 1_024
-      && value.turnKey.trim() === value.turnKey
-      && typeof value.assistantMessageId === 'string' && value.assistantMessageId.length > 0
-      && value.assistantMessageId.length <= 1_024 && value.assistantMessageId.trim() === value.assistantMessageId
+      && isCodexBridgeAutoWatchIdentity(value.turnKey) && isCodexBridgeAutoWatchIdentity(value.assistantMessageId)
       && Array.isArray(value.threadIds) && value.threadIds.length > 0 && value.threadIds.length <= 32
-      && value.threadIds.every((id) => isCodexBridgeWatchIdentifier(id) && id.length <= 512)
+      && Array.from(value.threadIds).every((id) => isCodexBridgeWatchIdentifier(id) && id.length <= 512)
       && new Set(value.threadIds).size === value.threadIds.length;
+  }
+  if (value.type === CODEX_BRIDGE_AUTO_WATCH_GET_RUNNING_CANDIDATES) {
+    return keys.length === 5 && isCodexBridgeWatchIdentifier(value.targetId) && value.targetId.length <= 512
+      && isConversationId(value.conversationId)
+      && isCodexBridgeAutoWatchIdentity(value.turnKey) && isCodexBridgeAutoWatchIdentity(value.assistantMessageId);
   }
   if (value.type === CODEX_BRIDGE_WATCH_START) {
     return keys.length === 4 && keys.includes('targetId') && keys.includes('threadId') && keys.includes('conversationId')
@@ -181,6 +187,7 @@ export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridg
     | CodexBridgeWatchResponse<Readonly<{ removed: boolean }>>
     | CodexBridgeWatchResponse<CodexBridgeWatchListData>
     | CodexBridgeWatchResponse<CodexBridgeAutoWatchStatus>
+    | CodexBridgeWatchResponse<Readonly<{ connectionId: string | null; threadIds: readonly string[] }>>
     | CodexBridgeWatchResponse<Readonly<{ registeredCount: number }>>
     | CodexBridgeWatchResponse<CodexBridgeWatchSnapshot | null>
     | CodexBridgeWatchResponse<CodexBridgeWatchListData>
@@ -192,6 +199,7 @@ export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridg
     if (!isMessage(message)) return { ok: false, reason: 'invalid-request' };
     const requestedConversationId = message.type === CODEX_BRIDGE_WATCH_START
       || message.type === CODEX_BRIDGE_AUTO_WATCH_GET || message.type === CODEX_BRIDGE_AUTO_WATCH_SET
+      || message.type === CODEX_BRIDGE_AUTO_WATCH_GET_RUNNING_CANDIDATES
       || message.type === CODEX_BRIDGE_AUTO_WATCH_COMPLETED
       ? message.conversationId : undefined;
     const identity = trustedConversation(sender, options.extensionId, requestedConversationId);
@@ -206,10 +214,16 @@ export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridg
         const result = await options.autoRegistration.setEnabled(message.targetId, identity.tabId, identity.conversationId, message.enabled);
         return result.ok ? { ok: true, data: result.status } : { ok: false, reason: result.reason };
       }
+      if (message.type === CODEX_BRIDGE_AUTO_WATCH_GET_RUNNING_CANDIDATES) {
+        if (!options.autoRegistration) return { ok: true, data: { connectionId: null, threadIds: [] } };
+        return options.autoRegistration.getRunningCandidates(message.targetId, identity.tabId, identity.conversationId,
+          message.turnKey, message.assistantMessageId);
+      }
       if (message.type === CODEX_BRIDGE_AUTO_WATCH_COMPLETED) {
         if (!options.autoRegistration) return { ok: true, data: { registeredCount: 0 } };
-        const registeredCount = await options.autoRegistration.registerCompletedAnswer(message.targetId, identity.tabId,
-          identity.conversationId, message.turnKey, message.assistantMessageId, message.threadIds);
+        const registeredCount = await options.autoRegistration.registerCompletedAnswer(message.targetId,
+          message.candidateConnectionId, identity.tabId, identity.conversationId, message.turnKey,
+          message.assistantMessageId, message.threadIds);
         return { ok: true, data: { registeredCount } };
       }
       if (message.type === CODEX_BRIDGE_WATCH_START) {

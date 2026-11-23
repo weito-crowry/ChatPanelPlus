@@ -1,6 +1,7 @@
 import {
   CODEX_BRIDGE_AUTO_WATCH_ALARM,
   CODEX_BRIDGE_AUTO_WATCH_THREAD_IDS_LIMIT,
+  isCodexBridgeAutoWatchIdentity,
   linkLiveCodexBridgeExecutionTurn,
   CODEX_BRIDGE_AUTO_WATCH_STORAGE_KEY,
   isCodexBridgeWatchIdentifier,
@@ -13,6 +14,8 @@ import { isConversationId } from '../shared/conversation-route.ts';
 import type { LocalStorageLike } from './thread-monitor-storage.ts';
 import { isAutoWatchFailure, MAX_ENTRIES, MAX_SKIPS_PER_ENTRY, readAutoWatchState,
   type AutoEntry, type AutoState } from './thread-monitor-auto-registration-state.ts';
+import { CodexBridgeAutoWatchCandidates, type CodexBridgeAutoWatchCandidateLookupResult }
+  from './thread-monitor-auto-registration-candidates.ts';
 import type { CodexBridgeMonitorAccess, CodexBridgeThreadMonitor } from './thread-monitor.ts';
 
 type AlarmLike = Readonly<{ clear(name: string): Promise<boolean> }>;
@@ -90,6 +93,7 @@ export class CodexBridgeAutoThreadRegistration {
   private readonly resolveAccess: () => Promise<CodexBridgeMonitorAccess>;
   private readonly loadOwnerMute: (tabId: number, conversationId: string) => Promise<OwnerMuteResult>;
   private readonly ownerTabMatches: (tabId: number, conversationId: string) => Promise<boolean>;
+  private readonly candidates: CodexBridgeAutoWatchCandidates;
   private storageTail: Promise<void> = Promise.resolve();
   private readonly targetTails = new Map<string, Promise<void>>();
   private readonly completionFlights = new Set<string>();
@@ -105,6 +109,7 @@ export class CodexBridgeAutoThreadRegistration {
   ) {
     this.storage = storage; this.alarms = alarms; this.monitor = monitor; this.resolveAccess = resolveAccess;
     this.loadOwnerMute = loadOwnerMute; this.ownerTabMatches = ownerTabMatches;
+    this.candidates = new CodexBridgeAutoWatchCandidates(storage, monitor, resolveAccess, ownerTabMatches);
   }
 
   async getStatus(targetId: string, conversationId: string): Promise<CodexBridgeAutoWatchStatus> {
@@ -203,6 +208,7 @@ export class CodexBridgeAutoThreadRegistration {
 
   async registerCompletedAnswer(
     targetId: string,
+    candidateConnectionId: string,
     ownerTabId: number,
     conversationId: string,
     turnKey: string,
@@ -210,19 +216,19 @@ export class CodexBridgeAutoThreadRegistration {
     candidateThreadIds: readonly string[],
   ): Promise<number> {
     if (!isCodexBridgeWatchIdentifier(targetId) || targetId.length > MAX_THREAD_ID_LENGTH
+      || !isCodexBridgeWatchIdentifier(candidateConnectionId) || candidateConnectionId.length > 96
       || !Number.isSafeInteger(ownerTabId) || ownerTabId < 0 || !isConversationId(conversationId)
-      || !turnKey || turnKey.length > 1_024 || turnKey.trim() !== turnKey
-      || !assistantMessageId || assistantMessageId.length > 1_024 || assistantMessageId.trim() !== assistantMessageId
+      || !isCodexBridgeAutoWatchIdentity(turnKey) || !isCodexBridgeAutoWatchIdentity(assistantMessageId)
       || !Array.isArray(candidateThreadIds) || !candidateThreadIds.length
       || candidateThreadIds.length > CODEX_BRIDGE_AUTO_WATCH_THREAD_IDS_LIMIT
-      || candidateThreadIds.some((id) => !isCodexBridgeWatchIdentifier(id) || id.length > MAX_THREAD_ID_LENGTH)) return 0;
+      || Array.from(candidateThreadIds).some((id) => !isCodexBridgeWatchIdentifier(id) || id.length > MAX_THREAD_ID_LENGTH)) return 0;
     const threadIds = [...new Set(candidateThreadIds)];
-    const dedupeKey = `${targetId}\u0000${ownerTabId}\u0000${conversationId}\u0000${turnKey}\u0000${assistantMessageId}`;
+    const dedupeKey = `${candidateConnectionId}\u0000${targetId}\u0000${ownerTabId}\u0000${conversationId}\u0000${turnKey}\u0000${assistantMessageId}`;
     if (this.recentCompletions.has(dedupeKey) || this.completionFlights.has(dedupeKey)) return 0;
     this.completionFlights.add(dedupeKey);
     try {
       return await this.withTarget(this.ownerKey(ownerTabId, targetId),
-        () => this.registerCompletedAnswerOnce(targetId, ownerTabId, conversationId, threadIds));
+        () => this.registerCompletedAnswerOnce(targetId, candidateConnectionId, ownerTabId, conversationId, threadIds));
     } finally {
       this.rememberCompletion(dedupeKey);
       this.completionFlights.delete(dedupeKey);
@@ -231,6 +237,11 @@ export class CodexBridgeAutoThreadRegistration {
 
   async restore(): Promise<void> {
     try { await this.alarms.clear(CODEX_BRIDGE_AUTO_WATCH_ALARM); } catch { /* Retire legacy discovery alarms only. */ }
+  }
+
+  getRunningCandidates(targetId: string, ownerTabId: number, conversationId: string, turnKey: string,
+    assistantMessageId: string): Promise<CodexBridgeAutoWatchCandidateLookupResult> {
+    return this.candidates.get(targetId, ownerTabId, conversationId, turnKey, assistantMessageId);
   }
 
   async stopWatch(connectionId: string, targetId: string, threadId: string, ownerConversationId: string): Promise<boolean> {
@@ -260,6 +271,7 @@ export class CodexBridgeAutoThreadRegistration {
 
   private async registerCompletedAnswerOnce(
     targetId: string,
+    candidateConnectionId: string,
     ownerTabId: number,
     conversationId: string,
     candidateThreadIds: readonly string[],
@@ -277,6 +289,10 @@ export class CodexBridgeAutoThreadRegistration {
     }
     if (!access.connectionId) {
       await this.recordFailureForOwner(targetId, ownerTabId, conversationId, access.failure ?? 'connection-unavailable');
+      return 0;
+    }
+    if (access.connectionId !== candidateConnectionId) {
+      await this.recordFailureForOwner(targetId, ownerTabId, conversationId, 'connection-changed');
       return 0;
     }
     let entry = state.entries.find((candidate) => candidate.enabled && candidate.connectionId === access.connectionId
@@ -301,7 +317,8 @@ export class CodexBridgeAutoThreadRegistration {
         }
         return access.readRunningThreads!(targetId);
       });
-      if (!page || page.nextCursor !== null || !Array.isArray(page.threads) || page.threads.length > MAX_RUNNING_THREADS) {
+      if (!page || page.nextCursor !== null || !Array.isArray(page.threads) || page.threads.length > MAX_RUNNING_THREADS
+        || Array.from(page.threads).some((thread) => !isRecord(thread))) {
         throw Object.assign(new Error('invalid running_only response'), { code: 'protocol-error' });
       }
       threads = page.threads;
@@ -325,7 +342,7 @@ export class CodexBridgeAutoThreadRegistration {
       await this.recordFailureForEntry(entry, failureFor(error));
       return 0;
     }
-    if (latestAccess.connectionId !== entry.connectionId) {
+    if (latestAccess.connectionId !== entry.connectionId || latestAccess.connectionId !== candidateConnectionId) {
       await this.recordFailureForEntry(entry, 'connection-changed');
       return 0;
     }

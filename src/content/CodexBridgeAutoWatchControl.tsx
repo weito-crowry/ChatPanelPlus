@@ -9,7 +9,9 @@ import {
 import { conversationIdFromPath, isConversationId } from '../shared/conversation-route.ts';
 import { codexBridgeReadErrorLabel } from './codexbridge-read-error-label.ts';
 import {
+  createCodexBridgeAutoWatchCandidatesMessage,
   createCodexBridgeAutoWatchCompletionMessage,
+  matchCompletedAnswerAfterBridgeCandidates,
   subscribeCodexBridgeAutoWatchCompletion,
 } from './codexbridge-auto-watch-completion.ts';
 
@@ -98,14 +100,38 @@ export function CodexBridgeAutoWatchControl({ targetId, targetName, conversation
     void refresh(targetId, conversationId, token);
     const unsubscribeCompletion = subscribeCodexBridgeAutoWatchCompletion((notice) => {
       const current = identity.current;
-      const message = createCodexBridgeAutoWatchCompletionMessage(
+      const request = createCodexBridgeAutoWatchCandidatesMessage(
         current.targetId, current.conversationId, window.location.pathname, notice,
       );
-      if (!message) return;
+      if (!request || !current.targetId || !current.conversationId) return;
       const requestToken = generation.current;
       const expectedTarget = current.targetId;
       const expectedConversation = current.conversationId;
-      void chrome.runtime.sendMessage(message).then((response: unknown) => {
+      void matchCompletedAnswerAfterBridgeCandidates(
+        () => chrome.runtime.sendMessage(request),
+        () => requestToken === generation.current && identity.current.targetId === expectedTarget
+          && identity.current.conversationId === expectedConversation
+          ? { document, pathname: window.location.pathname, targetId: expectedTarget, conversationId: expectedConversation }
+          : null,
+        expectedTarget, expectedConversation, notice,
+      ).then((match) => {
+        if (requestToken !== generation.current || identity.current.targetId !== expectedTarget
+          || identity.current.conversationId !== expectedConversation
+          || conversationIdFromPath(window.location.pathname) !== expectedConversation) return;
+        if (match.status === 'failed') { setFailure(match.reason); return; }
+        if (match.status !== 'ready') {
+          if (match.reason !== 'invalid-route' && match.reason !== 'no-running-candidates' && match.reason !== 'no-matching-ids') {
+            console.debug('[ChatPanelPlus] 回答完了時の自動監視登録をスキップしました:', match.reason);
+          }
+          return;
+        }
+        const message = createCodexBridgeAutoWatchCompletionMessage(
+          expectedTarget, match.connectionId, expectedConversation, window.location.pathname, notice, match.threadIds,
+        );
+        if (!message) return;
+        return chrome.runtime.sendMessage(message);
+      }).then((response: unknown) => {
+        if (response === undefined) return;
         if (requestToken !== generation.current || identity.current.targetId !== expectedTarget
           || identity.current.conversationId !== expectedConversation
           || conversationIdFromPath(window.location.pathname) !== expectedConversation) return;

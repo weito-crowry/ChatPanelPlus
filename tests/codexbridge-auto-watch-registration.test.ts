@@ -9,6 +9,7 @@ import type { CodexBridgeTarget, CodexBridgeThread, CodexBridgeThreadPage, Codex
 import { CodexBridgeAutoThreadRegistration } from '../src/background/thread-monitor-auto-registration.ts';
 import { CodexBridgeThreadMonitor } from '../src/background/thread-monitor.ts';
 import {
+  matchCompletedAnswerAfterBridgeCandidates,
   publishCodexBridgeAutoWatchCompletion,
   subscribeCodexBridgeAutoWatchCompletion,
 } from '../src/content/codexbridge-auto-watch-completion.ts';
@@ -111,8 +112,15 @@ async function enable(h: ReturnType<typeof harness>) {
 async function register(h: ReturnType<typeof harness>, threadIds: readonly string[], completion = {
   turnKey: 'answer-turn', assistantMessageId: 'assistant-message',
 }) {
-  return h.auto.registerCompletedAnswer(target.id, ownerA.ownerTabId, ownerA.ownerConversationId,
+  return h.auto.registerCompletedAnswer(target.id, 'connection-A', ownerA.ownerTabId, ownerA.ownerConversationId,
     completion.turnKey, completion.assistantMessageId, threadIds);
+}
+
+async function getCandidates(h: ReturnType<typeof harness>, completion = {
+  turnKey: 'answer-turn', assistantMessageId: 'assistant-message',
+}) {
+  return h.auto.getRunningCandidates(target.id, ownerA.ownerTabId, ownerA.ownerConversationId,
+    completion.turnKey, completion.assistantMessageId);
 }
 
 test('ONは設定だけを保存し、すでに実行中のthreadを検索も登録もしない', async () => {
@@ -125,6 +133,73 @@ test('ONは設定だけを保存し、すでに実行中のthreadを検索も登
   const stored = h.storage.values[CODEX_BRIDGE_AUTO_WATCH_STORAGE_KEY] as { version: number; entries: unknown[] };
   assert.equal(stored.version, 1);
   assert.equal(stored.entries.length, 1);
+});
+
+test('Bridge候補取得は明示ON後だけ行い、応答中のlive thread.idだけを返す', async () => {
+  const finishedId = 'finished-candidate';
+  const estimatedId = 'estimated-candidate';
+  const h = harness([
+    liveThread(threadOneId, turnOneId),
+    { ...liveThread(finishedId, turnTwoId), currentExecution: null },
+    { ...liveThread(estimatedId, turnTwoId), currentExecution: {
+      ...liveThread(estimatedId, turnTwoId).currentExecution!, state: 'estimated_running', evidence: 'inferred',
+    } },
+  ]);
+  assert.deepEqual(await getCandidates(h), { ok: true, data: { connectionId: null, threadIds: [] } });
+  assert.equal(h.runningOnlyCalls, 0);
+  assert.equal((await enable(h)).ok, true);
+  assert.deepEqual(await getCandidates(h), { ok: true, data: { connectionId: 'connection-A', threadIds: [threadOneId] } });
+  assert.equal(h.runningOnlyCalls, 1);
+});
+
+test('完了turn/message identityはthread ID上限512文字ではなくschema上限1024文字まで受け入れる', async () => {
+  const h = harness([liveThread(threadOneId, turnOneId)]);
+  await enable(h);
+  const turnKey = 'turn'.repeat(150);
+  const assistantMessageId = 'assistant'.repeat(100);
+  assert.equal(turnKey.length, 600);
+  assert.equal(assistantMessageId.length, 900);
+  assert.deepEqual(await h.auto.getRunningCandidates(target.id, ownerA.ownerTabId, ownerA.ownerConversationId,
+    turnKey, assistantMessageId), {
+    ok: true, data: { connectionId: 'connection-A', threadIds: [threadOneId] },
+  });
+  assert.equal(h.runningOnlyCalls, 1);
+});
+
+test('Bridge候補IDの合計文字数上限を超えた応答は部分的に返さない', async () => {
+  const tooManyCharacters = Array.from({ length: 130 }, (_, index) =>
+    liveThread(`${String(index).padStart(3, '0')}-${'x'.repeat(508)}`, turnOneId));
+  const h = harness(tooManyCharacters);
+  await enable(h);
+  assert.deepEqual(await getCandidates(h), { ok: false, reason: 'protocol-error' });
+  assert.equal(h.runningOnlyCalls, 1);
+});
+
+test('candidate running_only応答中にowner routeが変わればID候補を返さない', async () => {
+  const h = harness([liveThread(threadOneId, turnOneId)]);
+  await enable(h);
+  let release!: () => void;
+  h.fetchBarrier = new Promise<void>((resolve) => { release = resolve; });
+  const reading = getCandidates(h);
+  await settle();
+  h.ownerTabMatches = false;
+  release();
+  const result = await reading;
+  assert.deepEqual(result, { ok: false, reason: 'owner-tab-unavailable' });
+  assert.equal(h.runningOnlyCalls, 1);
+});
+
+test('candidate running_only応答中にconnectionが変わればID候補を返さない', async () => {
+  const h = harness([liveThread(threadOneId, turnOneId)]);
+  await enable(h);
+  let release!: () => void;
+  h.fetchBarrier = new Promise<void>((resolve) => { release = resolve; });
+  const reading = getCandidates(h);
+  await settle();
+  h.connectionId = 'connection-B';
+  release();
+  assert.deepEqual(await reading, { ok: false, reason: 'connection-changed' });
+  assert.equal(h.runningOnlyCalls, 1);
 });
 
 test('回答完了時に一度だけ取得し、本文候補と完全一致するlive threadだけ登録する', async () => {
@@ -160,9 +235,9 @@ test('空候補、無効owner、別target、別connectionではBridgeを取得�
   const h = harness([liveThread(threadOneId, turnOneId)]);
   await enable(h);
   assert.equal(await register(h, []), 0);
-  assert.equal(await h.auto.registerCompletedAnswer(target.id, 8, ownerA.ownerConversationId,
+  assert.equal(await h.auto.registerCompletedAnswer(target.id, 'connection-A', 8, ownerA.ownerConversationId,
     'wrong-tab-turn', 'wrong-tab-message', [threadOneId]), 0);
-  assert.equal(await h.auto.registerCompletedAnswer('target-2', ownerA.ownerTabId, ownerA.ownerConversationId,
+  assert.equal(await h.auto.registerCompletedAnswer('target-2', 'connection-A', ownerA.ownerTabId, ownerA.ownerConversationId,
     'wrong-target-turn', 'wrong-target-message', [threadOneId]), 0);
   h.connectionId = 'connection-B';
   assert.equal(await register(h, [threadOneId], { turnKey: 'stale-turn', assistantMessageId: 'stale-message' }), 0);
@@ -332,12 +407,28 @@ test('AnswerCompletionTrackerから実サービスまで、音声状態に関係
     const active = turn(`completion-${suffix}`, '質問', '', `assistant-${suffix}`, 'in_progress');
     let registration: Promise<number> | null = null;
     const unsubscribe = subscribeCodexBridgeAutoWatchCompletion((notice) => {
-      registration = auto.auto.registerCompletedAnswer(target.id, ownerA.ownerTabId, notice.conversationId,
-        notice.turnKey, notice.assistantMessageId, notice.threadIds);
+      registration = (async () => {
+        const candidateResponse = await auto.auto.getRunningCandidates(target.id, ownerA.ownerTabId, notice.conversationId,
+          notice.turnKey, notice.assistantMessageId);
+        if (!candidateResponse.ok) return 0;
+        const match = await matchCompletedAnswerAfterBridgeCandidates(async () => {
+          assert.equal(auto.runningOnlyCalls, 1);
+          return { ok: true, data: candidateResponse.data };
+        }, () => {
+          assert.equal(auto.runningOnlyCalls, 1);
+          return { document: stats.document as unknown as Document, pathname: stats.window.location.pathname,
+            targetId: target.id, conversationId: notice.conversationId };
+        }, target.id, notice.conversationId, {
+          turnKey: notice.turnKey, assistantMessageId: notice.assistantMessageId,
+        });
+        if (match.status !== 'ready') return 0;
+        return auto.auto.registerCompletedAnswer(target.id, match.connectionId, ownerA.ownerTabId, notice.conversationId,
+          notice.turnKey, notice.assistantMessageId, match.threadIds);
+      })();
     });
     const stats = statisticsHarness(`/c/${ownerA.ownerConversationId}`, false, undefined, {
       onAnswerCompleted: (event, conversationId) => {
-        publishCodexBridgeAutoWatchCompletion(stats.document as unknown as Document, stats.window.location.pathname, event, conversationId);
+        publishCodexBridgeAutoWatchCompletion(stats.window.location.pathname, event, conversationId);
         dispatchAnswerCompletionNotifications({ notifyTab() {}, soundEnabled, soundVolumePercent: volume,
           playSound() { if (playbackFails) throw new Error('playback failed or muted'); } });
       },
@@ -352,7 +443,7 @@ test('AnswerCompletionTrackerから実サービスまで、音声状態に関係
     FakeMutationObserver.latest?.notify(active, active);
     await settle();
     assert.equal(await registration, 1);
-    assert.equal(auto.runningOnlyCalls, 1);
+    assert.equal(auto.runningOnlyCalls, 2);
     assert.deepEqual((await auto.monitor.list()).map((item) => item.threadId), [threadOneId]);
     stats.controller.stop();
     unsubscribe();

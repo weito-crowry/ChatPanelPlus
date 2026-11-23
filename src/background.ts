@@ -26,6 +26,7 @@ import { createCodexBridgeNotificationHandler } from './background/codexbridge-n
 import { createChromeSettingsRepository } from './shared/settings-repository.ts';
 import {
   CODEX_BRIDGE_AUTO_WATCH_GET,
+  CODEX_BRIDGE_AUTO_WATCH_GET_RUNNING_CANDIDATES,
   CODEX_BRIDGE_AUTO_WATCH_SET,
   CODEX_BRIDGE_AUTO_WATCH_COMPLETED,
   CODEX_BRIDGE_THREAD_MONITOR_ALARM,
@@ -74,6 +75,7 @@ function isCodexBridgeWatchMessage(message: unknown): boolean {
       || message.type === CODEX_BRIDGE_WATCH_LIST || message.type === CODEX_BRIDGE_WATCH_READ
       || message.type === CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH
       || message.type === CODEX_BRIDGE_AUTO_WATCH_GET || message.type === CODEX_BRIDGE_AUTO_WATCH_SET
+      || message.type === CODEX_BRIDGE_AUTO_WATCH_GET_RUNNING_CANDIDATES
       || message.type === CODEX_BRIDGE_AUTO_WATCH_COMPLETED
       || message.type === CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER);
 }
