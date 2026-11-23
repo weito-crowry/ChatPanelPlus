@@ -89,19 +89,46 @@ export function eventKindLabel(status: CodexBridgeTerminalEvent['status']): stri
 }
 
 export function finalAnswerLabel(result: CodexBridgeFinalAnswerResult): string {
-  if (result.status === 'retrieved') return '本文を取得しました。完全性は未確認です。';
+  if (result.status === 'retrieved') return result.completeness === 'confirmed'
+    ? '完了済みturnの確定した最終回答を取得しました。'
+    : '本文を取得しました。完全性は未確認です。';
   if (result.status === 'no-final-answer') return 'このturnのfinal_answerは見つかりませんでした。完全性は未確認です。';
-  if (result.status === 'pending') return 'turnが未完了のため、取得を保留しました。';
+  if (result.status === 'pending') return result.reason === 'turn_terminal_not_observed'
+    ? 'turnの完了記録を確認できないため、取得を保留しました。'
+    : 'turnが未完了のため、取得を保留しました。';
   if (result.status === 'incomplete') {
-    const labels: Record<typeof result.reason, string> = {
+    const labels: Record<string, string> = {
       'history-too-large': '履歴または本文が上限を超えたため、結果は不完全です。',
       'text-too-large': '本文が上限を超えたため、無言で切り詰めず取得を止めました。',
       'malformed-history': '履歴形式を確認できないため、最終回答を特定できません。',
       'turn-not-found': '指定turnを履歴内で確認できません。履歴応答の切り詰め情報がないため不完全です。',
       'multiple-matching-turns': '指定turnの候補が複数あり、回答を特定できません。',
       'multiple-final-answers': '最終回答候補が複数あり、本文を選べません。',
+      item_id_content_collision: '同じ回答itemに異なる内容が記録されており、結果を確認できません。',
+      terminal_status_conflict: 'turnの終了状態が競合しているため、結果を確認できません。',
+      final_answer_too_large: '最終回答が上限を超えたため、本文を取得できません。',
+      invalid_final_answer_text: '最終回答の形式を確認できないため、本文を取得できません。',
+      turn_failed: 'turnが失敗しているため、最終回答を取得できません。',
+      turn_interrupted: 'turnが中断されているため、最終回答を取得できません。',
+      turn_terminal_status_unknown: 'turnの終了状態を確認できないため、本文を取得できません。',
+      stored_record_invalid: '保存された最終回答を検証できません。',
+      stored_identity_mismatch: '保存記録のturn識別情報が一致しません。',
+      stored_result_invalid: '保存記録の形式を確認できません。',
+      remote_response_invalid: '接続先Bridgeの応答を検証できません。',
+      remote_response_identity_mismatch: '接続先Bridgeの応答先が一致しません。',
+      local_response_invalid: 'Bridgeの保存記録を検証できません。',
     };
-    return labels[result.reason];
+    return labels[result.reason] ?? 'Bridgeが最終回答を確認できませんでした。';
+  }
+  if (result.status === 'unavailable') {
+    const labels: Record<string, string> = {
+      no_confirmed_final_answer: 'Bridgeに確定済みの最終回答記録がありません。',
+      storage_unavailable: 'Bridgeの最終回答保存先を読み取れません。',
+      remote_tool_unsupported: '接続先Bridgeが最終回答取得に対応していません。',
+      remote_target_unavailable: '接続先Bridgeの最終回答を取得できません。',
+      remote_target_identity_unavailable: '接続先Bridgeの識別情報を確認できません。',
+    };
+    return labels[result.reason] ?? '最終回答を利用できません。';
   }
   const labels: Record<typeof result.reason, string> = {
     'connection-changed': '接続先がイベント発生時から変わったため取得しませんでした。',
@@ -111,8 +138,8 @@ export function finalAnswerLabel(result: CodexBridgeFinalAnswerResult): string {
     'http-error': 'BridgeからHTTPエラーが返りました。', disconnected: 'Bridgeに接続できません。',
     timeout: 'Bridgeへの要求がタイムアウトしました。', 'protocol-error': 'Bridgeの応答形式を確認できません。',
     'protocol-version-unsupported': 'MCP protocol versionに対応していません。',
-    'readonly-tool-unavailable': 'codex_threads読み取りtoolがありません。',
-    'readonly-probe-failed': 'codex_threadsの読み取りに失敗しました。',
+    'readonly-tool-unavailable': 'Bridgeに必要な読み取りtoolがありません。',
+    'readonly-probe-failed': 'Bridgeの読み取りtoolに失敗しました。',
     'permission-required': '接続先へのアクセス権限がありません。',
     'settings-unavailable': '接続設定を読み取れません。', 'unknown-error': '最終回答を取得できませんでした。',
   };

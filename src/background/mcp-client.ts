@@ -12,7 +12,10 @@ import {
 } from '../shared/codexbridge-mcp-protocol.ts';
 import type { CodexBridgeFinalAnswerResult } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import { McpTransportError, StreamableHttpMcpTransport } from './mcp-transport.ts';
-import { parseCodexBridgeFinalAnswer } from './codexbridge-final-answer.ts';
+import {
+  parseCodexBridgeFinalAnswer,
+  parseCodexBridgeFinalAnswerResponse,
+} from './codexbridge-final-answer.ts';
 
 type InitializeResult = Readonly<{ protocolVersion?: unknown }>;
 type ToolsListResult = Readonly<{ tools?: unknown }>;
@@ -267,19 +270,22 @@ export class CodexBridgeMcpClient {
   }
 
   async readFinalAnswer(targetId: string, threadId: string, turnId: string): Promise<CodexBridgeFinalAnswerResult> {
+    let result: CodexBridgeFinalAnswerResult;
     try {
-      const payload = readToolPayload(await this.callReadonlyTool('codex_threads', {
-        thread_id: threadId,
+      const payload = readToolPayload(await this.callReadonlyTool('codex_final_answer', {
         target_id: targetId,
-        include_history: true,
+        thread_id: threadId,
+        turn_id: turnId,
       }));
-      return parseCodexBridgeFinalAnswer(payload, threadId, turnId);
+      result = parseCodexBridgeFinalAnswerResponse(payload, targetId, threadId, turnId);
     } catch (error) {
-      if (error instanceof McpTransportError && error.code === 'response-too-large') {
-        return { status: 'incomplete', reason: 'history-too-large', completeness: 'unconfirmed' };
-      }
-      throw error;
+      if (!(error instanceof McpTransportError) || error.code !== 'readonly-tool-unavailable') throw error;
+      return this.readLegacyFinalAnswer(targetId, threadId, turnId);
     }
+    if (result.status === 'unavailable' && result.reason === 'no_confirmed_final_answer') {
+      return this.readLegacyFinalAnswer(targetId, threadId, turnId);
+    }
+    return result;
   }
 
   private async initializeSession(force = false): Promise<void> {
@@ -354,7 +360,27 @@ export class CodexBridgeMcpClient {
     if (!isRecord(result)) throw new McpTransportError('protocol-error');
   }
 
-  private async callReadonlyTool(name: 'codex_targets' | 'codex_threads' | 'codex_status', argumentsValue: Record<string, unknown>): Promise<unknown> {
+  private async readLegacyFinalAnswer(
+    targetId: string,
+    threadId: string,
+    turnId: string,
+  ): Promise<CodexBridgeFinalAnswerResult> {
+    try {
+      const payload = readToolPayload(await this.callReadonlyTool('codex_threads', {
+        thread_id: threadId,
+        target_id: targetId,
+        include_history: true,
+      }));
+      return parseCodexBridgeFinalAnswer(payload, threadId, turnId);
+    } catch (error) {
+      if (error instanceof McpTransportError && error.code === 'response-too-large') {
+        return { status: 'incomplete', reason: 'history-too-large', completeness: 'unconfirmed' };
+      }
+      throw error;
+    }
+  }
+
+  private async callReadonlyTool(name: 'codex_targets' | 'codex_threads' | 'codex_status' | 'codex_final_answer', argumentsValue: Record<string, unknown>): Promise<unknown> {
     if (!this.negotiatedProtocolVersion) await this.initializeSession();
     let availableTools = this.availableTools;
     if (!availableTools) {

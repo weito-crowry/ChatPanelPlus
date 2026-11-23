@@ -6,7 +6,7 @@ Updated: 2026-11-22
 
 C37は **FAIL／原因未特定／再検証待ち** のまま。CPPが失敗を表示した瞬間のraw `codex_threads(include_history=true)`応答が保存されていないため、CPP・CodexBridge・Codex App Serverのどこで差が生じたかを確定できない。
 
-## 確認済みの処理
+## 変更前に確認したlegacy処理
 
 1. CPPの `src/background/mcp-client.ts` は `codex_threads` に対象thread ID、target ID、`include_history: true` を渡す。
 2. `src/background/codexbridge-final-answer.ts` は指定thread・指定turnを照合し、turn内で `type=agentMessage` かつ `phase=final_answer` のitemだけを候補にする。候補0件は `no-final-answer`、複数候補や不正履歴は不完全扱いにする。status本文やcommentaryへのfallbackはしない。
@@ -28,3 +28,31 @@ C37は **FAIL／原因未特定／再検証待ち** のまま。CPPが失敗を�
 ## 影響
 
 C37の実機操作はFAIL（ユーザー報告）、根本原因分析は未完了。C31–C36など他のChrome外観・操作項目の判定はこの報告から変更しない。
+
+## C37 CPP統合更新（2026-11-23）
+
+### 実装状態
+
+- CodexBridge側には専用`codex_final_answer` MCP APIの実装と契約書`D:\CodexBridge\docs\codex-final-answer-mcp.md`がある。ただしBridge checkoutには未コミットの変更があり、この専用APIを含むBridgeはまだlive deployされていない。現在稼働中のBridgeがこのtoolを公開しているとは扱わない。
+- CPPはcached `tools/list`で`codex_final_answer`を確認し、公開されていれば指定された`target_id` / `thread_id` / `turn_id`をそのまま渡す。応答の3 ID、source marker、item ID、回答本文とサイズ、フィールド形状を検査し、適合した本文だけを`completeness=confirmed`として返す。不一致・破損応答はprotocol errorにし、その本文をUIへ返さない。
+- 新toolが公開されていない場合は従来の`codex_threads(include_history=true)`を使う。新toolが`unavailable`かつreason=`no_confirmed_final_answer`を返した場合も、指定turn内の厳密なlegacy history抽出だけを試す。それ以外の`unavailable`、`pending`、`incomplete`、不正応答ではhistoryへfallbackしない。legacy本文は引き続き`unconfirmed`。
+- 完了済み新API結果と旧history結果をUIで区別する。取得・コピー・composer挿入はいずれも既存の手動操作のままで、取得時に入力欄を変更したり送信したりしない。
+- Bridgeが稼働後に捕捉していない過去turnは、新APIの保存記録から復元できない。legacy historyにも指定turnの`agentMessage.phase=final_answer`がなければ`no-final-answer`のままとし、`codex_status.latest_agent_message`、commentary、partial/deltaを使わない。
+
+### CPPの隔離検証
+
+- 新規`tests/codexbridge-final-answer-mcp.test.ts`はtool優先、strictなidentity/source/item/shape検査、UTF-16上限、全status/reason、tool未公開時の互換経路、`no_confirmed_final_answer`のみのfallback、session更新後の再一覧、並行読取を検証する。
+- `tests/codexbridge-final-answer-presentation.test.mjs`はconfirmed表示とreasonの非表示、`tests/codexbridge-watch-panel.test.mjs`は取得時のdraft保護・自動送信なしを検証する。既存のhandler/owner/editor adapter回帰も含む全Node suiteは655/655 PASS。`pnpm run typecheck`と`pnpm run lint`もPASS。
+- 登録済み`dist/`を保護するため`pnpm test`（内部でbuildを実行）、build、deployは実行していない。CPPソース統合は隔離テスト済みだが、現在の登録済み拡張へは未反映。
+
+### live C37状態と受入手順
+
+C37の過去の実機FAILは維持し、新しい統合経路のlive受入は**NOT_RUN**。live成功とは扱わない。再検証はBridgeとCPPの両方が対象実装でdeployされた後に行う。
+
+1. 専用APIを含むBridgeをdeploy/restartし、CPP principalの`tools/list`に`codex_final_answer`があることを確認する。未deployのBridge checkoutやソース上のtool定義だけでは受入にしない。
+2. 新しいテストturnを実行・完了させ、`target_id`、`thread_id`、`turn_id`を同じturnに結び付ける。今回のdeploy以前に捕捉されなかった古いturnを新APIで復元できることは期待しない。
+3. CPPをビルドして登録済みの開発拡張へ反映し、Chromeで手動reloadする。正しいowner会話のterminal eventを選び、「最終回答を取得」を押す。
+4. 新しい捕捉済みturnではconfirmed表示と正確な本文を確認する。取得だけではcomposerに変更がないことを見てから、copyまたは明示的な「ChatGPT入力欄へ挿入」を選ぶ。専用test composerでcaret/選択範囲と既存draftが保たれ、送信・Codex turn開始が起きないことを確認する。
+5. Bridge接続変更、別owner会話、event選択変更/SPA遷移を行い、古い応答が別eventやcomposerへ反映されないことを確認する。新APIの未対応・storage unavailable・pending/incompleteは本文なしで表示し、履歴fallbackしない。過去未捕捉turnはlegacy historyにもfinal itemがなければ未発見のままであることを確認する。
+
+受入記録にはPASS/FAIL/NOT_RUNと日時だけを残し、token、会話本文、clipboard本文、owner/event/thread/turnの識別値は記録しない。

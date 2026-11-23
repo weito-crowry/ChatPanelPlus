@@ -31,6 +31,15 @@ test('copy and insertion are independent user actions and the answer is rendered
   assert.doesNotMatch(source, /CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER[\s\S]{0,300}CODEX_BRIDGE_MCP_GET_STATUS/);
 });
 
+test('answer retrieval leaves the composer draft untouched and never sends automatically', async () => {
+  const [source, card] = await Promise.all([readFile(sourcePath, 'utf8'), readFile(cardPath, 'utf8')]);
+  const retrieval = source.slice(source.indexOf('async function fetchSelectedAnswer'), source.indexOf('async function acknowledgeVisibleEvents'));
+  assert.doesNotMatch(retrieval, /insertAtCaret|clearComposer|requestSubmit|\.submit\(/);
+  assert.doesNotMatch(card, /type="submit"/);
+  assert.match(card, /onClick=\{\(\) => onInsertAnswer\(selectedEvent, displayedAnswer\.text\)\}/);
+  assert.match(source, /insertAtCaret\(text, environment, snapshot\)/);
+});
+
 test('conversation owner is required for watch data, final-answer actions, and ACK; raw shared storage is never rendered', async () => {
   const source = await readFile(sourcePath, 'utf8');
   assert.match(source, /conversationIdFromPath\(window\.location\.pathname\) !== requestConversationId/);
@@ -141,6 +150,7 @@ test('retrieved body completeness is labeled and Markdown whitespace remains vis
     readFile(cardPath, 'utf8'), readFile(stylePath, 'utf8'), readFile(presentationPath, 'utf8'),
   ]);
   assert.match(presentation, /完全性は未確認です/);
+  assert.match(card, /displayedAnswer\.completeness === 'unconfirmed'/);
   assert.match(card, /Bridge応答には切詰め情報がない/);
   assert.match(styles, /\.codex-bridge-answer-text[^{]*\{[^}]*white-space:\s*pre-wrap/s);
 });

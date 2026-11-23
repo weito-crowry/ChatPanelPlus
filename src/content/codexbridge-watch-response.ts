@@ -1,5 +1,6 @@
 import {
   isCodexBridgeTerminalEvent,
+  isCodexBridgeFinalAnswerReason,
   type CodexBridgeFinalAnswerResult,
   type CodexBridgeWatchListData,
   type CodexBridgeWatchSnapshot,
@@ -51,17 +52,22 @@ export function parseCodexBridgeFinalAnswer(value: unknown): CodexBridgeFinalAns
   if (!isRecord(value) || value.ok !== true || !isRecord(value.data)) return null;
   const data = value.data;
   if (data.status === 'retrieved' && typeof data.text === 'string' && data.text.length <= 256 * 1024
-    && data.completeness === 'unconfirmed') {
-    return { status: 'retrieved', text: data.text, completeness: 'unconfirmed' };
+    && (data.completeness === 'confirmed' || data.completeness === 'unconfirmed')) {
+    return { status: 'retrieved', text: data.text, completeness: data.completeness };
   }
   if (data.status === 'no-final-answer' && data.completeness === 'unconfirmed') {
     return { status: 'no-final-answer', completeness: 'unconfirmed' };
   }
-  if (data.status === 'pending') return { status: 'pending' };
-  if (data.status === 'incomplete' && ['history-too-large', 'text-too-large', 'malformed-history', 'turn-not-found',
-    'multiple-matching-turns', 'multiple-final-answers'].includes(String(data.reason))
+  if (data.status === 'pending' && !('text' in data)
+    && (data.reason === undefined || isCodexBridgeFinalAnswerReason(data.reason))) {
+    return data.reason === undefined ? { status: 'pending' } : { status: 'pending', reason: data.reason };
+  }
+  if (data.status === 'incomplete' && !('text' in data) && isCodexBridgeFinalAnswerReason(data.reason)
     && data.completeness === 'unconfirmed') {
-    return { status: 'incomplete', reason: data.reason as Extract<CodexBridgeFinalAnswerResult, { status: 'incomplete' }>['reason'], completeness: 'unconfirmed' };
+    return { status: 'incomplete', reason: data.reason, completeness: 'unconfirmed' };
+  }
+  if (data.status === 'unavailable' && !('text' in data) && isCodexBridgeFinalAnswerReason(data.reason)) {
+    return { status: 'unavailable', reason: data.reason };
   }
   if (data.status === 'failed' && ['connection-changed', 'event-not-found', 'authentication-required', 'forbidden',
     'endpoint-not-found', 'session-expired', 'http-error', 'disconnected', 'timeout', 'protocol-error',

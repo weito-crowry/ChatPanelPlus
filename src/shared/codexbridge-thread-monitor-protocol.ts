@@ -8,6 +8,7 @@ export const CODEX_BRIDGE_THREAD_MONITOR_MINUTES = 0.5;
 export const CODEX_BRIDGE_THREAD_MONITOR_MAX_WATCHES = 32;
 export const CODEX_BRIDGE_THREAD_MONITOR_FOREGROUND_MS = 5_000;
 export const CODEX_BRIDGE_WATCH_ACK_EVENT_IDS_LIMIT = 128;
+export const CODEX_BRIDGE_FINAL_ANSWER_REASON_MAX_LENGTH = 128;
 
 export const CODEX_BRIDGE_WATCH_START = 'CODEX_BRIDGE_WATCH_START' as const;
 export const CODEX_BRIDGE_WATCH_STOP = 'CODEX_BRIDGE_WATCH_STOP' as const;
@@ -50,15 +51,20 @@ export type CodexBridgeTerminalEvent = Readonly<{
 }>;
 
 export type CodexBridgeFinalAnswerResult =
-  | Readonly<{ status: 'retrieved'; text: string; completeness: 'unconfirmed' }>
+  | Readonly<{ status: 'retrieved'; text: string; completeness: 'confirmed' | 'unconfirmed' }>
   | Readonly<{ status: 'no-final-answer'; completeness: 'unconfirmed' }>
-  | Readonly<{ status: 'incomplete'; reason: 'history-too-large' | 'text-too-large' | 'malformed-history'
-    | 'turn-not-found' | 'multiple-matching-turns' | 'multiple-final-answers'; completeness: 'unconfirmed' }>
+  | Readonly<{ status: 'incomplete'; reason: string; completeness: 'unconfirmed' }>
+  | Readonly<{ status: 'unavailable'; reason: string }>
   | Readonly<{ status: 'failed'; reason: 'connection-changed' | 'event-not-found' | 'authentication-required'
     | 'forbidden' | 'endpoint-not-found' | 'session-expired' | 'http-error' | 'disconnected' | 'timeout'
     | 'protocol-error' | 'protocol-version-unsupported' | 'readonly-tool-unavailable' | 'readonly-probe-failed'
     | 'permission-required' | 'settings-unavailable' | 'unknown-error' }>
-  | Readonly<{ status: 'pending' }>;
+  | Readonly<{ status: 'pending'; reason?: string }>;
+
+export function isCodexBridgeFinalAnswerReason(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= CODEX_BRIDGE_FINAL_ANSWER_REASON_MAX_LENGTH
+    && /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(value);
+}
 
 export type CodexBridgeWatchFetchOutcome =
   | 'ok'

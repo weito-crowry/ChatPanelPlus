@@ -76,7 +76,8 @@ export function CodexBridgeNotificationCard({
         {displayedAnswer && <>
           <p className="codex-bridge-note" role="status">{finalAnswerLabel(displayedAnswer)}</p>
           {displayedAnswer.status === 'retrieved' && <>
-            <p className="codex-bridge-note">Bridge応答には切詰め情報がないため、取得本文の完全性は確認できません。</p>
+            {displayedAnswer.completeness === 'unconfirmed' &&
+              <p className="codex-bridge-note">Bridge応答には切詰め情報がないため、取得本文の完全性は確認できません。</p>}
             <div className="codex-bridge-answer-actions">
               <button type="button" className="codex-bridge-button" onMouseDown={(event) => event.preventDefault()}
                 onClick={() => { void onCopyAnswer(selectedEvent, displayedAnswer.text); }}>コピー</button>

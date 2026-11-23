@@ -31,7 +31,25 @@ CodexBridgeでは、CPP tokenの`tools/list`と`tools/call`を同じ4件に制�
 | PASS | Manifest権限の配備preflight | `tests/deployment-assets.test.mjs`が副作用のない`validateManifestPermissions`を直接検証。必須4権限とHTTP/HTTPS optional host pattern 2件を順不同で受理し、権限/originの欠落・重複・追加、および`host_permissions`/`optional_permissions`を拒否。隔離一時ディレクトリの検証も確認。登録済み拡張フォルダへの配備やChrome操作は行っていない。 |
 | PASS | 全pnpm検証 | `corepack pnpm check:size`、`lint`、`typecheck`、`test`、`build`は各exit 0。test内buildを含む全469 test pass。`git diff --check`もexit 0。 |
 
-最終回答の取得は指定turnと`final_answer` phaseに限定する。Bridgeの履歴sanitizationはメッセージ本文を16,000文字までに制限し、履歴応答には切詰め情報がないため、画面も`completeness=unconfirmed`と表示する。取得結果を完全な全文とみなさず、token・会話本文を検証記録へ貼り付けない。
+当時の最終回答取得は指定turnと`final_answer` phaseに限定するlegacy history経路で、履歴sanitizationはメッセージ本文を16,000文字までに制限し、履歴応答には切詰め情報がないため`completeness=unconfirmed`と表示していた。2026-11-23のC37更新では、専用APIの適合回答を`confirmed`とし、legacy history fallbackは引き続き`unconfirmed`とする。詳細は[C37診断・受入記録](c37-final-answer-diagnostic.md)。
+
+## C37 専用final-answer API統合（2026-11-23）
+
+- CPP sourceは`tools/list`で`codex_final_answer`を検出した場合、exact target/thread/turnを渡して専用APIを優先する。応答identity、source marker、item ID、フィールド形状、本文の空/Unicode/256 Ki UTF-16上限を検証し、適合した回答のみ`confirmed`。不正/identity不一致の本文は返さない。
+- 新API非対応はlegacy `codex_threads(include_history=true)`へ互換fallbackする。新APIの`unavailable/no_confirmed_final_answer`もlegacy抽出を試す。storage unavailable、remote unsupported、pending、incomplete、応答破損/不一致ではfallbackしない。旧経路は指定turnの`agentMessage.phase=final_answer`のみで、status/commentary/partialを使わない。
+- `tests/codexbridge-final-answer-mcp.test.ts`、`tests/codexbridge-final-answer-presentation.test.mjs`、`tests/codexbridge-watch-panel.test.mjs`および既存owner/connection/event/editor adapter testsを含むNode suiteは655/655 PASS。`pnpm run typecheck`、`pnpm run lint`もPASS。`pnpm test`、build/deployは登録済み`dist/`を変更しないため実行していない。
+- Bridge専用API実装は`D:\CodexBridge\docs\codex-final-answer-mcp.md`に記載されているが、未コミットのBridge変更を含み、live deploy/restartされていない。CPP実装もsource-onlyで登録済みdistへ未反映。Chrome受入はNOT_RUNで、過去のC37実機FAILを解消済みとは扱わない。
+- Bridgeが過去に捕捉していないturnは新APIから復元できない。legacy historyにもexact `final_answer` itemがなければ本文は未発見のままである。
+
+### C37 live受入手順
+
+1. 専用APIを含むBridgeを別途deploy/restartし、CPP principalのlive `tools/list`に`codex_final_answer`が掲載されることを確認する。古いBridgeの4件catalogと新Bridgeのcatalogを混同しない。
+2. 新しいtest turnをBridge稼働後に完了させ、同一turnのtarget/thread/turn IDで取得する。今回のdeploy前に捕捉されなかった古いturnは新APIで再構成しない。
+3. CPP統合済みbuildを登録済み拡張へ反映後、Chromeで手動reloadし、対象owner会話のterminal eventを選んで「最終回答を取得」を明示クリックする。新API応答ではconfirmedと正確な本文を確認する。
+4. 取得のみでcomposer draftが変わらないことを確認してから、copyまたは明示挿入を個別に操作する。caret/selection挿入と既存draft保持、送信なしを確認し、送信ボタンは押さない。
+5. owner会話/connection/event選択/SPA routeを変えて遅延応答の越境がないことを確認する。古い未捕捉turnはlegacy historyに指定turnのfinal itemがある場合だけ本文が出ることを確認する。
+
+記録はPASS/FAIL/NOT_RUNと日時に限定し、token、本文、clipboard、owner/event/thread/turn IDは残さない。
 
 ## WindowsメインPC Chrome実機チェック
 
@@ -39,14 +57,14 @@ CodexBridgeでは、CPP tokenの`tools/list`と`tools/call`を同じ4件に制�
 
 | 状態 | チェックと手順 | 期待値 |
 | --- | --- | --- |
-| NOT_RUN | **Host Permissionとsession token**: WindowsメインPCのChromeで`chrome://extensions` → ChatPanelPlus → Details → Extension optionsを開く。Optionsの「CodexBridge MCP接続」で既存のBridge URLを確認し、必要ならURLを設定してOptionsの「保存」を押す。既に承認済みのCPP session tokenをpassword欄に入力して「tokenを保存」。続けて「接続確認」を押し、Chromeのhost permission promptで対象hostだけを許可する。 | UIはtokenを表示し直さず、browser session storageに保存済みと表示。permission許可後、MCP protocol 2025-03-26または2025-06-18、`tools/list 4件`、`codex_targets`読取り確認が表示される。permission拒否時は接続せずpermission-requiredになる。 |
-| NOT_RUN | **LAN CPP token / Origin / CORS**: 既存のLAN Bridge URLに、事前に登録済みのCPP専用tokenでOptionsから接続確認し、Chrome DevToolsのNetworkでmethod/status/header名のみ確認する。token値は画面共有・記録・ログへ出さない。 | Bridgeは`chrome-extension://<この拡張ID>` Originを許可し、CPP Bearer tokenを受理する。`tools/list`は4件、接続確認callは`codex_targets`のみ。tokenは応答・ログへ出ない。production環境変数・CORS/Host設定・portはこの試験のため変更しない。 |
+| NOT_RUN | **Host Permissionとsession token**: WindowsメインPCのChromeで`chrome://extensions` → ChatPanelPlus → Details → Extension optionsを開く。Optionsの「CodexBridge MCP接続」で既存のBridge URLを確認し、必要ならURLを設定してOptionsの「保存」を押す。既に承認済みのCPP session tokenをpassword欄に入力して「tokenを保存」。続けて「接続確認」を押し、Chromeのhost permission promptで対象hostだけを許可する。 | UIはtokenを表示し直さず、browser session storageに保存済みと表示。permission許可後、MCP protocol 2025-03-26または2025-06-18、旧Bridgeでは4件、新専用API対応Bridgeでは5件かつ`codex_final_answer`を含む`tools/list`、`codex_targets`読取り確認が表示される。C37受入には新toolの掲載が必要。permission拒否時は接続せずpermission-requiredになる。 |
+| NOT_RUN | **LAN CPP token / Origin / CORS**: 既存のLAN Bridge URLに、事前に登録済みのCPP専用tokenでOptionsから接続確認し、Chrome DevToolsのNetworkでmethod/status/header名のみ確認する。token値は画面共有・記録・ログへ出さない。 | Bridgeは`chrome-extension://<この拡張ID>` Originを許可し、CPP Bearer tokenを受理する。`tools/list`は旧Bridgeで4件、新専用API対応Bridgeで5件（`codex_final_answer`を含む）、接続確認callは`codex_targets`のみ。tokenは応答・ログへ出ない。production環境変数・CORS/Host設定・portはこの試験のため変更しない。 |
 | NOT_RUN | **targets / threads / status / external thread**: ChatGPT上で既存のtarget一覧とthread一覧を開き、Codex Desktopから作成済みの外部threadを一つ選択してstatusを読む。nativeとexternalの同一threadが重複表示されないこと、次ページcursorがあれば次ページを開くことを確認する。 | target/thread/statusが同じtarget-thread対に結び付く。external threadが一覧に出て、重複は一行になり、cursorで次ページを読める。`codex_wait`は未使用、start/continueは送られない。 |
 | NOT_RUN | **複数タブと監視登録**: ChatGPTを二つの既存タブで開き、同一threadと別threadのwatchをUIから登録・一覧・解除する。既存watchがあれば触れない。 | `storage.local`の監視状態がタブ/worker間で復元され、watchと選択中threadが混線しない。同じwatchの重複登録は増えない。 |
 | NOT_RUN | **Service Worker停止・復帰**: `chrome://extensions`のChatPanelPlus詳細からService Workerを停止し、拡張やBridgeをreload/restartせずChatGPTへ戻る。監視一覧とstatusを再表示する。 | 保存済watchをworkerが復元しstatus読取りを再開。foregroundは約5秒、alarmは約30秒周期。停止前に音声要求済みのterminal eventを再通知・再生しない。 |
 | NOT_RUN | **status開始/終端とgap**: 専用テストthreadを用い、ユーザー操作で開始、正常完了、失敗、中断を一件ずつ確認する。完了前のbaseline、長い通信断後のgap、古いcompleted last_turnと別のcurrent executionも確認する。 | `in_progress`とcompleted/failed/interruptedがturn単位で表示される。unknown/inferred/`execution_unconfirmed`、古いturn、切断、gapから終了を推測しない。 |
 | NOT_RUN | **通知音と出力先**: Optionsで既定出力先と利用可能な選択出力先を順に選び、設定音量で専用test eventを一件発生させる。次に音を無効化または音量0にして別のtest eventを確認する。worker復帰後に同eventが重複再生されないことも確認する。 | 既定/選択した出力先で一回だけ鳴り、音量設定が使われる。無効/0では鳴らず、event記録は残る。再起動後に同じ音を再試行しない。 |
-| NOT_RUN | **final_answer / コピー / 手動挿入**: terminal eventを選び「最終回答を取得」。表示結果が指定eventのturnの`agentMessage.phase=final_answer`であることを確認する。「コピー」を押して手動で貼付け内容を確認後、「ChatGPT入力欄へ挿入」は専用の空のtest composerでcaret位置を選んで押す。既存文があれば保存前後を目視比較する。送信ボタンは押さない。 | 完全性は「未確認」と表示。コピーとcaret位置への挿入は各一回、選択範囲と周辺文を保持。挿入後も未送信のままで、自動送信やCodex turn開始がない。本文を記録しない。 |
+| NOT_RUN | **final_answer / コピー / 手動挿入**: terminal eventを選び「最終回答を取得」。新API対応Bridgeではconfirmed result、旧APIまたは厳密なhistory fallbackではunconfirmed resultを確認する。「コピー」を押して手動で貼付け内容を確認後、「ChatGPT入力欄へ挿入」は専用のtest composerでcaret位置を選んで押す。既存draftがあれば挿入前後を目視比較する。送信ボタンは押さない。 | 新APIは指定eventのturnのexact confirmed final textを返す。legacy historyは指定turnの`agentMessage.phase=final_answer`のみ返す。コピーと明示caret挿入は各一回、選択範囲と周辺文を保持。取得時にdraftを変更せず、挿入後も未送信で自動送信やCodex turn開始がない。本文を記録しない。 |
 | NOT_RUN | **401 / 403 / timeout / 切断**: production Bridgeを止めず、専用fake endpointで401、403、遅延timeout、接続切断をそれぞれ返す。Chrome側のhost permission拒否も一回確認する。 | 401は認証失敗、403は拒否、timeout/切断は該当診断。permission拒否時はrequestを送らない。terminal状態や最終回答を推測せず、start/continueを再試行しない。 |
 | NOT_RUN | **実配備とChrome reload**: このCPP-6作業では`pnpm deploy:chrome`を実行していない。別途ユーザー承認後に限り、固定配備先へのバックアップ・コピー・hash確認の出力を確認し、Chromeの拡張詳細から手動reloadして状態を記録する。 | 今回の自動preflight PASSはManifest権限検証のみを示す。実配備・バックアップ復元・Chromeでのreload受入は未確認で、完了扱いにしない。 |
 | NOT_RUN | **原状復帰**: 作成したtest watchだけをUIから解除。Options URLを試験前値へ戻す。試験用に新規入力したsession tokenだけをUIの「保存tokenを削除」で消し、試験前tokenがあれば安全な保管元から復元する。試験で初めて追加したhost permissionだけをChromeの拡張Detailsから外す。 | 試験前のURL/token/host permissionと既存watchを維持し、test watchが残らない。全storage消去、既存token削除、拡張reload、Bridge再起動は行わない。 |
