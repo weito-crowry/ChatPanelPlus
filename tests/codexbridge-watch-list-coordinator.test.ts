@@ -37,6 +37,21 @@ test('初回LIST中のforeground/storage更新は初回要求を追い越さな�
   assert.equal(coordinator.finish(initial, true), true);
 });
 
+test('取得中に届いた複数storage変更は成功後の再取得1回へまとめる', () => {
+  const coordinator = new WatchListRequestCoordinator();
+  const initial = coordinator.begin('conversation-A', 'initial');
+  assert.ok(initial);
+  assert.equal(coordinator.begin('conversation-A', 'storage'), null);
+  assert.equal(coordinator.begin('conversation-A', 'storage'), null);
+  assert.equal(coordinator.finish(initial, true), true);
+  assert.equal(coordinator.takePendingStorageRefresh(), true);
+  assert.equal(coordinator.takePendingStorageRefresh(), false);
+
+  const storage = coordinator.begin('conversation-A', 'storage');
+  assert.ok(storage);
+  assert.equal(coordinator.finish(storage, true), true);
+});
+
 test('初回LISTが始まる前に始まった自動要求は初回要求へ置き換わる', () => {
   const coordinator = new WatchListRequestCoordinator();
   const foreground = coordinator.begin('conversation-A', 'foreground');

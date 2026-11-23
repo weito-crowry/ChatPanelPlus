@@ -53,13 +53,32 @@ test('A/B/Cカードは既存のowner・ACK・最終回答契約を保つ', asyn
   assert.match(notifications, /ChatGPT入力欄へ挿入/);
 });
 
+test('新規watch snapshotだけがAの対象connectionを更新し、running行と件数は同じ応答で反映する', async () => {
+  const [list, watch, storageListener, additions] = await Promise.all([
+    read('../src/content/CodexBridgeList.tsx'), read('../src/content/CodexBridgeWatchPanel.tsx'),
+    read('../src/content/codexbridge-watch-storage-listener.ts'),
+    read('../src/content/codexbridge-watch-addition-observer.ts'),
+  ]);
+  assert.match(storageListener, /CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY/);
+  assert.match(storageListener, /chrome\.storage\.onChanged\.addListener/);
+  assert.match(watch, /collectCodexBridgeWatchAdditionBatch\(/);
+  assert.match(additions, /observeSuccessfulSnapshot\(ownerConversationId, connectionId, items\)/);
+  assert.match(watch, /onWatchAdditions\?:/);
+  assert.match(list, /onWatchAdditions=\{handleWatchAdditions\}/);
+  assert.match(list, /observeWatchAdditions\(batch\.additions/);
+  assert.match(list, /loadThreads\(false, false, context\)/);
+  assert.match(list, /loadRunningSummary\(context\.targetId, context\)/);
+  assert.match(list, /reportRunningSummary\(\{ targetId: requestedTargetId, count: updated\.length, status: 'ready' \}\)/);
+  assert.doesNotMatch(list, /setInterval\(/);
+});
+
 test('Bの名前fallbackは空白を避け、IDをtooltipとkeyboard説明で得られる', async () => {
-  const [{ codexBridgeThreadDisplayName }, watchList, list, folderFilter, presentation] = await Promise.all([
+  const [{ codexBridgeThreadDisplayName }, watchList, folderFilter, presentation, selectedDetails] = await Promise.all([
     import('../src/content/codexbridge-thread-presentation.ts'),
     read('../src/content/CodexBridgeWatchList.tsx'),
-    read('../src/content/CodexBridgeList.tsx'),
     read('../src/content/CodexBridgeProjectFolderFilter.tsx'),
     read('../src/content/codexbridge-thread-presentation.ts'),
+    read('../src/content/CodexBridgeSelectedThreadDetails.tsx'),
   ]);
   assert.equal(codexBridgeThreadDisplayName('  タイトル  ', 'thread-1'), 'タイトル');
   assert.equal(codexBridgeThreadDisplayName('  ', 'thread-2'), 'thread-2');
@@ -71,7 +90,7 @@ test('Bの名前fallbackは空白を避け、IDをtooltipとkeyboard説明で得
   assert.match(folderFilter, /thread\.title\?\.trim\(\) \|\| thread\.preview\?\.trim\(\) \|\| 'タイトル未取得'/);
   assert.match(folderFilter, /aria-describedby=\{idDescription\}/);
   assert.match(folderFilter, /スレッドID：\{thread\.id\}/);
-  assert.match(list, /phase6-technical-details/);
+  assert.match(selectedDetails, /phase6-technical-details/);
   assert.match(presentation, /return candidate\.title\?\.trim\(\) \|\| '表示名未取得'/);
   assert.match(watchList, /phase6-technical-details/);
 });

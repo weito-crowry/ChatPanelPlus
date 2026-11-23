@@ -11,6 +11,7 @@ import {
   type CodexBridgeMcpProtocolVersion,
 } from '../shared/codexbridge-mcp-protocol.ts';
 import type { CodexBridgeFinalAnswerResult } from '../shared/codexbridge-thread-monitor-protocol.ts';
+import { linkLiveCodexBridgeExecutionTurn } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import { McpTransportError, StreamableHttpMcpTransport } from './mcp-transport.ts';
 import {
   parseCodexBridgeFinalAnswer,
@@ -158,6 +159,8 @@ function readThreads(value: unknown, targetId: string, runningOnly: boolean): Co
     const id = identifier(item.id ?? item.thread_id);
     const rowTarget = item.target_id === undefined ? targetId : identifier(item.target_id);
     if (!id || !rowTarget || rowTarget !== targetId) throw new McpTransportError('protocol-error');
+    const lastTurn = readLastTurn(item.last_turn);
+    const currentExecution = linkLiveCodexBridgeExecutionTurn(readObservation(item.current_execution), lastTurn);
     const thread: CodexBridgeThread = {
       targetId,
       id,
@@ -165,8 +168,8 @@ function readThreads(value: unknown, targetId: string, runningOnly: boolean): Co
       preview: boundedText(item.preview, 240),
       cwd: boundedText(item.cwd, 240),
       updatedAt: readThreadUpdatedAt(item.updatedAt) ?? readThreadUpdatedAt(item.updated_at),
-      currentExecution: readObservation(item.current_execution),
-      lastTurn: readLastTurn(item.last_turn),
+      currentExecution,
+      lastTurn,
       needsAttention: typeof item.needs_attention === 'boolean' ? item.needs_attention : null,
     };
     const key = `${targetId}\u0000${id}`;
@@ -185,12 +188,14 @@ function readStatus(value: unknown, targetId: string, threadId: string): CodexBr
   if (!['state', 'current_execution', 'last_turn', 'needs_attention'].some((key) => key in payload)) {
     throw new McpTransportError('protocol-error');
   }
+  const lastTurn = readLastTurn(payload.last_turn);
+  const currentExecution = linkLiveCodexBridgeExecutionTurn(readObservation(payload.current_execution), lastTurn);
   return {
     targetId,
     threadId,
     state: boundedText(payload.state, 80),
-    currentExecution: readObservation(payload.current_execution),
-    lastTurn: readLastTurn(payload.last_turn),
+    currentExecution,
+    lastTurn,
     needsAttention: typeof payload.needs_attention === 'boolean' ? payload.needs_attention : null,
   };
 }

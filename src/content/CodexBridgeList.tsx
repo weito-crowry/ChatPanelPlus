@@ -3,8 +3,6 @@ import {
   CODEX_BRIDGE_MCP_GET_STATUS,
   CODEX_BRIDGE_MCP_GET_TARGETS,
   CODEX_BRIDGE_MCP_GET_THREADS,
-  type CodexBridgeObservation,
-  type CodexBridgeLastTurn,
   type CodexBridgeReadResponse,
   type CodexBridgeTarget,
   type CodexBridgeThread,
@@ -14,53 +12,22 @@ import {
 import { CodexBridgeRequestTracker, mergeCodexBridgeThreads, type CodexBridgeThreadListMode } from './codexbridge-request-tracker.ts';
 import { sortCodexBridgeThreadsByActivity } from './codexbridge-thread-order.ts';
 import { CodexBridgeWatchPanel } from './CodexBridgeWatchPanel.tsx';
+import { CodexBridgeSelectedThreadDetails } from './CodexBridgeSelectedThreadDetails.tsx';
 import { CodexBridgeThreadModePicker } from './CodexBridgeThreadModePicker.tsx';
 import { CodexBridgeProjectFolderFilter } from './CodexBridgeProjectFolderFilter.tsx';
+import { reconcileCodexBridgeThreadSelection } from './codexbridge-thread-selection.ts';
 import { codexBridgeReadErrorLabel } from './codexbridge-read-error-label.ts';
 import type { ConversationPanelWatchSelection } from '../shared/conversation-panel-state-repository.ts';
 import type { RunningThreadSummary } from './codexbridge-running-summary.ts';
 import { conversationIdFromPath } from '../shared/conversation-route.ts';
 import { CodexBridgeTerminalRefreshCoordinator, type CodexBridgeTerminalEventSignal } from './codexbridge-terminal-refresh.ts';
+import type { CodexBridgeWatchAdditionBatch } from './codexbridge-watch-addition-observer.ts';
+import { isCodexBridgeWatchRefreshContextCurrent, type CodexBridgeWatchRefreshContext } from './codexbridge-watch-refresh-context.ts';
 
 type ConnectionState = 'loading' | 'connected' | 'error';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function attentionLabel(value: boolean | null | undefined): string {
-  return value === true ? '要対応' : value === false ? '不要' : '不明';
-}
-
-function stateLabel(value: string | null | undefined): string {
-  if (!value) return '不明（未取得）';
-  if (value === 'not_loaded') return '未読込';
-  if (value === 'unknown') return '不明';
-  if (value === 'in_progress' || value === 'running') return '実行中';
-  if (value === 'estimated_running') return '実行中の推定';
-  return value;
-}
-
-function observationLabel(value: CodexBridgeObservation | null | undefined): string {
-  if (!value) return '不明（未取得）';
-  const state = stateLabel(value.state);
-  const evidence = value.evidence === 'inferred' ? '推定' : value.evidence === 'live' ? 'ライブ観測' : value.evidence;
-  return [state, evidence, value.reason, value.observedAt].filter(Boolean).join(' · ');
-}
-
-function lastTurnLabel(value: CodexBridgeLastTurn | null | undefined): string {
-  if (!value) return '不明（未取得）';
-  const status = value.status === 'completed' ? '完了' : value.status === 'failed' ? '失敗'
-    : value.status === 'interrupted' ? '中断' : value.status === 'in_progress' ? '進行中'
-      : value.status === 'unknown' ? '不明' : '不明（status未取得）';
-  return [status, value.category, value.evidence === 'inferred' ? '推定' : value.evidence === 'live' ? 'ライブ観測' : value.evidence,
-    value.reason, value.observedAt].filter(Boolean).join(' · ');
-}
-
-function dateLabel(value: string | null | undefined): string {
-  if (!value) return '不明';
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString('ja-JP') : '不明';
 }
 
 function isReadResponse<T>(value: unknown): value is CodexBridgeReadResponse<T> {
@@ -113,7 +80,15 @@ export function CodexBridgeList({
   const runningSummaryGeneration = useRef(0);
   const terminalRefresh = useRef(new CodexBridgeTerminalRefreshCoordinator());
   const requestTracker = useRef<CodexBridgeRequestTracker | null>(null);
+  const routeIdentity = useRef({ conversationId, generation: 0 });
+  const watchSnapshot = useRef<Readonly<{ ownerConversationId: string; connectionId: string | null;
+    generation: number; routeGeneration: number }> | null>(null);
   if (!requestTracker.current) requestTracker.current = new CodexBridgeRequestTracker();
+  if (routeIdentity.current.conversationId !== conversationId) {
+    routeIdentity.current = { conversationId, generation: routeIdentity.current.generation + 1 };
+    terminalRefresh.current.clearPending();
+    runningSummaryGeneration.current += 1;
+  }
 
   function updateSelected(thread: CodexBridgeThread | null) {
     selectedRef.current = thread;
@@ -126,6 +101,25 @@ export function CodexBridgeList({
 
   function updateConnection(next: ConnectionState) { terminalContext.current.connection = next; setConnection(next); }
   function updateThreadsBusy(busy: boolean) { terminalContext.current.threadsBusy = busy; setThreadsBusy(busy); }
+
+  function currentWatchRefreshContext(): CodexBridgeWatchRefreshContext | null {
+    const current = watchSnapshot.current;
+    if (!current?.connectionId || !targetIdRef.current) return null;
+    return { ownerConversationId: current.ownerConversationId, connectionId: current.connectionId,
+      targetId: targetIdRef.current, mode: terminalContext.current.mode, watchGeneration: current.generation,
+      routeGeneration: routeIdentity.current.generation };
+  }
+
+  function isWatchRefreshContextCurrent(context: CodexBridgeWatchRefreshContext): boolean {
+    const current = watchSnapshot.current;
+    return Boolean(current && isCodexBridgeWatchRefreshContextCurrent(context, {
+      ownerConversationId: current.ownerConversationId, connectionId: current.connectionId ?? '',
+      targetId: targetIdRef.current ?? '', mode: terminalContext.current.mode, watchGeneration: current.generation,
+      routeGeneration: routeIdentity.current.generation, connected: terminalContext.current.connection === 'connected',
+      routeCurrent: conversationId === context.ownerConversationId
+        && conversationIdFromPath(window.location.pathname) === context.ownerConversationId,
+    }));
+  }
 
   function invalidateRunningSummary(status: RunningThreadSummary['status'], targetId = targetIdRef.current || null) {
     runningSummaryGeneration.current += 1;
@@ -205,9 +199,10 @@ export function CodexBridgeList({
     onConnectionChange?.({ state: connection, targetId: targetId || null, targetName });
   }, [connection, onConnectionChange, targetId, targets]);
 
-  async function loadThreads(loadMore: boolean, resetWatchFeedback = true) {
+  async function loadThreads(loadMore: boolean, resetWatchFeedback = true, refreshContext?: CodexBridgeWatchRefreshContext) {
     const requestedTargetId = targetIdRef.current;
-    if (!requestedTargetId || terminalContext.current.threadsBusy || (loadMore && (terminalContext.current.mode !== 'normal' || !nextCursor))) return;
+    if (!requestedTargetId || terminalContext.current.threadsBusy || (refreshContext && !isWatchRefreshContextCurrent(refreshContext))
+      || (loadMore && (terminalContext.current.mode !== 'normal' || !nextCursor))) return;
     if (resetWatchFeedback) setWatchFeedbackResetToken((current) => current + 1);
     const requestedCursor = loadMore ? nextCursor : null;
     const request = requestTracker.current!.beginThreads(requestedTargetId, requestedCursor);
@@ -232,7 +227,7 @@ export function CodexBridgeList({
         ...(terminalContext.current.mode === 'running' ? { runningOnly: true } : {}),
         ...(requestedCursor ? { cursor: requestedCursor } : {}),
       });
-      if (!requestTracker.current!.isCurrentThreads(request)) return;
+      if (!requestTracker.current!.isCurrentThreads(request) || (refreshContext && !isWatchRefreshContextCurrent(refreshContext))) return;
       if (!isReadResponse<CodexBridgeThreadPage>(response) || !response.ok
         || !isRecord(response.data) || !Array.isArray(response.data.threads)
         || !(response.data.nextCursor === null || typeof response.data.nextCursor === 'string')) {
@@ -254,41 +249,37 @@ export function CodexBridgeList({
       if (request.mode === 'running' && !loadMore) {
         reportRunningSummary({ targetId: requestedTargetId, count: updated.length, status: 'ready' });
       }
-      const selectedNow = selectedRef.current;
-      if (selectedNow) {
-        const found = updated.find((thread) => thread.targetId === selectedNow.targetId && thread.id === selectedNow.id);
-        if (found) {
-          updateSelected(found);
-          setSelectedMissing(false);
-        } else if (!loadMore) {
-          setSelectedMissing(true);
-        }
-      }
+      const selectionUpdate = reconcileCodexBridgeThreadSelection(selectedRef.current, updated, loadMore);
+      if (selectionUpdate) { updateSelected(selectionUpdate.thread); setSelectedMissing(selectionUpdate.missing); }
     } catch {
-      if (requestTracker.current!.isCurrentThreads(request)) {
+      if (requestTracker.current!.isCurrentThreads(request) && (!refreshContext || isWatchRefreshContextCurrent(refreshContext))) {
         setThreadsError('Bridgeへ接続できません。');
         if (request.mode === 'running' && !loadMore) reportRunningSummary({ targetId: requestedTargetId, count: null, status: 'error' });
       }
     } finally {
       if (requestTracker.current!.isLatestThreads(request)) {
         updateThreadsBusy(false);
+        const context = currentWatchRefreshContext();
         if (terminalRefresh.current.finishRunningRequest(requestedTargetId, {
+          ownerConversationId: context?.ownerConversationId ?? null, connectionId: context?.connectionId ?? null,
           targetId: targetIdRef.current || null, mode: terminalContext.current.mode,
           connected: terminalContext.current.connection === 'connected',
           routeCurrent: Boolean(conversationId && conversationIdFromPath(window.location.pathname) === conversationId), threadsBusy: false,
-        })) void loadThreads(false, false);
+        }) && context) void loadThreads(false, false, context);
       }
     }
   }
 
-  async function loadRunningSummary(requestedTargetId: string) {
+  async function loadRunningSummary(requestedTargetId: string, refreshContext?: CodexBridgeWatchRefreshContext) {
+    if (refreshContext && !isWatchRefreshContextCurrent(refreshContext)) return;
     const generation = ++runningSummaryGeneration.current;
     reportRunningSummary({ targetId: requestedTargetId, count: null, status: 'loading' });
     try {
       const response: unknown = await chrome.runtime.sendMessage({
         type: CODEX_BRIDGE_MCP_GET_THREADS, targetId: requestedTargetId, runningOnly: true,
       });
-      if (generation !== runningSummaryGeneration.current || targetIdRef.current !== requestedTargetId) return;
+      if (generation !== runningSummaryGeneration.current || targetIdRef.current !== requestedTargetId
+        || (refreshContext && !isWatchRefreshContextCurrent(refreshContext))) return;
       if (!isReadResponse<CodexBridgeThreadPage>(response) || !response.ok
         || !isRecord(response.data) || !Array.isArray(response.data.threads) || response.data.nextCursor !== null) {
         const reason = isReadResponse(response) && !response.ok ? response.reason : null;
@@ -298,7 +289,8 @@ export function CodexBridgeList({
       }
       reportRunningSummary({ targetId: requestedTargetId, count: response.data.threads.length, status: 'ready' });
     } catch {
-      if (generation === runningSummaryGeneration.current && targetIdRef.current === requestedTargetId) {
+      if (generation === runningSummaryGeneration.current && targetIdRef.current === requestedTargetId
+        && (!refreshContext || isWatchRefreshContextCurrent(refreshContext))) {
         reportRunningSummary({ targetId: requestedTargetId, count: null, status: 'error' });
       }
     }
@@ -306,13 +298,39 @@ export function CodexBridgeList({
 
   function handleTerminalEvents(events: readonly CodexBridgeTerminalEventSignal[]) {
     const requestedTargetId = targetIdRef.current || null;
+    const context = currentWatchRefreshContext();
     const action = terminalRefresh.current.observe(events, {
+      ownerConversationId: context?.ownerConversationId ?? null, connectionId: context?.connectionId ?? null,
       targetId: requestedTargetId, mode: terminalContext.current.mode, connected: terminalContext.current.connection === 'connected',
       routeCurrent: Boolean(conversationId && conversationIdFromPath(window.location.pathname) === conversationId),
       threadsBusy: terminalContext.current.threadsBusy,
     });
-    if (action === 'threads') void loadThreads(false, false);
-    else if (action === 'summary' && requestedTargetId) void loadRunningSummary(requestedTargetId);
+    if (action === 'threads' && context) void loadThreads(false, false, context);
+    else if (action === 'summary' && requestedTargetId && context) void loadRunningSummary(requestedTargetId, context);
+  }
+
+  function handleWatchAdditions(batch: CodexBridgeWatchAdditionBatch) {
+    if (batch.ownerConversationId !== conversationId || conversationIdFromPath(window.location.pathname) !== batch.ownerConversationId) return;
+    const previous = watchSnapshot.current;
+    const routeGeneration = routeIdentity.current.generation;
+    const changed = Boolean(previous && (previous.ownerConversationId !== batch.ownerConversationId
+      || previous.connectionId !== batch.connectionId || previous.routeGeneration !== routeGeneration));
+    if (changed) {
+      terminalRefresh.current.clearPending();
+      runningSummaryGeneration.current += 1;
+      reportRunningSummary({ targetId: targetIdRef.current || null, count: null, status: 'error' });
+    }
+    watchSnapshot.current = { ownerConversationId: batch.ownerConversationId, connectionId: batch.connectionId,
+      generation: (previous?.generation ?? 0) + Number(changed), routeGeneration };
+    const context = currentWatchRefreshContext();
+    const action = terminalRefresh.current.observeWatchAdditions(batch.additions, {
+      ownerConversationId: batch.ownerConversationId, connectionId: batch.connectionId,
+      targetId: targetIdRef.current || null, mode: terminalContext.current.mode,
+      connected: terminalContext.current.connection === 'connected', routeCurrent: true,
+      threadsBusy: terminalContext.current.threadsBusy,
+    });
+    if (action === 'threads' && context) void loadThreads(false, false, context);
+    else if (action === 'summary' && context) void loadRunningSummary(context.targetId, context);
   }
 
   function changeListMode(mode: CodexBridgeThreadListMode) {
@@ -336,7 +354,7 @@ export function CodexBridgeList({
     if (connection !== 'connected' || !targetId) return;
     void loadThreads(false);
     if (listMode === 'normal') void loadRunningSummary(targetId);
-  }, [connection, targetId, listMode]);
+  }, [connection, targetId, listMode, conversationId]);
 
   async function checkSelectedStatus() {
     if (!selected || statusBusy) return;
@@ -445,38 +463,10 @@ export function CodexBridgeList({
               }} />
           )}
           {selected && (
-                <div className="codex-bridge-selected phase6-selected-thread">
-                  <strong>{selected.title?.trim() || selected.preview?.trim() || 'タイトル未取得'}</strong>
-                  <p className="codex-bridge-note">対象マシン: {selectedTarget?.name ?? '不明'}</p>
-              {selectedMissing && <p className="codex-bridge-note">
-                {threadsError || connection === 'error' || (threadsBusy && !threadsLoaded)
-                  ? 'thread一覧の更新を確認できていません。状態は未確認です。'
-                  : threadsLoaded
-                    ? '選択中のthreadは現在の一覧ページにありません。完了状態ではなく、状態は未確認です。'
-                    : 'thread一覧は未読込です。状態は未確認です。'}
-              </p>}
-              <button type="button" className="codex-bridge-button" onClick={() => { void checkSelectedStatus(); }} disabled={statusBusy}>
-                {statusBusy ? '確認中…' : '選択threadの状態を手動確認'}
-              </button>
-              {statusError && <p className="codex-bridge-error" role="alert">{statusError}</p>}
-                  <details className="phase6-technical-details">
-                    <summary>技術情報</summary>
-                    <code>thread ID: {selected.id} · target ID: {selected.targetId}</code>
-                    <p className="codex-bridge-note">cwd: {selectedListRow?.cwd ?? '不明'} · 最終更新: {dateLabel(selectedListRow?.updatedAt)}</p>
-                    <dl className="codex-bridge-status">
-                      <dt>応答状態</dt>
-                      <dd>{stateLabel(selectedStatus?.state)}</dd>
-                      <dt>current_execution{selectedStatus ? '（手動確認）' : '（一覧取得時）'}</dt>
-                      <dd>{observationLabel(selectedStatus ? selectedStatus.currentExecution : selectedListRow?.currentExecution)}</dd>
-                      <dt>last_turn{selectedStatus ? '（手動確認）' : '（一覧取得時）'}</dt>
-                      <dd>{lastTurnLabel(selectedStatus ? selectedStatus.lastTurn : selectedListRow?.lastTurn)}</dd>
-                      <dt>last_turn.turn_id</dt>
-                      <dd>{(selectedStatus ? selectedStatus.lastTurn : selectedListRow?.lastTurn)?.turnId ?? '不明'}</dd>
-                      <dt>needs_attention</dt>
-                      <dd>{attentionLabel(selectedStatus ? selectedStatus.needsAttention : selectedListRow?.needsAttention)}</dd>
-                    </dl>
-                  </details>
-            </div>
+            <CodexBridgeSelectedThreadDetails selected={selected} targetName={selectedTarget?.name ?? null}
+              row={selectedListRow} status={selectedStatus} missing={selectedMissing} listError={threadsError}
+              connectionError={connection === 'error'} listBusy={threadsBusy} listLoaded={threadsLoaded}
+              statusBusy={statusBusy} statusError={statusError} onCheckStatus={() => { void checkSelectedStatus(); }} />
           )}
         </>
       )}
@@ -494,6 +484,7 @@ export function CodexBridgeList({
         threadCandidates={threads}
         onSummaryChange={onSummaryChange}
         onTerminalEvents={handleTerminalEvents}
+        onWatchAdditions={handleWatchAdditions}
       />
     </section>
   );

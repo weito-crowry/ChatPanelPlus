@@ -1,4 +1,4 @@
-import type { CodexBridgeLastTurn } from './codexbridge-mcp-protocol.ts';
+import type { CodexBridgeLastTurn, CodexBridgeObservation } from './codexbridge-mcp-protocol.ts';
 import { parseCodexBridgeMcpEndpoint } from './codexbridge-mcp-protocol.ts';
 import { isConversationId } from './conversation-route.ts';
 
@@ -223,6 +223,18 @@ export function isCodexBridgeWatchIdentifier(value: unknown): value is string {
       const code = character.codePointAt(0) ?? 0;
       return code <= 0x1f || (code >= 0x7f && code <= 0x9f);
     });
+}
+
+export function linkLiveCodexBridgeExecutionTurn(
+  execution: CodexBridgeObservation | null,
+  lastTurn: CodexBridgeLastTurn | null,
+): CodexBridgeObservation | null {
+  const state = execution?.state?.toLowerCase();
+  if (!execution || execution.turnId !== null || (state !== 'in_progress' && state !== 'running')
+    || execution.evidence?.toLowerCase() !== 'live' || !lastTurn?.turnId
+    || !isCodexBridgeWatchIdentifier(lastTurn.turnId) || lastTurn.status !== 'in_progress'
+    || lastTurn.evidence?.toLowerCase() !== 'live') return execution;
+  return { ...execution, turnId: lastTurn.turnId };
 }
 
 export async function createCodexBridgeConnectionId(endpointValue: string): Promise<string | null> {

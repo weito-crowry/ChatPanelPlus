@@ -1,6 +1,7 @@
 import {
   CODEX_BRIDGE_AUTO_WATCH_ALARM,
   CODEX_BRIDGE_AUTO_WATCH_MINUTES,
+  linkLiveCodexBridgeExecutionTurn,
   CODEX_BRIDGE_AUTO_WATCH_STORAGE_KEY,
   isCodexBridgeWatchIdentifier,
   type CodexBridgeAutoWatchFailure,
@@ -115,23 +116,25 @@ function failureFor(error: unknown): CodexBridgeAutoWatchFailure {
 }
 
 function isLiveCandidate(thread: CodexBridgeThread, targetId: string): boolean {
-  const execution = thread.currentExecution;
+  const execution = linkLiveCodexBridgeExecutionTurn(thread.currentExecution, thread.lastTurn);
   return thread.targetId === targetId && isCodexBridgeWatchIdentifier(thread.id) && execution !== null
     && (execution.state === 'in_progress' || execution.state === 'running') && execution.evidence === 'live'
-    && (execution.turnId === null || isCodexBridgeWatchIdentifier(execution.turnId));
+    && isCodexBridgeWatchIdentifier(execution.turnId);
 }
 
 function statusFromThread(thread: CodexBridgeThread): CodexBridgeThreadStatus {
-  const execution = thread.currentExecution!;
-  const lastTurn = execution.turnId !== null && thread.lastTurn?.turnId === execution.turnId ? thread.lastTurn : {
+  const execution = linkLiveCodexBridgeExecutionTurn(thread.currentExecution, thread.lastTurn)!;
+  const confirmedLastTurn = thread.lastTurn?.turnId === execution.turnId && thread.lastTurn.status === 'in_progress'
+    && thread.lastTurn.evidence === 'live' ? thread.lastTurn : null;
+  const lastTurn = confirmedLastTurn ?? {
     turnId: execution.turnId, status: 'in_progress' as const, category: null, evidence: execution.evidence,
     reason: execution.reason, observedAt: execution.observedAt, needsAttention: execution.needsAttention,
   };
   return {
     targetId: thread.targetId,
     threadId: thread.id,
-    state: thread.currentExecution?.state ?? null,
-    currentExecution: thread.currentExecution,
+    state: execution.state,
+    currentExecution: execution,
     lastTurn,
     needsAttention: thread.needsAttention,
   };
@@ -342,7 +345,8 @@ export class CodexBridgeAutoThreadRegistration {
   private async registerCandidates(entry: AutoEntry, candidates: readonly CodexBridgeThread[], cadence: Cadence): Promise<void> {
     const latest = await this.findByKey(this.key(entry.connectionId, entry.targetId));
     if (!latest?.enabled || latest.ownerConversationId !== entry.ownerConversationId) return;
-    const liveByThread = new Map(candidates.map((thread) => [thread.id, thread.currentExecution!.turnId]));
+    const liveByThread = new Map(candidates.map((thread) => [thread.id,
+      linkLiveCodexBridgeExecutionTurn(thread.currentExecution, thread.lastTurn)!.turnId]));
     const skips = latest.skippedExecutions.filter((skip) => {
       const currentTurn = liveByThread.get(skip.threadId);
       return currentTurn !== undefined && (skip.turnId === null || skip.turnId === currentTurn);
@@ -357,8 +361,9 @@ export class CodexBridgeAutoThreadRegistration {
     };
     let failure: CodexBridgeAutoWatchFailure | null = null;
     for (const thread of candidates) {
+      const currentTurnId = liveByThread.get(thread.id);
       if (skips.some((skip) => skip.threadId === thread.id
-        && (skip.turnId === null || skip.turnId === thread.currentExecution!.turnId))) continue;
+        && (skip.turnId === null || skip.turnId === currentTurnId))) continue;
       const current = await this.monitor.read(latest.connectionId, latest.targetId, thread.id);
       if (current) {
         if (current.ownerConversationId && current.ownerConversationId !== latest.ownerConversationId) failure = 'owner-conflict';

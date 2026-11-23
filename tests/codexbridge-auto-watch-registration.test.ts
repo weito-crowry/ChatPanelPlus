@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { CODEX_BRIDGE_AUTO_WATCH_ALARM, CODEX_BRIDGE_AUTO_WATCH_STORAGE_KEY } from '../src/shared/codexbridge-thread-monitor-protocol.ts';
+import { CODEX_BRIDGE_AUTO_WATCH_ALARM, CODEX_BRIDGE_AUTO_WATCH_STORAGE_KEY,
+  deriveCodexBridgeWatchTurnState } from '../src/shared/codexbridge-thread-monitor-protocol.ts';
 import type { CodexBridgeTarget, CodexBridgeThread, CodexBridgeThreadPage, CodexBridgeThreadStatus } from '../src/shared/codexbridge-mcp-protocol.ts';
 import { CodexBridgeAutoThreadRegistration } from '../src/background/thread-monitor-auto-registration.ts';
 import { CodexBridgeThreadMonitor } from '../src/background/thread-monitor.ts';
@@ -170,16 +171,18 @@ test('手動解除したexecutionはworker再生成後も抑止し、新しいtu
   assert.equal((await h.monitor.list())[0]?.baselineTurnId, 'turn-two');
 });
 
-test('自動登録でも手動解除のowner認可を守り、turn idが不明なら同threadのlive継続中は抑止する', async () => {
+test('自動登録でも手動解除のowner認可を守り、同じlive executionを抑止して次turnを再登録する', async () => {
   const candidate = { ...liveThread('thread-live', 'turn-one'),
-    currentExecution: { ...liveThread('thread-live', 'turn-one').currentExecution!, turnId: null } };
+    currentExecution: { ...liveThread('thread-live', 'turn-one').currentExecution!, turnId: null },
+    lastTurn: { turnId: 'turn-one', status: 'in_progress' as const, category: null, evidence: 'live', reason: null,
+      observedAt: null, needsAttention: false } };
   const h = harness([candidate]);
   assert.equal((await h.auto.setEnabled(target.id, ownerA.ownerTabId, ownerA.ownerConversationId, true)).ok, true);
   assert.equal(await h.auto.stopWatch('connection-A', target.id, 'thread-live', 'conversation-B'), false);
   assert.equal((await h.monitor.list()).length, 1);
   assert.equal(await h.auto.stopWatch('connection-A', target.id, 'thread-live', ownerA.ownerConversationId), true);
   h.advance(5_000);
-  h.threads = [liveThread('thread-live', 'turn-two')];
+  h.threads = [candidate];
   await h.auto.scanForeground(ownerA.ownerConversationId);
   assert.deepEqual(await h.monitor.list(), []);
   h.advance(5_000);
@@ -191,16 +194,66 @@ test('自動登録でも手動解除のowner認可を守り、turn idが不明�
   assert.equal((await h.monitor.list())[0]?.baselineTurnId, 'turn-three');
 });
 
-test('live executionにturn idがなければwatchは登録するが、古いterminal turnをbaselineに流用しない', async () => {
+test('live executionにturn idがなく、last_turnがcompletedまたはinferredならbaseline未確定としてwatch登録を遅らせる', async () => {
+  const completedLastTurn = liveThread('thread-live', 'turn-one').lastTurn!;
   const candidate = { ...liveThread('thread-live', 'turn-one'),
     currentExecution: { ...liveThread('thread-live', 'turn-one').currentExecution!, turnId: null } };
-  const h = harness([candidate]);
+  const inferredCandidate = { ...candidate, id: 'thread-inferred-baseline',
+    lastTurn: { ...completedLastTurn, turnId: 'turn-inferred', status: 'in_progress' as const, evidence: 'inferred' } };
+  const h = harness([candidate, inferredCandidate]);
   assert.equal((await h.auto.setEnabled(target.id, ownerA.ownerTabId, ownerA.ownerConversationId, true)).ok, true);
-  const [item] = await h.monitor.list();
-  assert.ok(item);
-  assert.equal(item.baselineTurnKind, 'unknown');
-  assert.equal(item.baselineTurnId, null);
-  assert.equal(item.baselineTurnStatus, 'in_progress');
+  assert.deepEqual(await h.monitor.list(), []);
+});
+
+test('明示されたactive current_execution IDは異なるcompleted last_turnへ誤連結しない', async () => {
+  const thread = { ...liveThread('thread-live', 'active-turn'),
+    lastTurn: { turnId: 'older-turn', status: 'completed' as const, category: null, evidence: 'live', reason: null,
+      observedAt: null, needsAttention: false } };
+  const h = harness([thread]);
+  assert.equal((await h.auto.setEnabled(target.id, ownerA.ownerTabId, ownerA.ownerConversationId, true)).ok, true);
+  const [baseline] = await h.monitor.list();
+  assert.equal(baseline?.baselineTurnId, 'active-turn');
+  assert.equal(baseline?.baselineTurnStatus, 'in_progress');
+  h.statusOverride = {
+    targetId: target.id, threadId: thread.id, state: 'idle', currentExecution: null, needsAttention: false,
+    lastTurn: { turnId: 'active-turn', status: 'completed', category: null, evidence: 'live', reason: null,
+      observedAt: null, needsAttention: false },
+  };
+  h.advance(30_000);
+  await h.monitor.refreshAlarm();
+  assert.deepEqual((await h.monitor.listEvents()).map(({ turnId }) => turnId), ['active-turn']);
+  assert.deepEqual(await h.monitor.list(), []);
+});
+
+test('current_executionにturn_idがなくても同時観測したlive in_progress last_turnをbaselineに結び、completedでevent後に解除する', async () => {
+  const turnId = '01a2077d-c0fa-77b2-95fe-1265f5b4ee21';
+  const thread = {
+    ...liveThread('01a2077d-bb7d-7ac3-a190-b36c4c29b8ea', turnId),
+    currentExecution: { turnId: null, state: 'in_progress', evidence: 'live', reason: 'managed_turn', observedAt: null, needsAttention: false },
+    lastTurn: { turnId, status: 'in_progress' as const, category: null, evidence: 'live', reason: null, observedAt: null, needsAttention: false },
+  };
+  const h = harness([thread]);
+  assert.equal((await h.auto.setEnabled(target.id, ownerA.ownerTabId, ownerA.ownerConversationId, true)).ok, true);
+  const [baseline] = await h.monitor.list();
+  assert.ok(baseline);
+  const runningState = deriveCodexBridgeWatchTurnState(baseline);
+  h.statusOverride = {
+    targetId: target.id, threadId: thread.id, state: 'idle', currentExecution: null, needsAttention: false,
+    lastTurn: { turnId, status: 'completed', category: null, evidence: 'live', reason: null, observedAt: null, needsAttention: false },
+  };
+  h.advance(30_000);
+  await h.monitor.refreshAlarm();
+  const events = await h.monitor.listEvents();
+  assert.deepEqual({
+    baselineTurnKind: baseline.baselineTurnKind,
+    baselineTurnId: baseline.baselineTurnId,
+    runningState,
+    remainingWatches: (await h.monitor.list()).length,
+    eventTurns: events.map((event) => [event.turnId, event.status]),
+  }, {
+    baselineTurnKind: 'turn', baselineTurnId: turnId, runningState: 'in_progress', remainingWatches: 0,
+    eventTurns: [[turnId, 'completed']],
+  });
 });
 
 test('OFFは既存watchを残し、Bridge探索失敗は0件でなくbackoff付きerrorとして保存する', async () => {

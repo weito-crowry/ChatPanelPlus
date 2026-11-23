@@ -74,8 +74,11 @@
 - 原因：Aのrunning_only一覧と件数は初期表示・A操作時だけ取得しており、C45でBの監視解除とCの終了event保管が成功してもAへ更新通知する経路がなかった。
 - 実装：B/Cの成功したowner-filtered一覧snapshotを会話・connection別に比較し、新規terminal event IDだけをidentity-only callbackでAへ通知する。初回snapshotの過去event、ACK、clear後の再表示、event順変更、watch開始/解除だけのrefreshは通知しない。connection IDが変わった最初のsnapshotは履歴基準にする。
 - Aは現在の会話route・接続状態・target・modeを確認する。running modeでは既存requestTrackerを通す`running_only=true`要求を1回行い、その同じ応答から一覧とsummary件数を更新する。更新中に届いたterminal eventは現在requestの完了後に1回だけ続ける。normal modeではrunning summaryだけを再取得し、20件cursor・一覧・選択を変更しない。失敗・unsupportedは`—`、空配列は`0`を既存処理で維持する。
+- 2026-11-23 17:22:57 JSTの追加実機観測：C46が新規threadをBへ自動登録した時点で、Aは「Bridgeが返した実行中threadはありません」・上部0のまま。C46の新規watch登録成功だけをstorage/snapshot差分で拾い、同owner・connection・targetのAを更新する経路を追加した。B一覧取得中に来たstorage変更は後続snapshot 1回へ集約する。初回snapshot、既存watch更新、重複、他owner/connection/target、watch解除だけではAのrunning_onlyを再取得しない。A polling intervalは追加していない。
+- 初回watch baseline欠落の同日C46原因：Bridge `codex_threads(running_only=true)`の`current_execution`は`in_progress/live/managed_turn`だが`turn_id`がなく、同じ応答の`last_turn`に`01a2077d-c0fa-77b2-95fe-1265f5b4ee21`・`in_progress/live`があった。CPP parserは欠落IDをnull化し、自動登録側がnull baselineを許していたため`baselineTurnKind=unknown`になり得た。厳格なlink helperで、この同時観測のactive/live/in_progressだけを同一Turnとして結び、欠落ID時のcompleted/inferred/unknownはlinkせず登録を遅らせる。`current_execution`に明示IDがある場合は異なる`last_turn` IDで置き換えない。解除skipも正規化後の同一Turn IDで比較する。
+- 実機17:22:57 JST時点でBへ自動登録されたthread `01a2077d-bb7d-7ac3-a190-b36c4c29b8ea`と`01a2077f-848b-72a0-a44a-19359a395311`は両方「不明」、監視中2・通知0。先のTurnは17:21:24 JSTにBridgeで`completed/live`を確認したがC終了eventがなく、もう一方は`in_progress/live`だったとのユーザー報告。修正後自動テストではmissing execution turn IDから正しいbaselineを作り、completed event保存後に対象watchを解除することを確認。Chrome修正後受入はNOT_RUN。
 - `mcp-client.ts`のboolean schema確認・session復旧時の再確認・unsupported応答は既存契約を再確認し、変更していない。local/remote schema未対応時の実機挙動は未確認。Service Worker復旧、SPA、同一会話複数tabはChrome実機未確認。
-- 自動テストPASS：`pnpm test` 668/668、`pnpm typecheck`、`pnpm lint`、`pnpm build` exit 0。Chrome実機NOT_RUN。distはbuildで更新したが、Chrome登録先`D:\weito\Documents\src\codexapp\ChatPanelPlus-Content-Probe-20261021`へは未反映。C38全体受入は`NOT_RUN`を維持し、C37とC44/C45の実機受入記録は変更しない。
+- 自動テストPASS：`pnpm test` 668/668、`pnpm typecheck`、`pnpm lint`、`pnpm build` exit 0。Chrome実機NOT_RUN。distはbuildで更新したが、Chrome登録先`D:\weito\Documents\src\codexapp\ChatPanelPlus-Content-Probe-20261021`へは未反映。C38全体受入は`NOT_RUN`を維持。C37とC44/C45の既存判定を維持し、C45の後続観測は下段に追記。
 
 ## C37実機再受入と正式ロード元の確認（2026-11-23）
 
@@ -96,14 +99,18 @@
 - 最終自動検証：`pnpm test` 671/671、`pnpm typecheck` PASS、`pnpm lint` PASS（`check:size` 244 files、500行/32768 bytes上限）、`pnpm build` exit 0。Focused terminal/owner/event/表示回帰64/64 PASS。これはsource-only検証で、Chrome実機ではない。
 - 実機watch/eventを含むChrome storageは読まず・変更せず、Chrome/Bridge操作とProbe反映も行っていない。
 - C38変更commit `52767e06cac283ed3e924097a25109678cff327a`は現Chrome登録ロード元`ChatPanelPlus-Content-Probe-20261021`へ未配備・未検証のまま維持し、C38受入は`NOT_RUN`。今回の変更を含むsourceもProbe未反映で、C45 Chrome再受入は今後の配備と手動reload後に必要。
+- 17:22:57 JSTのC46実機ではcompleted/live後もwatchが残りCにeventなしとの報告があり、C45終了追跡もFAIL。上記missing-turn-ID baseline linkでsource経路を修正したが、C45の既存FAIL判定は維持し、修正後Chrome実機はNOT_RUN。
+- 修正後source検証は同じcheckoutで`pnpm test` 713/713、typecheck/lint/size/buildがすべてPASS。これはC45実機再受入の代替ではなく、Chrome実機はNOT_RUNのまま。
 
 ## C46 新規実行スレッドの自動監視登録（2026-11-23）
 
 - B欄にtarget単位の明示ON/OFFを追加。初期OFFで、ONは現在のtrusted ChatGPT会話・tab・routeからのみ受付ける。保存先は`chatPanelPlus.codexBridgeAutoWatch.v1`の独立keyで、connection ID、target ID、owner会話/tab、mute snapshotを厳密検証する。tokenは保存しない。
-- 探索は表示A欄、通常一覧、手動refresh、running modeに依存せず、既存MCP clientのschema/capability確認済み`codex_threads(running_only=true)`を使用。既知target、完全なsingle page、正確なtarget/thread ID、`current_execution`の`in_progress`/`running`かつ`evidence=live`だけを候補にする。終了済み・estimated/inferred・unknown・last_turnだけの項目は候補外。ON時点ですでにliveなthreadも同じ探索で登録する。探索時のconnection IDをwatch開始時にも照合し、接続変更競合の誤登録を拒否する。
+- 探索は表示A欄、通常一覧、手動refresh、running modeに依存せず、既存MCP clientのschema/capability確認済み`codex_threads(running_only=true)`を使用。既知target、完全なsingle page、正確なtarget/thread ID、`current_execution`の`in_progress`/`running`かつ`evidence=live`だけを候補にする。execution ID欠落時は同時応答の`last_turn`が非null ID・`in_progress/live`の場合だけ結び付ける。終了済み・estimated/inferred・unknown・last_turnだけの項目は候補外。ON時点ですでにliveなthreadも同じ探索で登録する。探索時のconnection IDをwatch開始時にも照合し、接続変更競合の誤登録を拒否する。
 - 登録は既存watch state machine、storage mutation、32件上限、alarm、C45 terminal event/解除、C38 foreground更新へ接続。自動経路はowner移管を禁止し、他会話owner/ownerless watchと衝突したthreadは変更せず理由を保存する。manual watchの既存後勝ち登録動作は維持。手動解除したexecutionは永続skipし、unknown turn IDは同じthreadがrunning_onlyから消えるまで抑止する。OFFは新規登録だけを止め、既存watchと通知履歴を残す。
 - 前面5秒/背景alarm約30秒、targetごとの重複flight、既存watch pollと共有するtarget queue/request slot、周期上限12target、古い期限から処理する公平性、指数backoffを実装。未対応schema/通信異常は0件扱いせずerrorとし再試行を遅らせる。5秒/30秒の間に開始・終了する短命Turnは見落とし得て、全件捕捉は保証しない。
 - owner tabが閉じた／別route／mute取得不能の場合はmuteをnullにし、通知音を鳴らさずevent履歴を保持する。通知時にもowner tab URLと会話routeを再検証。SPA遷移後に別会話へ設定やwatchを移さない。
 - 初期化/削除の扱いを確認：Options設定保存・既定値復元はconfig/view-state keyだけを更新し、自動watch keyと既存`chatPanelPlus.codexBridgeThreadMonitor.v1` watch/event keyを消さない。自動設定データのschema異常時は上書きせずerrorで停止する。
 - 自動検証PASS：`pnpm test` 694/694、`pnpm typecheck` PASS、`pnpm lint` PASS、source size 248 files（各500行/32768 bytes以下）、独立した`pnpm build` exit 0。
 - Chrome登録ロード元への反映・Chrome自動操作・実機受入・Bridge停止/再起動/変更は行っていない。C46 Chrome受入はNOT_RUN。C37主要正常系PASSを維持、C38 Chrome受入NOT_RUNとC45既存FAIL/再受入待ちは既存判定のまま。
+- 追加実機観測（17:22:57 JST）：自動登録自体はPASSだが、新規2件のB状態は「不明」、監視中2・通知0。うち一件は17:21:24 JSTにBridgeでcompleted/liveだったがC終了eventがなく、別件はin_progress/liveだった。実機ではA一覧同期FAILも同時に観測。source回帰で実Bridge形状（`current_execution.turn_id`欠落、同一応答の`last_turn`がin_progress/live）を入力し、同Turn baseline→completed event→watch自動解除を確認。修正後Chrome NOT_RUN。
+- 同checkoutの最終source検証：`pnpm test` 713/713、`pnpm typecheck` PASS、`pnpm lint` PASS、`pnpm check:size` PASS（258 files、各500行/32768 bytes以下）、`pnpm build` exit 0。固定Chromeロード元と実機storageには触れず、修正後Chrome実機受入はNOT_RUN。

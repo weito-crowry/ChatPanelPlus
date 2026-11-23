@@ -22,6 +22,7 @@ export class WatchListRequestCoordinator {
   private generation = 0;
   private active: WatchListRequestToken | null = null;
   private automaticPaused = false;
+  private pendingStorageRefresh = false;
 
   setRoute(routeId: string | null): void {
     if (this.routeId === routeId) return;
@@ -29,11 +30,13 @@ export class WatchListRequestCoordinator {
     this.generation += 1;
     this.active = null;
     this.automaticPaused = false;
+    this.pendingStorageRefresh = false;
   }
 
   begin(routeId: string, kind: WatchListRequestKind): WatchListRequestToken | null {
     this.setRoute(routeId);
     const automatic = AUTO_REQUESTS.has(kind);
+    if (kind === 'storage' && (this.automaticPaused || this.active !== null)) this.pendingStorageRefresh = true;
     if (automatic && (this.automaticPaused || this.active !== null)) return null;
     if (this.active && PRIORITY[kind] <= PRIORITY[this.active.kind]) return null;
     if (!automatic) this.automaticPaused = false;
@@ -50,6 +53,12 @@ export class WatchListRequestCoordinator {
     if (!this.isCurrent(token)) return false;
     this.active = null;
     this.automaticPaused = !succeeded;
+    return true;
+  }
+
+  takePendingStorageRefresh(): boolean {
+    if (!this.pendingStorageRefresh || this.active !== null || this.automaticPaused) return false;
+    this.pendingStorageRefresh = false;
     return true;
   }
 }

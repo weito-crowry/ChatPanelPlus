@@ -6,6 +6,7 @@ import test from 'node:test';
 const sourcePath = fileURLToPath(new URL('../src/content/CodexBridgeList.tsx', import.meta.url));
 const modePath = fileURLToPath(new URL('../src/content/CodexBridgeThreadModePicker.tsx', import.meta.url));
 const mainPath = fileURLToPath(new URL('../src/content/main.tsx', import.meta.url));
+const labelsPath = fileURLToPath(new URL('../src/content/codexbridge-thread-status-labels.ts', import.meta.url));
 
 test('Bridge取得モードは実行中を既定にし、通常一覧とaccessibleな説明を持つradioを表示する', async () => {
   const [source, picker] = await Promise.all([readFile(sourcePath, 'utf8'), readFile(modePath, 'utf8')]);
@@ -33,9 +34,10 @@ test('running_onlyと通常cursor要求を分け、切替は選択と監視を�
   assert.match(source, /requestTracker\.current\?\.selectTarget\(value\)/);
   assert.match(source, /function changeListMode\(mode: CodexBridgeThreadListMode\)/);
   assert.match(source, /onTerminalEvents=\{handleTerminalEvents\}/);
-  assert.match(source, /if \(action === 'threads'\) void loadThreads\(false, false\);[\s\S]*?else if \(action === 'summary' && requestedTargetId\) void loadRunningSummary\(requestedTargetId\)/);
+  assert.match(source, /if \(action === 'threads' && context\) void loadThreads\(false, false, context\);[\s\S]*?else if \(action === 'summary' && requestedTargetId && context\) void loadRunningSummary\(requestedTargetId, context\)/);
   assert.match(source, /setThreads\(updated\);[\s\S]*?reportRunningSummary\(\{ targetId: requestedTargetId, count: updated\.length, status: 'ready' \}\)/);
-  assert.match(source, /const selectedNow = selectedRef\.current;[\s\S]*?if \(found\) \{\s*updateSelected\(found\)[\s\S]*?else if \(!loadMore\) \{\s*setSelectedMissing\(true\)/);
+  assert.match(source, /reconcileCodexBridgeThreadSelection\(selectedRef\.current, updated, loadMore\)/);
+  assert.match(source, /if \(selectionUpdate\) \{ updateSelected\(selectionUpdate\.thread\); setSelectedMissing\(selectionUpdate\.missing\); \}/);
 });
 
 test('未読込・実行中0件・通常ページ0件・要求失敗の案内を区別する', async () => {
@@ -53,10 +55,10 @@ test('filter stylesheetを既存Shadow DOMのstyle要素へ注入する', async 
 });
 
 test('推定中は推定ラベルを表示し、確定中のstateは実行中と表示する', async () => {
-  const [source, filter] = await Promise.all([
-    readFile(sourcePath, 'utf8'), readFile(new URL('../src/content/CodexBridgeProjectFolderFilter.tsx', import.meta.url), 'utf8'),
+  const [labels, filter] = await Promise.all([
+    readFile(labelsPath, 'utf8'), readFile(new URL('../src/content/CodexBridgeProjectFolderFilter.tsx', import.meta.url), 'utf8'),
   ]);
   assert.match(filter, /activity === 'estimated' \? '実行中の推定'/);
   assert.match(filter, /className=\{`phase6-thread-state is-\$\{activity\}`\}/);
-  assert.match(source, /value === 'in_progress' \|\| value === 'running'\) return '実行中'/);
+  assert.match(labels, /value === 'in_progress' \|\| value === 'running'\) return '実行中'/);
 });
