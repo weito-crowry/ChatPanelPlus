@@ -11,6 +11,7 @@ export type WatchRegistrationResult = Readonly<{
   created: boolean;
   transferred: boolean;
   ownerUnavailable: boolean;
+  ownerConflict: boolean;
 }>;
 
 export function registerCodexBridgeWatch(
@@ -18,27 +19,31 @@ export function registerCodexBridgeWatch(
   events: CodexBridgeTerminalEvent[],
   candidate: CodexBridgeWatchSnapshot,
   owner?: CodexBridgeWatchOwnerMute,
+  allowOwnerTransfer = true,
 ): Readonly<{ items: CodexBridgeWatchSnapshot[]; events: CodexBridgeTerminalEvent[]; result: WatchRegistrationResult }> {
   const key = codexBridgeWatchKey(candidate.connectionId, candidate.targetId, candidate.threadId);
   const existing = items.find((item) => codexBridgeWatchKey(item.connectionId, item.targetId, item.threadId) === key);
   if (existing) {
     if (!owner || existing.ownerConversationId === owner.ownerConversationId) {
-      return { items, events, result: { item: existing, created: false, transferred: false, ownerUnavailable: false } };
+      return { items, events, result: { item: existing, created: false, transferred: false, ownerUnavailable: false, ownerConflict: false } };
     }
     if (!existing.ownerConversationId) {
-      return { items, events, result: { item: existing, created: false, transferred: false, ownerUnavailable: true } };
+      return { items, events, result: { item: null, created: false, transferred: false, ownerUnavailable: true, ownerConflict: false } };
+    }
+    if (!allowOwnerTransfer) {
+      return { items, events, result: { item: null, created: false, transferred: false, ownerUnavailable: false, ownerConflict: true } };
     }
     const moved = { ...existing, ...owner };
     return {
       items: items.map((item) => item.watchId === existing.watchId ? moved : item), events,
-      result: { item: moved, created: false, transferred: true, ownerUnavailable: false },
+      result: { item: moved, created: false, transferred: true, ownerUnavailable: false, ownerConflict: false },
     };
   }
   if (items.length >= CODEX_BRIDGE_THREAD_MONITOR_MAX_WATCHES) {
-    return { items, events, result: { item: null, created: false, transferred: false, ownerUnavailable: false } };
+    return { items, events, result: { item: null, created: false, transferred: false, ownerUnavailable: false, ownerConflict: false } };
   }
   return {
     items: [...items, candidate], events,
-    result: { item: candidate, created: true, transferred: false, ownerUnavailable: false },
+    result: { item: candidate, created: true, transferred: false, ownerUnavailable: false, ownerConflict: false },
   };
 }

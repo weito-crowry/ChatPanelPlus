@@ -63,6 +63,9 @@
 .codex-bridge-answer-text { max-height: 32vh; }
 @supports (height: 100dvh) { .codex-bridge-answer-text { max-height: 32dvh; } }
 .codex-bridge-watch, .phase6-card-b { min-height: 100%; }
+.codex-bridge-auto-watch { display: grid; gap: 6px; min-width: 0; padding: 8px; border: 1px solid var(--border-light, #d9dadd); border-radius: 8px; }
+.codex-bridge-auto-watch strong { font-size: 12px; }
+.codex-bridge-auto-watch small, .codex-bridge-auto-watch p { overflow-wrap: anywhere; }
 .codex-bridge-watch .codex-bridge-heading, .codex-bridge-event-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; }
 .codex-bridge-event-heading { flex-wrap: wrap; }
 .codex-bridge-watch-list, .codex-bridge-event-list { max-height: 250px; }

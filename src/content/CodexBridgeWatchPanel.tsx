@@ -14,6 +14,7 @@ import {
   type CodexBridgeWatchListData,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import type { CodexBridgeThread } from '../shared/codexbridge-mcp-protocol.ts';
+import { CodexBridgeAutoWatchControl } from './CodexBridgeAutoWatchControl.tsx';
 import { conversationIdFromPath } from '../shared/conversation-route.ts';
 import type { ConversationPanelWatchSelection } from '../shared/conversation-panel-state-repository.ts';
 import { acknowledgeCodexBridgeEventIds } from './codexbridge-event-ack.ts';
@@ -49,6 +50,7 @@ const NO_WATCH_ITEMS: readonly CodexBridgeWatchSnapshot[] = [];
 const NO_WATCH_EVENTS: readonly CodexBridgeTerminalEvent[] = [];
 type Props = Readonly<{
   selected: SelectedThread | null;
+  target: Readonly<{ id: string; name: string }> | null;
   watchFeedbackResetToken?: number;
   foregroundEnabled: boolean;
   conversationId: string | null;
@@ -61,7 +63,7 @@ type Props = Readonly<{
   onTerminalEvents?: (events: readonly CodexBridgeTerminalEventSignal[]) => void;
 }>;
 export function CodexBridgeWatchPanel({
-  selected, watchFeedbackResetToken = 0, foregroundEnabled, conversationId, bridgeWatchSelection, bridgeEventSelection,
+  selected, target, watchFeedbackResetToken = 0, foregroundEnabled, conversationId, bridgeWatchSelection, bridgeEventSelection,
   threadCandidates = [], onSelectBridgeWatch, onSelectBridgeEvent, onSummaryChange, onTerminalEvents,
 }: Props) {
   const [items, setItems] = useState<readonly CodexBridgeWatchSnapshot[]>([]);
@@ -448,6 +450,7 @@ export function CodexBridgeWatchPanel({
         <h2>B 選択スレッド・監視中</h2>
         <span>{listIsCurrent && !listFailure ? `${currentItems.length}件` : '—'}</span>
       </div>
+      <CodexBridgeAutoWatchControl targetId={target?.id ?? null} targetName={target?.name ?? null} conversationId={conversationId} />
       {selectedWatch
         ? <button type="button" className="codex-bridge-button" onClick={() => { void stopWatch(selectedWatch); }} disabled={busyKey !== ''}>
           {busyKey === `stop:${selectedWatch.watchId}` ? '解除中…' : '選択threadの監視を解除'}

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  CODEX_BRIDGE_AUTO_WATCH_GET,
+  CODEX_BRIDGE_AUTO_WATCH_SET,
   CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH,
   CODEX_BRIDGE_WATCH_ACK_EVENTS,
   CODEX_BRIDGE_WATCH_CLEAR_EVENTS,
@@ -13,7 +15,7 @@ import {
   type CodexBridgeTerminalEvent,
   type CodexBridgeWatchOwnerMute,
 } from '../src/shared/codexbridge-thread-monitor-protocol.ts';
-import { createCodexBridgeThreadMonitorMessageHandler } from '../src/background/codexbridge-thread-monitor.ts';
+import { createCodexBridgeThreadMonitorMessageHandler, ownerTabMatchesConversation } from '../src/background/codexbridge-thread-monitor.ts';
 
 const item: CodexBridgeWatchSnapshot = {
   watchId: 'watch-1', connectionId: 'sha256:abc', targetId: 'target-1', threadId: 'thread-1', enabled: true,
@@ -31,7 +33,7 @@ const event: CodexBridgeTerminalEvent = {
   ownerTabId: 4, ownerConversationId: 'test', ownerMuted: false, ownerMuteRevision: 0,
 };
 
-function handlerFixture(connectionId = item.connectionId, sourceItems: readonly CodexBridgeWatchSnapshot[] = [item], sourceEvents: readonly CodexBridgeTerminalEvent[] = [event], startTransferred = false) {
+function handlerFixture(connectionId = item.connectionId, sourceItems: readonly CodexBridgeWatchSnapshot[] = [item], sourceEvents: readonly CodexBridgeTerminalEvent[] = [event], startTransferred = false, includeAuto = false) {
   const calls: string[] = [];
   const requestedOwners: CodexBridgeWatchOwnerMute[] = [];
   const monitor = {
@@ -65,6 +67,23 @@ function handlerFixture(connectionId = item.connectionId, sourceItems: readonly 
       return ownerConversationId === event.ownerConversationId && eventIds.every((id) => id === event.eventId);
     },
   };
+  async function getAutoStatus(targetId: string, conversationId: string) {
+    calls.push(`auto:get:${targetId}:${conversationId}`);
+    return { targetId, connectionId, enabled: false, ownerConversationId: conversationId, state: 'off' as const,
+      failure: null, liveThreadCount: null, watchingThreadCount: 0, lastScannedAt: null, nextScanAt: null };
+  }
+  const autoRegistration = {
+    getStatus: getAutoStatus,
+    async setEnabled(targetId: string, tabId: number, conversationId: string, enabled: boolean) {
+      calls.push(`auto:set:${targetId}:${tabId}:${conversationId}:${enabled}`);
+      return { ok: true as const, status: await getAutoStatus(targetId, conversationId) };
+    },
+    async scanForeground(conversationId: string) { calls.push(`auto:foreground:${conversationId}`); },
+    async stopWatch(connection: string, targetId: string, threadId: string, conversationId: string) {
+      calls.push(`auto:stop:${connection}:${targetId}:${threadId}:${conversationId}`);
+      return true;
+    },
+  };
   const handle = createCodexBridgeThreadMonitorMessageHandler({
     extensionId: 'test-extension',
     monitor,
@@ -79,6 +98,7 @@ function handlerFixture(connectionId = item.connectionId, sourceItems: readonly 
       };
     },
     async loadOwnerMute() { return { ok: true as const, muted: false, revision: 0 }; },
+    ...(includeAuto ? { autoRegistration } : {}),
   });
   return { handle, calls, requestedOwners };
 }
@@ -235,4 +255,35 @@ test('sender URLの会話ID欠落・要求ID不一致は一覧・登録を拒否
   }), null);
   assert.equal(await handle({ type: CODEX_BRIDGE_WATCH_START, targetId: 'target-1', threadId: 'thread-1', conversationId: 'other' }, trustedSender), null);
   assert.deepEqual(calls, []);
+});
+
+test('自動登録のGET/SETとforeground scanはtrusted current conversationだけに束ねる', async () => {
+  const { handle, calls } = handlerFixture(item.connectionId, [item], [event], false, true);
+  assert.deepEqual(await handle({ type: CODEX_BRIDGE_AUTO_WATCH_GET, targetId: 'target-1', conversationId: 'test' }, trustedSender), {
+    ok: true, data: { targetId: 'target-1', connectionId: item.connectionId, enabled: false, ownerConversationId: 'test',
+      state: 'off', failure: null, liveThreadCount: null, watchingThreadCount: 0, lastScannedAt: null, nextScanAt: null },
+  });
+  assert.deepEqual(await handle({ type: CODEX_BRIDGE_AUTO_WATCH_SET, targetId: 'target-1', conversationId: 'test', enabled: true }, trustedSender), {
+    ok: true, data: { targetId: 'target-1', connectionId: item.connectionId, enabled: false, ownerConversationId: 'test',
+      state: 'off', failure: null, liveThreadCount: null, watchingThreadCount: 0, lastScannedAt: null, nextScanAt: null },
+  });
+  const mismatched = { ...trustedSender, url: 'https://chatgpt.com/c/other', tab: { id: 8, url: 'https://chatgpt.com/c/other' } };
+  assert.equal(await handle({ type: CODEX_BRIDGE_AUTO_WATCH_SET, targetId: 'target-1', conversationId: 'test', enabled: true }, mismatched), null);
+  await handle({ type: CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH }, trustedSender);
+  assert.deepEqual(calls.slice(0, 3), [
+    'auto:get:target-1:test',
+    'auto:set:target-1:4:test:true',
+    'auto:get:target-1:test',
+  ]);
+  assert.ok(calls.includes('auto:foreground:test'));
+});
+
+test('owner tab routeはmute/通知音の現在会話と一致するときだけ有効', async () => {
+  const tabs = { async get(tabId: number) { return { url: tabId === 4
+    ? 'https://chatgpt.com/c/test' : 'https://chatgpt.com/c/other' }; } };
+  assert.equal(await ownerTabMatchesConversation(tabs, 4, 'test'), true);
+  assert.equal(await ownerTabMatchesConversation(tabs, 4, 'other'), false);
+  assert.equal(await ownerTabMatchesConversation({ async get() { return { url: 'https://user@chatgpt.com/c/test' }; } }, 4, 'test'), false);
+  assert.equal(await ownerTabMatchesConversation({ async get() { return { url: 'https://example.com/c/test' }; } }, 4, 'test'), false);
+  assert.equal(await ownerTabMatchesConversation({ async get() { throw new Error('tab closed'); } }, 4, 'test'), false);
 });

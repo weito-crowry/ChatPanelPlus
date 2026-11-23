@@ -25,6 +25,9 @@ import { createDefaultCodexBridgePanelHandler } from './background/codexbridge-p
 import { createCodexBridgeNotificationHandler } from './background/codexbridge-notifications.ts';
 import { createChromeSettingsRepository } from './shared/settings-repository.ts';
 import {
+  CODEX_BRIDGE_AUTO_WATCH_ALARM,
+  CODEX_BRIDGE_AUTO_WATCH_GET,
+  CODEX_BRIDGE_AUTO_WATCH_SET,
   CODEX_BRIDGE_THREAD_MONITOR_ALARM,
   CODEX_BRIDGE_WATCH_ACK_EVENTS,
   CODEX_BRIDGE_WATCH_CLEAR_EVENTS,
@@ -35,7 +38,7 @@ import {
   CODEX_BRIDGE_WATCH_START,
   CODEX_BRIDGE_WATCH_STOP,
 } from './shared/codexbridge-thread-monitor-protocol.ts';
-import { createDefaultCodexBridgeThreadMonitor } from './background/codexbridge-thread-monitor.ts';
+import { createDefaultCodexBridgeThreadMonitor, ownerTabMatchesConversation } from './background/codexbridge-thread-monitor.ts';
 
 type OpenOptionsMessage = Readonly<{ type: 'OPEN_OPTIONS' }>;
 
@@ -70,6 +73,7 @@ function isCodexBridgeWatchMessage(message: unknown): boolean {
       || message.type === CODEX_BRIDGE_WATCH_START || message.type === CODEX_BRIDGE_WATCH_STOP
       || message.type === CODEX_BRIDGE_WATCH_LIST || message.type === CODEX_BRIDGE_WATCH_READ
       || message.type === CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH
+      || message.type === CODEX_BRIDGE_AUTO_WATCH_GET || message.type === CODEX_BRIDGE_AUTO_WATCH_SET
       || message.type === CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER);
 }
 
@@ -122,12 +126,18 @@ const notification = createCodexBridgeNotificationHandler({
   audio: offscreenTransport,
   loadOwnerMute: async (event) => {
     if (event.ownerTabId === undefined || event.ownerConversationId === undefined || event.ownerMuted === undefined) return { ok: false };
+    if (!await ownerTabMatchesConversation(chrome.tabs, event.ownerTabId, event.ownerConversationId)) {
+      return { ok: true, muted: null };
+    }
     const loaded = await conversationAudioMuteStore.load(event.ownerTabId, event.ownerConversationId);
     if (!loaded.ok) return { ok: false };
     return { ok: true, muted: loaded.saved ? loaded.value.muted : event.ownerMuted };
   },
   playWithOwnerMuteGuard: async (event, action) => {
     if (event.ownerTabId === undefined || event.ownerConversationId === undefined) return { ok: false, reason: 'owner-unavailable' };
+    if (!await ownerTabMatchesConversation(chrome.tabs, event.ownerTabId, event.ownerConversationId)) {
+      return { ok: false, reason: 'owner-unavailable' };
+    }
     const result = await conversationAudioMuteStore.runIfOwnerUnmuted(
       event.ownerTabId, event.ownerConversationId, event.ownerMuted, action,
     );
@@ -142,7 +152,7 @@ const codexBridgeThreadMonitor = createDefaultCodexBridgeThreadMonitor(chrome.ru
 const handleConversationAudioMute = createConversationAudioMuteMessageHandler(
   conversationAudioMuteStore,
   chrome.runtime.id,
-  async (tabId, conversationId, value) => codexBridgeThreadMonitor.monitor.updateOwnerMute(
+  async (tabId, conversationId, value) => codexBridgeThreadMonitor.autoRegistration.updateOwnerMute(
     tabId, conversationId, value.muted, value.revision,
   ),
 );
@@ -151,19 +161,28 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === CODEX_BRIDGE_THREAD_MONITOR_ALARM) {
     void codexBridgeThreadMonitor.monitor.refreshAlarm().catch(() => {});
   }
+  if (alarm.name === CODEX_BRIDGE_AUTO_WATCH_ALARM) {
+    void codexBridgeThreadMonitor.autoRegistration.scanBackground().catch(() => {});
+  }
 });
-chrome.runtime.onStartup.addListener(() => {
+
+function restoreBridgeMonitoring(): void {
   void codexBridgeThreadMonitor.monitor.restore().catch(() => {});
+  void codexBridgeThreadMonitor.autoRegistration.restore().catch(() => {});
+}
+
+chrome.runtime.onStartup.addListener(() => {
+  restoreBridgeMonitoring();
 });
 chrome.runtime.onInstalled.addListener(() => {
-  void codexBridgeThreadMonitor.monitor.restore().catch(() => {});
+  restoreBridgeMonitoring();
 });
-void codexBridgeThreadMonitor.monitor.restore().catch(() => {});
+restoreBridgeMonitoring();
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   void removeCodexWorkModeEntriesForTab(chrome.storage.session, tabId);
   void removeConversationAudioMuteEntriesForTab(chrome.storage.session, tabId, async (conversationId, value) => {
-    await codexBridgeThreadMonitor.monitor.updateOwnerMute(tabId, conversationId, value?.muted ?? null, value?.revision);
+    await codexBridgeThreadMonitor.autoRegistration.updateOwnerMute(tabId, conversationId, value?.muted ?? null, value?.revision);
   }).catch(() => {});
 });
 

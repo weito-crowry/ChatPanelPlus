@@ -13,7 +13,8 @@ const WATCH_OUTCOME_LABELS: Readonly<Record<CodexBridgeWatchSnapshot['fetchOutco
   'settings-unavailable': '接続設定またはtokenを取得できません', 'endpoint-not-found': 'endpointなし',
   'session-expired': 'MCP session失効', 'http-error': 'HTTPエラー', 'protocol-error': '応答形式不明',
   'protocol-version-unsupported': 'protocol version非対応', 'readonly-tool-unavailable': 'codex_statusなし',
-  'readonly-probe-failed': 'codex_status失敗', 'connection-changed': '接続先変更',
+  'readonly-probe-failed': 'codex_status失敗', 'running-only-unsupported': 'running_only非対応',
+  'connection-changed': '接続先変更',
 };
 
 const TERMINAL_HOLD_LABELS: Readonly<Record<CodexBridgeTerminalHoldReason, string>> = {

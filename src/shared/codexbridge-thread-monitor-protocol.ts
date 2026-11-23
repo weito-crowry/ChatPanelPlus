@@ -5,6 +5,9 @@ import { isConversationId } from './conversation-route.ts';
 export const CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY = 'chatPanelPlus.codexBridgeThreadMonitor.v1';
 export const CODEX_BRIDGE_THREAD_MONITOR_ALARM = 'chatPanelPlus.codexBridgeThreadMonitor.poll';
 export const CODEX_BRIDGE_THREAD_MONITOR_MINUTES = 0.5;
+export const CODEX_BRIDGE_AUTO_WATCH_STORAGE_KEY = 'chatPanelPlus.codexBridgeAutoWatch.v1';
+export const CODEX_BRIDGE_AUTO_WATCH_ALARM = 'chatPanelPlus.codexBridgeAutoWatch.poll';
+export const CODEX_BRIDGE_AUTO_WATCH_MINUTES = 0.5;
 export const CODEX_BRIDGE_THREAD_MONITOR_MAX_WATCHES = 32;
 export const CODEX_BRIDGE_THREAD_MONITOR_FOREGROUND_MS = 5_000;
 export const CODEX_BRIDGE_WATCH_ACK_EVENT_IDS_LIMIT = 128;
@@ -18,6 +21,8 @@ export const CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH = 'CODEX_BRIDGE_WATCH_FOREGRO
 export const CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER = 'CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER' as const;
 export const CODEX_BRIDGE_WATCH_ACK_EVENTS = 'CODEX_BRIDGE_WATCH_ACK_EVENTS' as const;
 export const CODEX_BRIDGE_WATCH_CLEAR_EVENTS = 'CODEX_BRIDGE_WATCH_CLEAR_EVENTS' as const;
+export const CODEX_BRIDGE_AUTO_WATCH_GET = 'CODEX_BRIDGE_AUTO_WATCH_GET' as const;
+export const CODEX_BRIDGE_AUTO_WATCH_SET = 'CODEX_BRIDGE_AUTO_WATCH_SET' as const;
 
 export type CodexBridgeTerminalStatus = 'completed' | 'failed' | 'interrupted';
 export type CodexBridgeNotificationState = 'pending' | 'requested' | 'played' | 'skipped' | 'failed';
@@ -82,7 +87,25 @@ export type CodexBridgeWatchFetchOutcome =
   | 'protocol-version-unsupported'
   | 'readonly-tool-unavailable'
   | 'readonly-probe-failed'
+  | 'running-only-unsupported'
   | 'connection-changed';
+
+export type CodexBridgeAutoWatchFailure = CodexBridgeWatchFetchOutcome
+  | 'connection-unavailable' | 'target-unavailable' | 'owner-conflict' | 'ownerless-watch' | 'watch-limit' | 'owner-tab-unavailable'
+  | 'storage-error';
+
+export type CodexBridgeAutoWatchStatus = Readonly<{
+  targetId: string;
+  connectionId: string | null;
+  enabled: boolean;
+  ownerConversationId: string | null;
+  state: 'off' | 'ready' | 'error' | 'conflict';
+  failure: CodexBridgeAutoWatchFailure | null;
+  liveThreadCount: number | null;
+  watchingThreadCount: number;
+  lastScannedAt: string | null;
+  nextScanAt: number | null;
+}>;
 
 export type CodexBridgeWatchTurnChange = 'baseline' | 'same' | 'advanced' | 'gap' | 'unknown';
 export type CodexBridgeWatchBaselineKind = 'turn' | 'none' | 'unknown';
@@ -131,6 +154,10 @@ export type CodexBridgeWatchMessage =
   | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_ACK_EVENTS; conversationId: string; eventIds: readonly string[] }>
   | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_CLEAR_EVENTS; conversationId: string; eventIds: readonly string[] }>;
 
+export type CodexBridgeAutoWatchMessage =
+  | Readonly<{ type: typeof CODEX_BRIDGE_AUTO_WATCH_GET; targetId: string; conversationId: string }>
+  | Readonly<{ type: typeof CODEX_BRIDGE_AUTO_WATCH_SET; targetId: string; conversationId: string; enabled: boolean }>;
+
 export type CodexBridgeWatchListData = Readonly<{
   items: readonly CodexBridgeWatchSnapshot[];
   events: readonly CodexBridgeTerminalEvent[];
@@ -140,14 +167,16 @@ export type CodexBridgeWatchListData = Readonly<{
 
 export type CodexBridgeWatchResponse<T = undefined> =
   | Readonly<{ ok: true; data: T }>
-  | Readonly<{ ok: false; reason: 'invalid-request' | 'watch-limit' | 'connection-unavailable' | 'storage-error' | 'owner-unavailable' }>;
+  | Readonly<{ ok: false; reason: 'invalid-request' | 'watch-limit' | 'connection-unavailable' | 'storage-error'
+    | 'owner-unavailable' | 'owner-conflict' | 'auto-owner-conflict' | 'target-unavailable'
+    | CodexBridgeAutoWatchFailure }>;
 
 export function isCodexBridgeWatchFetchOutcome(value: unknown): value is CodexBridgeWatchFetchOutcome {
   return typeof value === 'string' && [
     'ok', '401', '403', 'timeout', 'disconnected', 'unknown', 'permission-required',
     'settings-unavailable', 'endpoint-not-found', 'session-expired', 'http-error',
     'protocol-error', 'protocol-version-unsupported', 'readonly-tool-unavailable',
-    'readonly-probe-failed', 'connection-changed',
+    'readonly-probe-failed', 'running-only-unsupported', 'connection-changed',
   ].includes(value);
 }
 

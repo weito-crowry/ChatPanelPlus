@@ -15,10 +15,11 @@ import {
   type CodexBridgeWatchOwnerMute,
   type CodexBridgeWatchTurnChange,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
-import type { CodexBridgeThreadStatus } from '../shared/codexbridge-mcp-protocol.ts';
+import type { CodexBridgeTarget, CodexBridgeThreadPage, CodexBridgeThreadStatus } from '../shared/codexbridge-mcp-protocol.ts';
 import { codexBridgeTerminalHoldReason, detectCodexBridgeTerminalStatus } from './thread-monitor-events.ts';
 import { CodexBridgeThreadMonitorStorage, type LocalStorageLike } from './thread-monitor-storage.ts';
 import { registerCodexBridgeWatch } from './thread-monitor-registration.ts';
+import { mapMonitorError as mapError, monitorTimestamp as timestamp, statusEvidence } from './thread-monitor-utils.ts';
 
 type AlarmLike = Readonly<{
   get(name: string): Promise<unknown>;
@@ -28,6 +29,8 @@ type AlarmLike = Readonly<{
 
 export type CodexBridgeMonitorAccess = Readonly<{
   connectionId: string | null;
+  readTargets?: () => Promise<readonly CodexBridgeTarget[]>;
+  readRunningThreads?: (targetId: string) => Promise<CodexBridgeThreadPage>;
   readStatus?: (targetId: string, threadId: string) => Promise<CodexBridgeThreadStatus>;
   readFinalAnswer?: (targetId: string, threadId: string, turnId: string) => Promise<CodexBridgeFinalAnswerResult>;
   failure?: CodexBridgeWatchFetchOutcome;
@@ -54,44 +57,6 @@ type MonitorOptions = Readonly<{
 const MAX_POLL_FAILURES = 8;
 const MAX_BACKOFF_MS = 5 * 60_000;
 const MAX_POLLS_PER_TARGET_PER_CYCLE = 3;
-
-function mapError(error: unknown): CodexBridgeWatchFetchOutcome {
-  if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
-    switch (error.code) {
-      case 'authentication-required': return '401';
-      case 'forbidden': return '403';
-      case 'timeout': return 'timeout';
-      case 'disconnected': return 'disconnected';
-      case 'endpoint-not-found': return 'endpoint-not-found';
-      case 'session-expired': return 'session-expired';
-      case 'http-error': return 'http-error';
-      case 'protocol-version-unsupported': return 'protocol-version-unsupported';
-      case 'readonly-tool-unavailable': return 'readonly-tool-unavailable';
-      case 'readonly-probe-failed': return 'readonly-probe-failed';
-      case 'protocol-error': return 'protocol-error';
-    }
-  }
-  return 'unknown';
-}
-
-function timestamp(value: number | null): string | null {
-  if (value === null || !Number.isFinite(value)) return null;
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
-}
-
-function statusEvidence(status: CodexBridgeThreadStatus): Omit<CodexBridgeWatchSnapshot, 'watchId' | 'connectionId' | 'targetId' | 'threadId' | 'enabled' | 'baselineCaptured' | 'baselineTurnKind' | 'baselineTurnId' | 'baselineTurnStatus' | 'lastObservedTurnId' | 'turnChange' | 'observedAt' | 'lastSuccessAt' | 'fetchOutcome' | 'nextPollAt' | 'failureCount'> {
-  return {
-    statusState: status.state,
-    lastTurnStatus: status.lastTurn?.status ?? null,
-    lastTurnEvidence: status.lastTurn?.evidence ?? null,
-    currentExecutionState: status.currentExecution?.state ?? null,
-    currentExecutionEvidence: status.currentExecution?.evidence ?? null,
-    currentExecutionReason: status.currentExecution?.reason ?? null,
-    currentExecutionTurnId: status.currentExecution?.turnId ?? null,
-    needsAttention: status.needsAttention,
-  };
-}
 
 export class CodexBridgeThreadMonitor {
   private readonly now: () => number;
@@ -148,9 +113,13 @@ export class CodexBridgeThreadMonitor {
     return (await this.list()).find((item) => codexBridgeWatchKey(item.connectionId, item.targetId, item.threadId) === key) ?? null;
   }
 
-  async startWatch(targetId: string, threadId: string, owner?: CodexBridgeWatchOwnerMute): Promise<
+  async startWatch(targetId: string, threadId: string, owner?: CodexBridgeWatchOwnerMute, registration: {
+    allowOwnerTransfer?: boolean;
+    expectedConnectionId?: string;
+    initialStatus?: CodexBridgeThreadStatus;
+  } = {}): Promise<
     | Readonly<{ ok: true; item: CodexBridgeWatchSnapshot; created: boolean; transferred: boolean }>
-    | Readonly<{ ok: false; reason: 'watch-limit' | 'connection-unavailable' | 'owner-unavailable' }>
+    | Readonly<{ ok: false; reason: 'watch-limit' | 'connection-unavailable' | 'connection-changed' | 'owner-unavailable' | 'owner-conflict' }>
   > {
     if (!isCodexBridgeWatchIdentifier(targetId) || !isCodexBridgeWatchIdentifier(threadId)) {
       return { ok: false, reason: 'connection-unavailable' };
@@ -162,6 +131,9 @@ export class CodexBridgeThreadMonitor {
       access = { connectionId: null, failure: 'settings-unavailable' };
     }
     if (!access.connectionId) return { ok: false, reason: 'connection-unavailable' };
+    if (registration.expectedConnectionId && access.connectionId !== registration.expectedConnectionId) {
+      return { ok: false, reason: 'connection-changed' };
+    }
 
     const initial: CodexBridgeWatchSnapshot = {
       watchId: this.createWatchId(), connectionId: access.connectionId, targetId, threadId, enabled: true,
@@ -172,12 +144,16 @@ export class CodexBridgeThreadMonitor {
       terminalHoldReason: null, needsAttention: null, turnChange: 'unknown', observedAt: null, lastSuccessAt: null,
       fetchOutcome: 'unknown', nextPollAt: this.now(), failureCount: 0,
     };
-    const result = await this.storage.mutate((items, events) => registerCodexBridgeWatch(items, events, initial, owner));
+    const result = await this.storage.mutate((items, events) => registerCodexBridgeWatch(
+      items, events, initial, owner, registration.allowOwnerTransfer !== false,
+    ));
+    if (result.ownerConflict) return { ok: false, reason: 'owner-conflict' };
     if (result.ownerUnavailable) return { ok: false, reason: 'owner-unavailable' };
     if (!result.item) return { ok: false, reason: 'watch-limit' };
     await this.syncAlarm();
     if (result.created) {
-      await this.poll(result.item, access, 'background');
+      if (registration.initialStatus) await this.saveSuccess(result.item, registration.initialStatus, 'background');
+      else await this.poll(result.item, access, 'background');
     }
     return { ok: true, item: (await this.read(access.connectionId, targetId, threadId)) ?? result.item,
       created: result.created, transferred: result.transferred };
@@ -246,6 +222,10 @@ export class CodexBridgeThreadMonitor {
 
   async refreshAlarm(): Promise<void> {
     await this.refresh('background');
+  }
+
+  scheduleTargetRequest<T>(targetId: string, operation: () => Promise<T>): Promise<T> {
+    return this.withTarget(targetId, () => this.withRequestSlot(operation));
   }
 
   private async refresh(cadence: PollCadence, force = false): Promise<void> {

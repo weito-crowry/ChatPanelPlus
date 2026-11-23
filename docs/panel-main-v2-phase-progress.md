@@ -96,3 +96,14 @@
 - 最終自動検証：`pnpm test` 671/671、`pnpm typecheck` PASS、`pnpm lint` PASS（`check:size` 244 files、500行/32768 bytes上限）、`pnpm build` exit 0。Focused terminal/owner/event/表示回帰64/64 PASS。これはsource-only検証で、Chrome実機ではない。
 - 実機watch/eventを含むChrome storageは読まず・変更せず、Chrome/Bridge操作とProbe反映も行っていない。
 - C38変更commit `52767e06cac283ed3e924097a25109678cff327a`は現Chrome登録ロード元`ChatPanelPlus-Content-Probe-20261021`へ未配備・未検証のまま維持し、C38受入は`NOT_RUN`。今回の変更を含むsourceもProbe未反映で、C45 Chrome再受入は今後の配備と手動reload後に必要。
+
+## C46 新規実行スレッドの自動監視登録（2026-11-23）
+
+- B欄にtarget単位の明示ON/OFFを追加。初期OFFで、ONは現在のtrusted ChatGPT会話・tab・routeからのみ受付ける。保存先は`chatPanelPlus.codexBridgeAutoWatch.v1`の独立keyで、connection ID、target ID、owner会話/tab、mute snapshotを厳密検証する。tokenは保存しない。
+- 探索は表示A欄、通常一覧、手動refresh、running modeに依存せず、既存MCP clientのschema/capability確認済み`codex_threads(running_only=true)`を使用。既知target、完全なsingle page、正確なtarget/thread ID、`current_execution`の`in_progress`/`running`かつ`evidence=live`だけを候補にする。終了済み・estimated/inferred・unknown・last_turnだけの項目は候補外。ON時点ですでにliveなthreadも同じ探索で登録する。探索時のconnection IDをwatch開始時にも照合し、接続変更競合の誤登録を拒否する。
+- 登録は既存watch state machine、storage mutation、32件上限、alarm、C45 terminal event/解除、C38 foreground更新へ接続。自動経路はowner移管を禁止し、他会話owner/ownerless watchと衝突したthreadは変更せず理由を保存する。manual watchの既存後勝ち登録動作は維持。手動解除したexecutionは永続skipし、unknown turn IDは同じthreadがrunning_onlyから消えるまで抑止する。OFFは新規登録だけを止め、既存watchと通知履歴を残す。
+- 前面5秒/背景alarm約30秒、targetごとの重複flight、既存watch pollと共有するtarget queue/request slot、周期上限12target、古い期限から処理する公平性、指数backoffを実装。未対応schema/通信異常は0件扱いせずerrorとし再試行を遅らせる。5秒/30秒の間に開始・終了する短命Turnは見落とし得て、全件捕捉は保証しない。
+- owner tabが閉じた／別route／mute取得不能の場合はmuteをnullにし、通知音を鳴らさずevent履歴を保持する。通知時にもowner tab URLと会話routeを再検証。SPA遷移後に別会話へ設定やwatchを移さない。
+- 初期化/削除の扱いを確認：Options設定保存・既定値復元はconfig/view-state keyだけを更新し、自動watch keyと既存`chatPanelPlus.codexBridgeThreadMonitor.v1` watch/event keyを消さない。自動設定データのschema異常時は上書きせずerrorで停止する。
+- 自動検証PASS：`pnpm test` 694/694、`pnpm typecheck` PASS、`pnpm lint` PASS、source size 248 files（各500行/32768 bytes以下）、独立した`pnpm build` exit 0。
+- Chrome登録ロード元への反映・Chrome自動操作・実機受入・Bridge停止/再起動/変更は行っていない。C46 Chrome受入はNOT_RUN。C37主要正常系PASSを維持、C38 Chrome受入NOT_RUNとC45既存FAIL/再受入待ちは既存判定のまま。

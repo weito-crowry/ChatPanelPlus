@@ -8,6 +8,8 @@ import {
   CODEX_BRIDGE_WATCH_ACK_EVENTS,
   CODEX_BRIDGE_WATCH_ACK_EVENT_IDS_LIMIT,
   CODEX_BRIDGE_WATCH_CLEAR_EVENTS,
+  CODEX_BRIDGE_AUTO_WATCH_GET,
+  CODEX_BRIDGE_AUTO_WATCH_SET,
   CODEX_BRIDGE_WATCH_LIST,
   CODEX_BRIDGE_WATCH_READ,
   CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER,
@@ -18,13 +20,16 @@ import {
   type CodexBridgeWatchListData,
   type CodexBridgeWatchMessage,
   type CodexBridgeWatchResponse,
+  type CodexBridgeAutoWatchStatus,
   type CodexBridgeWatchSnapshot,
   type CodexBridgeFinalAnswerResult,
   type CodexBridgeWatchOwnerMute,
+  type CodexBridgeAutoWatchMessage,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import { conversationIdFromPath, isConversationId } from '../shared/conversation-route.ts';
 import { createChromeSettingsRepository } from '../shared/settings-repository.ts';
 import { CodexBridgeMcpClient } from './mcp-client.ts';
+import { CodexBridgeAutoThreadRegistration } from './thread-monitor-auto-registration.ts';
 import { McpTransportError } from './mcp-transport.ts';
 import {
   CodexBridgeThreadMonitor,
@@ -52,6 +57,7 @@ export type CodexBridgeThreadMonitorHandlerOptions = Readonly<{
     | { readonly ok: true; readonly muted: boolean; readonly revision: number }
     | { readonly ok: false }
   >;
+  autoRegistration?: Pick<CodexBridgeAutoThreadRegistration, 'getStatus' | 'setEnabled' | 'scanForeground' | 'stopWatch'>;
 }>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -66,6 +72,18 @@ function pageOrigin(value: string | undefined): string | null {
   } catch {
     return null;
   }
+}
+
+export async function ownerTabMatchesConversation(
+  tabs: Readonly<{ get(tabId: number): Promise<{ url?: string }> }>,
+  tabId: number,
+  conversationId: string,
+): Promise<boolean> {
+  try {
+    const url = new URL((await tabs.get(tabId)).url ?? '');
+    return url.origin === 'https://chatgpt.com' && !url.username && !url.password
+      && conversationIdFromPath(url.pathname) === conversationId;
+  } catch { return false; }
 }
 
 function matchesTargetThread(targetId: string, threadId: string): boolean {
@@ -87,9 +105,14 @@ function trustedConversation(sender: SenderLike, extensionId: string, requestedC
   } catch { return null; }
 }
 
-function isMessage(value: unknown): value is CodexBridgeWatchMessage {
+function isMessage(value: unknown): value is CodexBridgeWatchMessage | CodexBridgeAutoWatchMessage {
   if (!isRecord(value) || typeof value.type !== 'string') return false;
   const keys = Object.keys(value);
+  if ((value.type === CODEX_BRIDGE_AUTO_WATCH_GET || value.type === CODEX_BRIDGE_AUTO_WATCH_SET)
+    && keys.includes('targetId') && keys.includes('conversationId') && isCodexBridgeWatchIdentifier(value.targetId)
+    && isConversationId(value.conversationId)
+    && (value.type === CODEX_BRIDGE_AUTO_WATCH_GET
+      ? keys.length === 3 : keys.length === 4 && typeof value.enabled === 'boolean')) return true;
   if (value.type === CODEX_BRIDGE_WATCH_START) {
     return keys.length === 4 && keys.includes('targetId') && keys.includes('threadId') && keys.includes('conversationId')
       && isCodexBridgeWatchIdentifier(value.targetId) && isCodexBridgeWatchIdentifier(value.threadId)
@@ -145,6 +168,7 @@ export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridg
     | CodexBridgeWatchResponse<Readonly<{ item: CodexBridgeWatchSnapshot; created: boolean; transferred: boolean }>>
     | CodexBridgeWatchResponse<Readonly<{ removed: boolean }>>
     | CodexBridgeWatchResponse<CodexBridgeWatchListData>
+    | CodexBridgeWatchResponse<CodexBridgeAutoWatchStatus>
     | CodexBridgeWatchResponse<CodexBridgeWatchSnapshot | null>
     | CodexBridgeWatchResponse<CodexBridgeWatchListData>
     | CodexBridgeWatchResponse<CodexBridgeFinalAnswerResult>
@@ -153,10 +177,21 @@ export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridg
     | null
   > => {
     if (!isMessage(message)) return { ok: false, reason: 'invalid-request' };
-    const requestedConversationId = message.type === CODEX_BRIDGE_WATCH_START ? message.conversationId : undefined;
+    const requestedConversationId = message.type === CODEX_BRIDGE_WATCH_START
+      || message.type === CODEX_BRIDGE_AUTO_WATCH_GET || message.type === CODEX_BRIDGE_AUTO_WATCH_SET
+      ? message.conversationId : undefined;
     const identity = trustedConversation(sender, options.extensionId, requestedConversationId);
     if (!identity) return null;
     try {
+      if (message.type === CODEX_BRIDGE_AUTO_WATCH_GET) {
+        if (!options.autoRegistration) return { ok: false, reason: 'storage-error' };
+        return { ok: true, data: await options.autoRegistration.getStatus(message.targetId, identity.conversationId) };
+      }
+      if (message.type === CODEX_BRIDGE_AUTO_WATCH_SET) {
+        if (!options.autoRegistration) return { ok: false, reason: 'storage-error' };
+        const result = await options.autoRegistration.setEnabled(message.targetId, identity.tabId, identity.conversationId, message.enabled);
+        return result.ok ? { ok: true, data: result.status } : { ok: false, reason: result.reason };
+      }
       if (message.type === CODEX_BRIDGE_WATCH_START) {
         const mute = await options.loadOwnerMute(identity.tabId, identity.conversationId);
         if (!mute.ok) return { ok: false, reason: 'storage-error' };
@@ -169,7 +204,9 @@ export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridg
         return { ok: true, data: { item: result.item, created: result.created, transferred: result.transferred } };
       }
       if (message.type === CODEX_BRIDGE_WATCH_STOP) {
-        const removed = await options.monitor.stopWatch(message.connectionId, message.targetId, message.threadId, identity.conversationId);
+        const removed = options.autoRegistration
+          ? await options.autoRegistration.stopWatch(message.connectionId, message.targetId, message.threadId, identity.conversationId)
+          : await options.monitor.stopWatch(message.connectionId, message.targetId, message.threadId, identity.conversationId);
         return { ok: true, data: { removed } };
       }
       if (message.type === CODEX_BRIDGE_WATCH_READ) {
@@ -220,7 +257,10 @@ export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridg
         const cleared = await options.monitor.clearEvents(identity.conversationId, message.eventIds);
         return cleared ? { ok: true, data: { cleared: true } } : { ok: false, reason: 'invalid-request' };
       }
-      if (message.type === CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH) await options.monitor.refreshForeground();
+      if (message.type === CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH) {
+        void options.autoRegistration?.scanForeground(identity.conversationId).catch(() => {});
+        await options.monitor.refreshForeground();
+      }
       const [items, events, connectionId] = await Promise.all([
         options.monitor.list(),
         options.monitor.listEvents(),
@@ -293,12 +333,20 @@ export function createDefaultCodexBridgeThreadMonitor(
     const client = cached.client;
     return {
       connectionId,
+      readTargets: () => client.readTargets(),
+      readRunningThreads: (targetId) => client.readThreads(targetId, undefined, true),
       readStatus: (targetId, threadId) => client.readStatus(targetId, threadId),
       readFinalAnswer: (targetId, threadId, turnId) => client.readFinalAnswer(targetId, threadId, turnId),
     };
   };
 
   const monitor = new CodexBridgeThreadMonitor(chrome.storage.local, chrome.alarms, resolveAccess, { notification });
-  const handleMessage = createCodexBridgeThreadMonitorMessageHandler({ extensionId, monitor, resolveAccess, loadOwnerMute });
-  return { monitor, handleMessage };
+  const autoRegistration = new CodexBridgeAutoThreadRegistration(
+    chrome.storage.local, chrome.alarms, monitor, resolveAccess, loadOwnerMute,
+    (tabId, conversationId) => ownerTabMatchesConversation(chrome.tabs, tabId, conversationId),
+  );
+  const handleMessage = createCodexBridgeThreadMonitorMessageHandler({
+    extensionId, monitor, resolveAccess, loadOwnerMute, autoRegistration,
+  });
+  return { monitor, autoRegistration, handleMessage };
 }

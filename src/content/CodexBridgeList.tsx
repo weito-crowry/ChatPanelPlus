@@ -319,8 +319,7 @@ export function CodexBridgeList({
     if (mode === listMode) return;
     requestTracker.current?.selectMode(mode);
     terminalContext.current.mode = mode; terminalRefresh.current.clearPending();
-    runningSummaryGeneration.current += 1;
-    setListMode(mode);
+    runningSummaryGeneration.current += 1; setListMode(mode);
     setThreads([]);
     setNextCursor(null);
     setThreadsLoaded(false);
@@ -484,6 +483,7 @@ export function CodexBridgeList({
       </section>
       <CodexBridgeWatchPanel
         selected={selected ? { targetId: selected.targetId, threadId: selected.id } : null}
+        target={targets.find((target) => target.id === targetId) ?? null}
         watchFeedbackResetToken={watchFeedbackResetToken}
         foregroundEnabled={foregroundEnabled}
         conversationId={conversationId}
