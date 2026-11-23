@@ -85,3 +85,14 @@
 - 登録済みロード元の記録補正：過去の各配備記録にある「repo直下`dist/`」はその配備時点の記録として保持する。2026-11-23の読み取り確認で、Chromeの実登録ロード元は兄弟フォルダー`D:\weito\Documents\src\codexapp\ChatPanelPlus-Content-Probe-20261021`と確認した。今回のC37受入前にrepo `dist/`の完全版をこの固定ロード元へ全件反映し、11/11ファイルのSHA-256一致とManifest v0.1.5を確認。反映前バックアップ`D:\weito\Documents\src\codexapp\ChatPanelPlus-Content-Probe-20261021-backup-C37-20261123-132015-522`も11/11照合済み。
 - ユーザー実機受入：2026-11-23、Chrome拡張とChatGPTページをユーザーが再読み込み。CPPパネルCで完了eventを開き最終回答を取得、UIに「完了済みturnの確定した最終回答を取得しました。」と本文が表示された。以前の「Bridgeの応答形式を確認できません。」は再発せず。ユーザー追加報告でcopyとChatGPT入力欄への挿入も成功。Bridge API直読でも対応Turnのcompleted/retrievedと本文一致を確認した。C37は「主要正常系PASS／詳細異常系NOT_RUN」とする。
 - 関連項目の範囲：C20は最終回答の取得・表示・copy・入力欄挿入までの部分観測。別会話/別接続先のowner越境、同一会話別tab、挿入後の下書き保持、自動送信しないことの独立試験は報告されておらずNOT_RUN。C34のA/B/C全体も未確認。B監視0件でCに完了eventが残るスクリーンショットはC45主要正常系の部分観測として記録し、5秒周期、failed/interrupted、異常・競合系、event保存失敗、他watch/alarm影響はNOT_RUNのまま。
+
+## C45 終端認識と自動解除の不一致調査（2026-11-23）
+
+- 14:34 JSTのユーザー実機報告では、パネルAはBridgeの実行中threadなし／0、Bは対象threadをwatch 1件のまま保持し「新しいturnの完了を観測」と表示。ユーザー確認では14:33 JSTにTurn完了。Bridge `codex_status`読取結果はcompleted、last_turn completed/live、current_execution unknown/inferred/`execution_unconfirmed`・turn_id nullだったとの報告。Cには新しい終了eventが見えなかったが、「現在の会話の終了通知1件を削除」の表示があるため、手動clearの対象が旧eventか新eventかは未確定。Aの一覧未更新はC38の別問題。
+- 実機時点のmonitor storage/前回snapshotにはアクセスしていない。前回`fetchOutcome`、`lastSuccessAt`、`turnChange`、baseline値は未観測であり、当該watchがどのdetector gateに拒否されたかは確定できない。
+- コード上の再現経路：watch baselineがlive `in_progress`、その後のstatus取得が失敗し、続くpollが同じturnのlive terminal statusを返す。detectorは`previous.fetchOutcome !== 'ok'`のため初回terminalを拒否するが、`saveSuccess`はterminal snapshotを保存する。次pollは同一turn/terminalで`turnChange=same`となり、`observedTransition`に必要なprevious `in_progress`が失われるため、以後のterminal pollでもevent作成・watch解除に到達しない。一度でもfetch errorや90秒gap等で遷移証拠を失う可能性があるが、これが実機の発生経路だったとは断定しない。
+- 再現テストは修正前、watchを保持したままBが「新しいturnの完了を観測」と誤表示することを確認。修正後はイベントを作らずwatch/alarmを維持し、「完了状態を観測しました。通知判定保留（前回の状態取得に失敗）。監視継続中。」と表示し、保留理由をstorage snapshotと技術情報に残す。既終端baseline、unknown/gap/inferred-only、別turn current_execution、event保存失敗、duplicate/owner、同一watchの原子的解除、failed/interruptedの既存gateは変更していない。
+- remote public thread IDの`targetId::native_thread_id`形式とtarget整合性検査`matchesTargetThread`、connection/target/threadを含むwatch/event keyは変更していない。既存handler testは他target prefixのthreadを拒否する。remote targetからのライブ終端eventは実機未確認で、status証拠gateはremote/local間で緩和していない。
+- 最終自動検証：`pnpm test` 671/671、`pnpm typecheck` PASS、`pnpm lint` PASS（`check:size` 244 files、500行/32768 bytes上限）、`pnpm build` exit 0。Focused terminal/owner/event/表示回帰64/64 PASS。これはsource-only検証で、Chrome実機ではない。
+- 実機watch/eventを含むChrome storageは読まず・変更せず、Chrome/Bridge操作とProbe反映も行っていない。
+- C38変更commit `52767e06cac283ed3e924097a25109678cff327a`は現Chrome登録ロード元`ChatPanelPlus-Content-Probe-20261021`へ未配備・未検証のまま維持し、C38受入は`NOT_RUN`。今回の変更を含むsourceもProbe未反映で、C45 Chrome再受入は今後の配備と手動reload後に必要。

@@ -16,7 +16,7 @@ import {
   type CodexBridgeWatchTurnChange,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import type { CodexBridgeThreadStatus } from '../shared/codexbridge-mcp-protocol.ts';
-import { detectCodexBridgeTerminalStatus } from './thread-monitor-events.ts';
+import { codexBridgeTerminalHoldReason, detectCodexBridgeTerminalStatus } from './thread-monitor-events.ts';
 import { CodexBridgeThreadMonitorStorage, type LocalStorageLike } from './thread-monitor-storage.ts';
 import { registerCodexBridgeWatch } from './thread-monitor-registration.ts';
 
@@ -169,7 +169,7 @@ export class CodexBridgeThreadMonitor {
       baselineCaptured: false, baselineTurnKind: 'unknown', baselineTurnId: null, baselineTurnStatus: null,
       lastObservedTurnId: null, statusState: null, lastTurnStatus: null, lastTurnEvidence: null,
       currentExecutionState: null, currentExecutionEvidence: null, currentExecutionReason: null, currentExecutionTurnId: null,
-      needsAttention: null, turnChange: 'unknown', observedAt: null, lastSuccessAt: null,
+      terminalHoldReason: null, needsAttention: null, turnChange: 'unknown', observedAt: null, lastSuccessAt: null,
       fetchOutcome: 'unknown', nextPollAt: this.now(), failureCount: 0,
     };
     const result = await this.storage.mutate((items, events) => registerCodexBridgeWatch(items, events, initial, owner));
@@ -348,11 +348,12 @@ export class CodexBridgeThreadMonitor {
         lastObservedTurnId: currentTurnId ?? previous.lastObservedTurnId,
         turnChange, observedAt: timestamp(now), lastSuccessAt: timestamp(now), fetchOutcome: 'ok',
         nextPollAt: now + (interval ?? (cadence === 'foreground' || this.foregroundUntil > now ? CODEX_BRIDGE_THREAD_MONITOR_FOREGROUND_MS : 30_000)),
-        failureCount: 0,
+        failureCount: 0, terminalHoldReason: null,
       };
-      const next = [...items];
-      next[index] = success;
       const terminalStatus = detectCodexBridgeTerminalStatus(previous, success, this.gapThresholdMs);
+      const holdReason = terminalStatus ? null : codexBridgeTerminalHoldReason(previous, success, this.gapThresholdMs);
+      const next = [...items];
+      next[index] = { ...success, terminalHoldReason: holdReason };
       if (!terminalStatus) return { items: next, events, result: { event: null, unregistered: false } };
       const eventKey = codexBridgeTerminalEventKey(success.connectionId, success.targetId, success.threadId,
         success.lastObservedTurnId!);

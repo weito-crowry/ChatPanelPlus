@@ -1,6 +1,7 @@
 import {
   deriveCodexBridgeWatchTurnState,
   type CodexBridgeTerminalStatus,
+  type CodexBridgeTerminalHoldReason,
   type CodexBridgeWatchSnapshot,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
 
@@ -60,4 +61,45 @@ export function detectCodexBridgeTerminalStatus(
     return current.baselineTurnStatus === 'in_progress' && observedTransition ? current.lastTurnStatus : null;
   }
   return current.turnChange === 'advanced' || observedTransition ? current.lastTurnStatus : null;
+}
+
+export function codexBridgeTerminalHoldReason(
+  previous: CodexBridgeWatchSnapshot,
+  current: CodexBridgeWatchSnapshot,
+  gapThresholdMs = 90_000,
+): CodexBridgeTerminalHoldReason | null {
+  const state = deriveCodexBridgeWatchTurnState(current);
+  if (!isTerminalStatus(state)) return null;
+  if (previous.fetchOutcome !== 'ok') return 'previous-fetch-failed';
+
+  const previousSuccess = previous.lastSuccessAt === null ? NaN : Date.parse(previous.lastSuccessAt);
+  const currentSuccess = current.lastSuccessAt === null ? NaN : Date.parse(current.lastSuccessAt);
+  if (!Number.isFinite(previousSuccess) || !Number.isFinite(currentSuccess)
+    || currentSuccess < previousSuccess || currentSuccess - previousSuccess >= gapThresholdMs) return 'observation-gap';
+
+  if (current.statusState === 'estimated_running' || current.statusState === 'running' || current.statusState === 'in_progress') {
+    return 'thread-still-active';
+  }
+  if (current.lastTurnEvidence?.toLowerCase() !== 'live') return 'terminal-evidence-unconfirmed';
+
+  const executionState = current.currentExecutionState?.toLowerCase() ?? null;
+  const executionEvidence = current.currentExecutionEvidence?.toLowerCase() ?? null;
+  const unconfirmedExecution = executionState === 'unknown'
+    && executionEvidence === 'inferred'
+    && current.currentExecutionReason?.toLowerCase() === 'execution_unconfirmed';
+  if (executionState === 'unknown' && !unconfirmedExecution) return 'execution-evidence-unconfirmed';
+  if (executionState === 'not_loaded' || executionState === 'estimated_running') return 'execution-evidence-unconfirmed';
+  if (executionState === 'running' || executionState === 'in_progress') return 'thread-still-active';
+  if (current.currentExecutionTurnId !== null && executionState === null) return 'execution-evidence-unconfirmed';
+  if (current.currentExecutionState !== null && executionEvidence !== 'live' && !unconfirmedExecution) {
+    return 'execution-evidence-unconfirmed';
+  }
+  if (current.currentExecutionState === null && current.currentExecutionEvidence !== null && executionEvidence !== 'live') {
+    return 'execution-evidence-unconfirmed';
+  }
+
+  const sameHeldTerminal = previous.lastObservedTurnId === current.lastObservedTurnId
+    && previous.lastTurnStatus === current.lastTurnStatus && previous.terminalHoldReason !== null
+    && previous.terminalHoldReason !== undefined;
+  return sameHeldTerminal ? previous.terminalHoldReason : 'terminal-transition-not-confirmed';
 }

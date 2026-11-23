@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const sourcePath = fileURLToPath(new URL('../src/content/CodexBridgeWatchPanel.tsx', import.meta.url));
+const watchListPath = fileURLToPath(new URL('../src/content/CodexBridgeWatchList.tsx', import.meta.url));
 const cardPath = fileURLToPath(new URL('../src/content/CodexBridgeNotificationCard.tsx', import.meta.url));
 const stylePath = fileURLToPath(new URL('../src/content/codexbridge-watch.css', import.meta.url));
 const presentationPath = fileURLToPath(new URL('../src/content/codexbridge-watch-presentation.ts', import.meta.url));
@@ -79,6 +80,14 @@ test('watch and event selection are conversation-owned persisted props and only 
   assert.match(source, /event\.ownerConversationId === conversationId/);
   assert.match(source, /onSelectBridgeWatch/);
   assert.match(source, /onSelectBridgeEvent/);
+});
+
+test('B distinguishes a held terminal status and exposes transition and execution reasons', async () => {
+  const source = await readFile(watchListPath, 'utf8');
+  assert.match(source, /watchTurnStateLabel\(item, sameConnection\)/);
+  assert.match(source, /terminalHoldReasonLabel\(item\.terminalHoldReason\)/);
+  assert.match(source, /状態遷移: \{item\.turnChange\}/);
+  assert.match(source, /reason: \{item\.currentExecutionReason \?\? '不明'\}/);
 });
 
 test('別会話のwatch再登録成功を通知し、過去eventは元ownerのまま扱う', async () => {

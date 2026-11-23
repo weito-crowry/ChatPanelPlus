@@ -86,6 +86,8 @@ export type CodexBridgeWatchFetchOutcome =
 
 export type CodexBridgeWatchTurnChange = 'baseline' | 'same' | 'advanced' | 'gap' | 'unknown';
 export type CodexBridgeWatchBaselineKind = 'turn' | 'none' | 'unknown';
+export type CodexBridgeTerminalHoldReason = 'previous-fetch-failed' | 'observation-gap' | 'thread-still-active'
+  | 'terminal-evidence-unconfirmed' | 'execution-evidence-unconfirmed' | 'terminal-transition-not-confirmed';
 
 export type CodexBridgeWatchSnapshot = Readonly<{
   watchId: string;
@@ -105,6 +107,7 @@ export type CodexBridgeWatchSnapshot = Readonly<{
   currentExecutionEvidence: string | null;
   currentExecutionReason?: string | null;
   currentExecutionTurnId: string | null;
+  terminalHoldReason?: CodexBridgeTerminalHoldReason | null;
   needsAttention: boolean | null;
   turnChange: CodexBridgeWatchTurnChange;
   observedAt: string | null;

@@ -65,3 +65,11 @@ The implementation commit `97ee87a2dc55af88b0bbb6a3a05ba8cfdae2d5cd` passed the 
 - storage event mutationに失敗したときwatchを外さず、成功状態をfetch failureへ誤分類しない。次pollはlast persisted observationから終端判定を再試行する。alarm同期失敗はevent通知を止めず、alarm cycleでwatch状態と再照合する。baseline既終端、gap、unknown/not_loaded/estimated/inferred等の不確実状態ではeventも自動解除もしない。
 - 自動検証: foreground 5秒/30秒alarm、成功・失敗・mute状態に関係しないevent後解除、event保存失敗時のwatch保持/再試行、他watch保持、owner snapshot、alarm同期、baseline/gap/unknown抑止、遅延old watch response/owner移管の並行性を確認。focused monitor/terminal/coordinator 49/49、隔離source-only suite 639/639、typecheck/lint/check:size PASS。Chrome実機の周期・UI表示・通知/解除連動は最終チェックリストC45で`NOT_RUN`として管理。
 - 2026-11-23正式dist配備: コードcommit `b2158ddcbfee1be23b7e54e6394950368141411e`。配備前backup `D:\weito\Documents\src\codexapp\ChatPanelPlus-dist-pre-monitor-autounwatch-20261123-mwsco6ri-0gomks7`は通常ディレクトリでreparse pointなし、11/11相対path・byte size・SHA-256一致。`pnpm build` exit 0。配備後11 files、Manifest V3/version 0.1.5、必須6/6、HTML 3参照、CSS URL参照を検証。bundle markerは前面5秒・background 30秒・3 terminal status・C44再試行・C37 strict final-answer parserを確認。prebuild/postbuild manifestはbackup名の`.prebuild.manifest.csv` / `.postbuild.manifest.csv`。Chrome reloadは未実施、C45 NOT_RUN。C37のno-final-answer再発はFAIL/原因未特定のまま維持。
+
+## C45 terminal hold表示修正（2026-11-23）
+
+- 実機観測：14:34 JST、Aの実行中件数0に対しBの監視は1件のまま、last_turnはcompleted/live、current_executionはunknown/inferred/`execution_unconfirmed`と表示。Turn完了は14:33 JSTとの報告。前回snapshotや`turnChange`は未取得なので、実機の抑止gateは未確定。Cのclear表示によりevent未生成とは断定しない。
+- 再現したsource-level failure path：直前のstatus fetchが失敗すると次のterminal pollをdetectorが拒否し、そのterminal snapshotを保存する。次回はpreviousもterminalで`turnChange=same`となり、元のlive `in_progress`遷移証拠を復元できずwatchが残る。90秒gap後のterminalなど他の拒否経路でも同様の遷移証拠消失が起き得る。
+- 対応：event生成・自動解除のgateは変更せず、確実な終了遷移を再確認できないterminal snapshotへ`terminalHoldReason`を保存し、同一terminalの再pollで最初の具体的保留理由を保持する。Bは「終了状態を観測、通知判定保留、監視継続」と理由を表示し、技術情報に`turnChange`と理由を出す。旧version 2 snapshotは理由なしとして読める。
+- 失敗再現は修正前に旧「新しいturnの完了を観測」表示で失敗、修正後は新しいhold表示とeventなし/watch維持のテストで確認。最終自動検証は`pnpm test` 671/671、`pnpm typecheck` PASS、`pnpm lint` PASS（check:size 244 files）、`pnpm build` exit 0、focused回帰64/64 PASS。Chrome実機、live storage、Bridgeは操作していない。
+- 既存の確定正常系・終端status/owner/event重複・atomic unwatch・event保存失敗の契約は変更していない。C38 commit `52767e06cac283ed3e924097a25109678cff327a`と今回sourceはいずれも現Chrome Probe未反映。C38はNOT_RUN、C45はChrome再受入待ち。

@@ -7,6 +7,7 @@ import {
   isCodexBridgeWatchFetchOutcome,
   isCodexBridgeWatchIdentifier,
   type CodexBridgeTerminalEvent,
+  type CodexBridgeTerminalHoldReason,
   type CodexBridgeWatchSnapshot,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import { isConversationId } from '../shared/conversation-route.ts';
@@ -34,6 +35,11 @@ function isBaselineTurnKind(value: unknown): value is CodexBridgeWatchSnapshot['
   return value === 'turn' || value === 'none' || value === 'unknown';
 }
 
+function isTerminalHoldReason(value: unknown): value is CodexBridgeTerminalHoldReason | null {
+  return value === null || ['previous-fetch-failed', 'observation-gap', 'thread-still-active',
+    'terminal-evidence-unconfirmed', 'execution-evidence-unconfirmed', 'terminal-transition-not-confirmed'].includes(String(value));
+}
+
 function nullableText(value: unknown, maxLength = 512): value is string | null {
   return value === null || (typeof value === 'string' && value.length <= maxLength
     && !Array.from(value).some((character) => {
@@ -49,6 +55,7 @@ function readSnapshot(value: unknown): CodexBridgeWatchSnapshot | null {
     && isConversationId(value.ownerConversationId) && (typeof value.ownerMuted === 'boolean' || value.ownerMuted === null)
     && Number.isSafeInteger(value.ownerMuteRevision) && (value.ownerMuteRevision as number) >= 0);
   const currentExecutionReason = value.currentExecutionReason === undefined ? null : value.currentExecutionReason;
+  const terminalHoldReason = value.terminalHoldReason === undefined ? null : value.terminalHoldReason;
   const baselineTurnKind = value.baselineTurnKind === undefined
     ? (value.baselineTurnId === null ? 'unknown' : 'turn') : value.baselineTurnKind;
   if (!validOwner || !isBaselineTurnKind(baselineTurnKind)
@@ -65,6 +72,7 @@ function readSnapshot(value: unknown): CodexBridgeWatchSnapshot | null {
     || !nullableText(value.currentExecutionState, 80) || !nullableText(value.currentExecutionEvidence, 80)
     || !nullableText(currentExecutionReason, 160)
     || !nullableText(value.currentExecutionTurnId)
+    || !isTerminalHoldReason(terminalHoldReason)
     || (typeof value.needsAttention !== 'boolean' && value.needsAttention !== null)
     || !['baseline', 'same', 'advanced', 'gap', 'unknown'].includes(String(value.turnChange))
     || !nullableText(value.observedAt, 40) || !nullableText(value.lastSuccessAt, 40)
@@ -72,7 +80,7 @@ function readSnapshot(value: unknown): CodexBridgeWatchSnapshot | null {
     || !Number.isSafeInteger(value.nextPollAt) || (value.nextPollAt as number) < 0
     || !Number.isSafeInteger(value.failureCount) || (value.failureCount as number) < 0
     || (value.failureCount as number) > 8) return null;
-  return { ...value, baselineTurnKind, currentExecutionReason } as unknown as CodexBridgeWatchSnapshot;
+  return { ...value, baselineTurnKind, currentExecutionReason, terminalHoldReason } as unknown as CodexBridgeWatchSnapshot;
 }
 
 function readState(value: unknown): MonitorState {

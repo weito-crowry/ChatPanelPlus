@@ -1,6 +1,7 @@
 import type {
   CodexBridgeFinalAnswerResult,
   CodexBridgeTerminalEvent,
+  CodexBridgeTerminalHoldReason,
   CodexBridgeWatchSnapshot,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import { deriveCodexBridgeWatchTurnState } from '../shared/codexbridge-thread-monitor-protocol.ts';
@@ -14,6 +15,19 @@ const WATCH_OUTCOME_LABELS: Readonly<Record<CodexBridgeWatchSnapshot['fetchOutco
   'protocol-version-unsupported': 'protocol version非対応', 'readonly-tool-unavailable': 'codex_statusなし',
   'readonly-probe-failed': 'codex_status失敗', 'connection-changed': '接続先変更',
 };
+
+const TERMINAL_HOLD_LABELS: Readonly<Record<CodexBridgeTerminalHoldReason, string>> = {
+  'previous-fetch-failed': '前回の状態取得に失敗',
+  'observation-gap': '成功観測の間隔が上限以上、または時刻不明',
+  'thread-still-active': 'threadが実行中を示す',
+  'terminal-evidence-unconfirmed': 'last_turnのlive証拠がない',
+  'execution-evidence-unconfirmed': 'current_executionの証拠を確認できない',
+  'terminal-transition-not-confirmed': '開始後の終端遷移を確認できない',
+};
+
+export function terminalHoldReasonLabel(reason: CodexBridgeTerminalHoldReason | null | undefined): string {
+  return reason ? TERMINAL_HOLD_LABELS[reason] : '終端遷移の理由が保存されていない';
+}
 
 export function watchOutcomeLabel(outcome: CodexBridgeWatchSnapshot['fetchOutcome']): string {
   return WATCH_OUTCOME_LABELS[outcome] ?? '不明';
@@ -32,9 +46,10 @@ export function watchTurnStateLabel(snapshot: CodexBridgeWatchSnapshot, sameConn
   if (state === 'baseline') return '登録時のturn（新規完了ではありません）';
   if (state === 'running') return '別turnの実行を観測';
   if (state === 'in_progress') return '進行中';
-  if (state === 'completed') return '新しいturnの完了を観測';
-  if (state === 'failed') return '新しいturnの失敗を観測';
-  if (state === 'interrupted') return '新しいturnの中断を観測';
+  if (state === 'completed' || state === 'failed' || state === 'interrupted') {
+    const status = state === 'completed' ? '完了' : state === 'failed' ? '失敗' : '中断';
+    return `${status}状態を観測しました。通知判定保留（${terminalHoldReasonLabel(snapshot.terminalHoldReason)}）。監視継続中。`;
+  }
   if (state === 'gap') return '観測gapあり（中間turn不明）';
   return '不明';
 }
