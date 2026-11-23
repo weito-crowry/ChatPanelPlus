@@ -107,6 +107,38 @@ function readAssistant(turn: Element, state: AssistantTurnState): Pick<Statistic
   return { assistantMessageId, outputChars: outputCounts[0]! };
 }
 
+function readSelectedAssistantTexts(turn: Element, assistantMessageId: string): string[] | null {
+  const candidates = Array.from(turn.querySelectorAll(ASSISTANT_SELECTOR))
+    .filter((element) => !isInHiddenSubtree(element)
+      && readId(element, 'data-chatgpt-selection-message-id') === assistantMessageId);
+  if (!candidates.length || candidates.length > 8) return null;
+  const texts: string[] = [];
+  for (const assistant of candidates) {
+    const dil = Array.from(assistant.querySelectorAll(DIL_SELECTOR)).filter((element) => !isInHiddenSubtree(element));
+    const dilIds = [...new Set(dil.map((element) => readId(element, 'data-dil-message-id')).filter((id): id is string => id !== null))];
+    if (dilIds.some((id) => id !== assistantMessageId) || dilIds.length > 1) return null;
+    let body: Element = assistant;
+    if (dilIds.length === 1) {
+      const matching = dil.filter((element) => readId(element, 'data-dil-message-id') === assistantMessageId);
+      if (matching.length !== 1) return null;
+      body = matching[0]!;
+    }
+    const text = visibleText(body);
+    if (text === null || text.length === 0) return null;
+    texts.push(text);
+  }
+  return texts;
+}
+
+export function readCompletedAssistantMessageText(turn: Element, assistantMessageId: string): string | null {
+  if (!assistantMessageId || assistantMessageId.trim() !== assistantMessageId) return null;
+  const identity = collectTurnIdentity(turn);
+  if (!identity || identity.assistantState !== 'complete' || identity.assistantMessageId !== assistantMessageId) return null;
+  const texts = readSelectedAssistantTexts(turn, assistantMessageId);
+  if (!texts || new Set(texts).size !== 1) return null;
+  return texts[0]!;
+}
+
 export function collectConversationTurnKeys(root: ParentNode): string[] {
   const seen = new Set<string>();
   const keys: string[] = [];
@@ -196,6 +228,11 @@ export function findTurnElement(root: ParentNode, turnKey: string): Element | nu
     if (readId(turn, 'data-turn-key') === turnKey) return turn;
   }
   return null;
+}
+
+export function findUniqueTurnElement(root: ParentNode, turnKey: string): Element | null {
+  const matches = Array.from(root.querySelectorAll(TURN_SELECTOR)).filter((turn) => readId(turn, 'data-turn-key') === turnKey);
+  return matches.length === 1 ? matches[0]! : null;
 }
 
 export function collectConversationSnapshot(root: ParentNode): ConversationDomSnapshot {

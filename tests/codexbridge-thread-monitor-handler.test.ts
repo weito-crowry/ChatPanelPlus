@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  CODEX_BRIDGE_AUTO_WATCH_COMPLETED,
   CODEX_BRIDGE_AUTO_WATCH_GET,
   CODEX_BRIDGE_AUTO_WATCH_SET,
   CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH,
@@ -70,7 +71,7 @@ function handlerFixture(connectionId = item.connectionId, sourceItems: readonly 
   async function getAutoStatus(targetId: string, conversationId: string) {
     calls.push(`auto:get:${targetId}:${conversationId}`);
     return { targetId, connectionId, enabled: false, ownerConversationId: conversationId, state: 'off' as const,
-      failure: null, liveThreadCount: null, watchingThreadCount: 0, lastScannedAt: null, nextScanAt: null };
+      failure: null, watchingThreadCount: 0 };
   }
   const autoRegistration = {
     getStatus: getAutoStatus,
@@ -78,7 +79,11 @@ function handlerFixture(connectionId = item.connectionId, sourceItems: readonly 
       calls.push(`auto:set:${targetId}:${tabId}:${conversationId}:${enabled}`);
       return { ok: true as const, status: await getAutoStatus(targetId, conversationId) };
     },
-    async scanForeground(conversationId: string) { calls.push(`auto:foreground:${conversationId}`); },
+    async registerCompletedAnswer(targetId: string, tabId: number, conversationId: string, turnKey: string,
+      assistantMessageId: string, threadIds: readonly string[]) {
+      calls.push(`auto:completed:${targetId}:${tabId}:${conversationId}:${turnKey}:${assistantMessageId}:${threadIds.join(',')}`);
+      return threadIds.length;
+    },
     async stopWatch(connection: string, targetId: string, threadId: string, conversationId: string) {
       calls.push(`auto:stop:${connection}:${targetId}:${threadId}:${conversationId}`);
       return true;
@@ -257,25 +262,47 @@ test('sender URLの会話ID欠落・要求ID不一致は一覧・登録を拒否
   assert.deepEqual(calls, []);
 });
 
-test('自動登録のGET/SETとforeground scanはtrusted current conversationだけに束ねる', async () => {
+test('自動登録のGET/SET/completionはtrusted current conversationだけに束ね、foreground refreshで探索しない', async () => {
   const { handle, calls } = handlerFixture(item.connectionId, [item], [event], false, true);
   assert.deepEqual(await handle({ type: CODEX_BRIDGE_AUTO_WATCH_GET, targetId: 'target-1', conversationId: 'test' }, trustedSender), {
     ok: true, data: { targetId: 'target-1', connectionId: item.connectionId, enabled: false, ownerConversationId: 'test',
-      state: 'off', failure: null, liveThreadCount: null, watchingThreadCount: 0, lastScannedAt: null, nextScanAt: null },
+      state: 'off', failure: null, watchingThreadCount: 0 },
   });
   assert.deepEqual(await handle({ type: CODEX_BRIDGE_AUTO_WATCH_SET, targetId: 'target-1', conversationId: 'test', enabled: true }, trustedSender), {
     ok: true, data: { targetId: 'target-1', connectionId: item.connectionId, enabled: false, ownerConversationId: 'test',
-      state: 'off', failure: null, liveThreadCount: null, watchingThreadCount: 0, lastScannedAt: null, nextScanAt: null },
+      state: 'off', failure: null, watchingThreadCount: 0 },
   });
+  const completed = {
+    type: CODEX_BRIDGE_AUTO_WATCH_COMPLETED, targetId: 'target-1', conversationId: 'test', turnKey: 'turn-1',
+    assistantMessageId: 'answer-1', threadIds: ['01a207cf-52ab-7900-a91d-3288982ab221'],
+  };
+  assert.deepEqual(await handle(completed, trustedSender), { ok: true, data: { registeredCount: 1 } });
   const mismatched = { ...trustedSender, url: 'https://chatgpt.com/c/other', tab: { id: 8, url: 'https://chatgpt.com/c/other' } };
-  assert.equal(await handle({ type: CODEX_BRIDGE_AUTO_WATCH_SET, targetId: 'target-1', conversationId: 'test', enabled: true }, mismatched), null);
+  assert.equal(await handle(completed, mismatched), null);
   await handle({ type: CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH }, trustedSender);
-  assert.deepEqual(calls.slice(0, 3), [
+  assert.deepEqual(calls.slice(0, 5), [
     'auto:get:target-1:test',
     'auto:set:target-1:4:test:true',
     'auto:get:target-1:test',
+    'auto:completed:target-1:4:test:turn-1:answer-1:01a207cf-52ab-7900-a91d-3288982ab221',
+    'foreground',
   ]);
-  assert.ok(calls.includes('auto:foreground:test'));
+  assert.equal(calls.some((call) => call.startsWith('auto:foreground:')), false);
+});
+
+test('自動登録completionの余分なfieldと32件超過を拒否する', async () => {
+  const { handle, calls } = handlerFixture(item.connectionId, [item], [event], false, true);
+  const base = {
+    type: CODEX_BRIDGE_AUTO_WATCH_COMPLETED, targetId: 'target-1', conversationId: 'test', turnKey: 'turn-1',
+    assistantMessageId: 'answer-1', threadIds: ['01a207cf-52ab-7900-a91d-3288982ab221'],
+  };
+  assert.deepEqual(await handle({ ...base, text: 'must not cross the message boundary' }, trustedSender), {
+    ok: false, reason: 'invalid-request',
+  });
+  assert.deepEqual(await handle({ ...base, threadIds: Array.from({ length: 33 }, () => '01a207cf-52ab-7900-a91d-3288982ab221') }, trustedSender), {
+    ok: false, reason: 'invalid-request',
+  });
+  assert.deepEqual(calls, []);
 });
 
 test('owner tab routeはmute/通知音の現在会話と一致するときだけ有効', async () => {

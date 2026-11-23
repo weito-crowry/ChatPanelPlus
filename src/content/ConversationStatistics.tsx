@@ -12,6 +12,7 @@ import { DEFAULT_COMPLETION_SOUND_ID } from '../shared/answer-completion-sound-d
 import { DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT } from '../shared/answer-completion-sound-volume.ts';
 import { routeAnswerCompletionSound } from './answer-completion-output-device-route.ts';
 import { dispatchAnswerCompletionNotifications } from './answer-completion-notifications.ts';
+import { publishCodexBridgeAutoWatchCompletion } from './codexbridge-auto-watch-completion.ts';
 import { conversationIdFromPath } from '../shared/conversation-route.ts';
 import { TabCompletionIndicator } from './tab-completion-indicator.ts';
 import { calculateStatisticsPopoverPlacement, type StatisticsPopoverPlacement } from './conversation-statistics-popover-position.ts';
@@ -119,7 +120,18 @@ export function ConversationStatistics({
       window,
       repository: createChromeConversationStatisticsRepository(),
       onState: setState,
-      onAnswerCompleted: (_event, eventConversationId) => {
+      onAnswerCompleted: (event, eventConversationId) => {
+        try {
+          const autoWatchResult = publishCodexBridgeAutoWatchCompletion(
+            document, window.location.pathname, event, eventConversationId,
+          );
+          if (autoWatchResult.status === 'skipped' && autoWatchResult.reason !== 'no-thread-ids'
+            && autoWatchResult.reason !== 'duplicate-event') {
+            console.debug('[ChatPanelPlus] 回答完了時の自動監視登録をスキップしました:', autoWatchResult.reason);
+          }
+        } catch {
+          console.debug('[ChatPanelPlus] 回答完了時の自動監視登録を判定できませんでした。');
+        }
         dispatchAnswerCompletionNotifications({
           notifyTab: () => tabCompletionIndicator.onAnswerCompleted(),
           soundEnabled: soundEnabled.current,

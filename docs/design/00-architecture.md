@@ -20,7 +20,7 @@ Tampermonkey v7.2 の既存操作を、React 19／TypeScript 6／Vite 8／Chrome
 - v0.1.5 では Content Script、React パネル、Shadow DOM、Service Worker、Options 表示と OPEN_OPTIONS メッセージ通信が動作確認済み。
 - 現行ソースにプロンプト編集、定型ボタン、状態保存の完成実装はない。共有設定スキーマは schemaVersion: 1 が中心である。
 - main は初回コミット前（unborn branch）、既存ファイルは未追跡。git diff だけで既存資産を判断しない。
-- Chrome 登録済みロード元 [USER_WORKSPACE_ROOT]\Documents\src\codexapp\ChatPanelPlus-Content-Probe-20261021 は保全対象とする。通常の直接編集・手動コピー・移動・改名・削除・再登録は禁止する。ユーザーが明示的に承認した場合に限り、検証とバックアップを経由する pnpm deploy:chrome による成果物更新を許可する。承認なしの deploy は禁止し、Chrome 拡張の再読み込みはユーザーが別途手動で行う。通常の開発はリポジトリ [USER_WORKSPACE_ROOT]\Documents\src\codexapp\ChatPanelPlus で行う。
+- ユーザーが明示したChrome登録済みロード元はリポジトリ [USER_WORKSPACE_ROOT]\Documents\src\codexapp\ChatPanelPlus\dist。`pnpm build`でこのロード元を更新し、Chrome拡張の再読み込みとChatGPTページのF5はユーザーが手動で行う。兄弟`ChatPanelPlus-Content-Probe-20261021`は実ロード元・配備先として扱わず、固定先がProbeを指す`pnpm deploy:chrome`を使用しない。
 
 ### 2.2 今回の実装対象
 
@@ -171,7 +171,7 @@ Tampermonkey v7.2 の既存操作を、React 19／TypeScript 6／Vite 8／Chrome
 3. 単一ボタンで編集動作を検証し、以後は機能単位で実装・試験・自己レビューする。
 4. タブ・最小化・クリップボード・設定／Options を順次統合する。
 5. 全機能の静的解析、型検査、サイズ制限、テスト、ビルドに合格させる。
-6. 正式 Chrome ロード元への deploy は独立した承認後に限り、Chrome 拡張の再読み込みと実機確認はユーザーが行う。
+6. `pnpm build`後のChrome拡張再読み込みと実機確認はユーザーが手動で行う。Chrome操作は自動化しない。
 7. 最終受入は ChatGPT が仕様との整合性、回帰、未検証事項を独立レビューする。
 
 現行コマンドは pnpm check:size、pnpm lint、pnpm typecheck、pnpm test、pnpm build、pnpm deploy:chrome。pnpm test はビルドを先行するため、検査コマンドにも成果物の書換えがあることを認識する。設計書作成だけの段階では実行不要。

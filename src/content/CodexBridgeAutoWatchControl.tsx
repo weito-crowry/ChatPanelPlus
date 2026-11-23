@@ -8,6 +8,10 @@ import {
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import { conversationIdFromPath, isConversationId } from '../shared/conversation-route.ts';
 import { codexBridgeReadErrorLabel } from './codexbridge-read-error-label.ts';
+import {
+  createCodexBridgeAutoWatchCompletionMessage,
+  subscribeCodexBridgeAutoWatchCompletion,
+} from './codexbridge-auto-watch-completion.ts';
 
 const AUTO_FAILURES = new Set([
   'ok', '401', '403', 'timeout', 'disconnected', 'unknown', 'permission-required', 'settings-unavailable',
@@ -27,28 +31,24 @@ function parseStatus(value: unknown): CodexBridgeAutoWatchStatus | null {
     || typeof value.enabled !== 'boolean' || !(value.ownerConversationId === null || isConversationId(value.ownerConversationId))
     || !['off', 'ready', 'error', 'conflict'].includes(String(value.state))
     || !(value.failure === null || (typeof value.failure === 'string' && AUTO_FAILURES.has(value.failure)))
-    || !(value.liveThreadCount === null || (Number.isSafeInteger(value.liveThreadCount)
-      && (value.liveThreadCount as number) >= 0 && (value.liveThreadCount as number) <= 1000))
-    || !Number.isSafeInteger(value.watchingThreadCount) || (value.watchingThreadCount as number) < 0
-    || !(value.lastScannedAt === null || typeof value.lastScannedAt === 'string')
-    || !(value.nextScanAt === null || Number.isSafeInteger(value.nextScanAt))) return null;
+    || !Number.isSafeInteger(value.watchingThreadCount) || (value.watchingThreadCount as number) < 0) return null;
   return value as unknown as CodexBridgeAutoWatchStatus;
 }
 
 function failureLabel(failure: string | null): string {
   if (!failure) return '';
-  if (failure === 'running-only-unsupported') return 'Bridgeがrunning_onlyに未対応のため、自動探索を一時停止しています。';
+  if (failure === 'running-only-unsupported') return 'Bridgeがrunning_onlyに未対応のため、回答完了時の照合を行えません。';
   if (failure === 'owner-conflict') return '既存watchは別会話の所有です。移管せず、このthreadの自動登録を見送ります。';
   if (failure === 'auto-owner-conflict') return 'この対象は別のChatGPT会話で自動監視中です。所有者は移管せず、操作を拒否しました。';
   if (failure === 'ownerless-watch') return 'owner情報のない既存watchがあるため、このthreadの自動登録を見送ります。';
   if (failure === 'watch-limit') return '監視上限32件のため、一部threadを登録できませんでした。';
-  if (failure === 'target-unavailable') return '対象マシンを現在確認できません。自動探索を一時停止しています。';
+  if (failure === 'target-unavailable') return '対象マシンを現在確認できません。回答完了時の照合を行えません。';
   if (failure === 'owner-tab-unavailable') return 'ownerタブの会話を確認できません。通知音は停止し、履歴だけを保持します。';
-  if (failure === 'connection-changed') return '接続先が変わりました。現在の接続先では自動探索していません。';
-  if (failure === 'connection-unavailable') return 'Bridge接続先を確認できません。自動探索を停止しています。';
+  if (failure === 'connection-changed') return '接続先が変わりました。現在の接続先では登録しませんでした。';
+  if (failure === 'connection-unavailable') return 'Bridge接続先を確認できません。';
   if (failure === 'permission-required') return 'Bridgeへの接続権限を確認できません。';
   if (failure === 'authentication-required' || failure === '401') return 'Bridge認証を確認できません。';
-  return `自動探索を一時停止しています。${codexBridgeReadErrorLabel(failure)}`;
+  return `回答完了時の登録に失敗しました。${codexBridgeReadErrorLabel(failure)}`;
 }
 
 export function CodexBridgeAutoWatchControl({ targetId, targetName, conversationId, watchingThreadCount }: Readonly<{
@@ -96,11 +96,38 @@ export function CodexBridgeAutoWatchControl({ targetId, targetName, conversation
     const token = ++generation.current;
     setStatus(null); setFailure(null); setBusy(false);
     void refresh(targetId, conversationId, token);
+    const unsubscribeCompletion = subscribeCodexBridgeAutoWatchCompletion((notice) => {
+      const current = identity.current;
+      const message = createCodexBridgeAutoWatchCompletionMessage(
+        current.targetId, current.conversationId, window.location.pathname, notice,
+      );
+      if (!message) return;
+      const requestToken = generation.current;
+      const expectedTarget = current.targetId;
+      const expectedConversation = current.conversationId;
+      void chrome.runtime.sendMessage(message).then((response: unknown) => {
+        if (requestToken !== generation.current || identity.current.targetId !== expectedTarget
+          || identity.current.conversationId !== expectedConversation
+          || conversationIdFromPath(window.location.pathname) !== expectedConversation) return;
+        if (!isRecord(response) || response.ok !== true) {
+          setFailure(isRecord(response) && typeof response.reason === 'string' ? response.reason : 'runtime-unavailable');
+          return;
+        }
+        void refresh(expectedTarget, expectedConversation, requestToken);
+      }).catch(() => {
+        if (requestToken === generation.current && identity.current.targetId === expectedTarget
+          && identity.current.conversationId === expectedConversation) setFailure('runtime-unavailable');
+      });
+    });
     const onStorageChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
       if (area === 'local' && changes[CODEX_BRIDGE_AUTO_WATCH_STORAGE_KEY]) void refresh(targetId, conversationId, token);
     };
     chrome.storage.onChanged.addListener(onStorageChanged);
-    return () => { ++generation.current; chrome.storage.onChanged.removeListener(onStorageChanged); };
+    return () => {
+      ++generation.current;
+      unsubscribeCompletion();
+      chrome.storage.onChanged.removeListener(onStorageChanged);
+    };
   }, [targetId, conversationId]);
 
   async function toggle() {
@@ -135,22 +162,22 @@ export function CodexBridgeAutoWatchControl({ targetId, targetName, conversation
 
   const visibleFailure = failure ?? currentStatus?.failure ?? null;
   const stateLabel = !currentStatus ? '状態を確認できません' : currentStatus.state === 'conflict'
-    ? '別会話が自動監視登録中' : currentStatus.enabled ? currentStatus.state === 'error' ? '有効・探索エラー' : '有効' : 'OFF';
+    ? '別会話が自動監視登録中' : currentStatus.enabled ? currentStatus.state === 'error' ? '有効・登録エラー' : '有効' : 'OFF';
   const displayedOwner = currentStatus?.ownerConversationId ?? conversationId;
   return (
-    <div className="codex-bridge-auto-watch" aria-label="新規実行スレッドの自動監視登録">
-      <strong>新規実行スレッドの自動監視登録</strong>
+    <div className="codex-bridge-auto-watch" aria-label="回答完了時の自動監視登録">
+      <strong>回答完了時の自動監視登録</strong>
       <p className="codex-bridge-note">状態: {stateLabel} · 対象マシン: {targetName || targetId || '未選択'}</p>
       <p className="codex-bridge-note">owner ChatGPT会話: {currentStatus?.state === 'conflict' ? '別会話 (ID非表示)' : displayedOwner ?? '確認できません'}</p>
       {currentStatus?.enabled && <p className="codex-bridge-note">
-        実行中候補: {currentStatus.liveThreadCount === null ? '未確認' : `${currentStatus.liveThreadCount}件`} · この会話の監視: {watchingThreadCount === null ? '未確認' : `${watchingThreadCount}件`}
+        この会話の監視: {watchingThreadCount === null ? '未確認' : `${watchingThreadCount}件`}
       </p>}
       <button type="button" className="codex-bridge-button" onClick={() => { void toggle(); }}
         disabled={!routeValid || !targetId || busy || !statusIsCurrent}>
         {busy ? '更新中…' : currentStatus?.enabled ? '自動監視登録をOFF' : '自動監視登録をON'}
       </button>
       {visibleFailure && <p className="codex-bridge-error" role="status">{failureLabel(visibleFailure)}</p>}
-      <small className="codex-bridge-note">OFFでも既存watchと通知履歴は残ります。短命Turnは次回探索前に終了し、登録を見落とす場合があります。</small>
+      <small className="codex-bridge-note">ON中は回答完了時、その回答本文にあるthread IDのうちBridgeがliveと返したものだけを登録します。完了前に終了した短命タスクは登録しません。OFFでも既存watchと通知履歴は残ります。</small>
       {!routeValid && <small className="codex-bridge-note">会話routeを確認できないため、設定を表示・変更していません。</small>}
     </div>
   );

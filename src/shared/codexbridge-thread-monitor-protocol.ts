@@ -7,7 +7,7 @@ export const CODEX_BRIDGE_THREAD_MONITOR_ALARM = 'chatPanelPlus.codexBridgeThrea
 export const CODEX_BRIDGE_THREAD_MONITOR_MINUTES = 0.5;
 export const CODEX_BRIDGE_AUTO_WATCH_STORAGE_KEY = 'chatPanelPlus.codexBridgeAutoWatch.v1';
 export const CODEX_BRIDGE_AUTO_WATCH_ALARM = 'chatPanelPlus.codexBridgeAutoWatch.poll';
-export const CODEX_BRIDGE_AUTO_WATCH_MINUTES = 0.5;
+export const CODEX_BRIDGE_AUTO_WATCH_THREAD_IDS_LIMIT = 32;
 export const CODEX_BRIDGE_THREAD_MONITOR_MAX_WATCHES = 32;
 export const CODEX_BRIDGE_THREAD_MONITOR_FOREGROUND_MS = 5_000;
 export const CODEX_BRIDGE_WATCH_ACK_EVENT_IDS_LIMIT = 128;
@@ -23,6 +23,7 @@ export const CODEX_BRIDGE_WATCH_ACK_EVENTS = 'CODEX_BRIDGE_WATCH_ACK_EVENTS' as 
 export const CODEX_BRIDGE_WATCH_CLEAR_EVENTS = 'CODEX_BRIDGE_WATCH_CLEAR_EVENTS' as const;
 export const CODEX_BRIDGE_AUTO_WATCH_GET = 'CODEX_BRIDGE_AUTO_WATCH_GET' as const;
 export const CODEX_BRIDGE_AUTO_WATCH_SET = 'CODEX_BRIDGE_AUTO_WATCH_SET' as const;
+export const CODEX_BRIDGE_AUTO_WATCH_COMPLETED = 'CODEX_BRIDGE_AUTO_WATCH_COMPLETED' as const;
 
 export type CodexBridgeTerminalStatus = 'completed' | 'failed' | 'interrupted';
 export type CodexBridgeNotificationState = 'pending' | 'requested' | 'played' | 'skipped' | 'failed';
@@ -101,10 +102,7 @@ export type CodexBridgeAutoWatchStatus = Readonly<{
   ownerConversationId: string | null;
   state: 'off' | 'ready' | 'error' | 'conflict';
   failure: CodexBridgeAutoWatchFailure | null;
-  liveThreadCount: number | null;
   watchingThreadCount: number;
-  lastScannedAt: string | null;
-  nextScanAt: number | null;
 }>;
 
 export type CodexBridgeWatchTurnChange = 'baseline' | 'same' | 'advanced' | 'gap' | 'unknown';
@@ -156,7 +154,12 @@ export type CodexBridgeWatchMessage =
 
 export type CodexBridgeAutoWatchMessage =
   | Readonly<{ type: typeof CODEX_BRIDGE_AUTO_WATCH_GET; targetId: string; conversationId: string }>
-  | Readonly<{ type: typeof CODEX_BRIDGE_AUTO_WATCH_SET; targetId: string; conversationId: string; enabled: boolean }>;
+  | Readonly<{ type: typeof CODEX_BRIDGE_AUTO_WATCH_SET; targetId: string; conversationId: string; enabled: boolean }>
+  | Readonly<{ type: typeof CODEX_BRIDGE_AUTO_WATCH_COMPLETED; targetId: string; conversationId: string; turnKey: string;
+    assistantMessageId: string; threadIds: readonly string[] }>;
+
+export type CodexBridgeAutoWatchCompletionMessage = Extract<CodexBridgeAutoWatchMessage,
+  Readonly<{ type: typeof CODEX_BRIDGE_AUTO_WATCH_COMPLETED }>>;
 
 export type CodexBridgeWatchListData = Readonly<{
   items: readonly CodexBridgeWatchSnapshot[];

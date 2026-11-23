@@ -47,6 +47,6 @@
 
 ## 開発版ビルドとChromeロード元
 - 通常の`pnpm build`はOptions、Content Script、Service Workerを含む完全版を`dist/`へ生成する。無機能診断版は`pnpm build:noop`で別途生成し、後で完全版を使う場合は`pnpm build`へ戻す。
-- Chromeに登録済みの正式な開発ロード元は、リポジトリと同じ親にある`ChatPanelPlus-Content-Probe-20261021`。このフォルダの移動・改名・再登録、Chrome操作の自動化を行わない。
-- `pnpm deploy:chrome`はビルド後、固定ロード元の全ファイルを時刻付き兄弟バックアップへ複製してからdistを反映する。宛先はコマンド内で固定し、リンクを拒否し、manifest参照とファイルハッシュを検査する。Chromeの再読み込みは手動で行う。
+- ユーザーが明示したChrome登録済みロード元は、このリポジトリの`dist/`。兄弟の`ChatPanelPlus-Content-Probe-20261021`をChromeロード元や配備先として扱わず、移動・改名・再登録もしない。
+- `pnpm build`で`dist/`を生成する。反映時はユーザーが`chrome://extensions`で登録済み拡張を再読み込みし、ChatGPTページをF5する。Chrome操作の自動化は行わない。`pnpm deploy:chrome`の固定宛先は兄弟Probeのため、このcheckoutでは使用しない。
 - 旧ID側の障害原因は未特定。旧ID資産、別ID診断フォルダ、段階バックアップを削除・改変しない。

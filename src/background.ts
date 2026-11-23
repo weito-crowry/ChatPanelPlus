@@ -25,9 +25,9 @@ import { createDefaultCodexBridgePanelHandler } from './background/codexbridge-p
 import { createCodexBridgeNotificationHandler } from './background/codexbridge-notifications.ts';
 import { createChromeSettingsRepository } from './shared/settings-repository.ts';
 import {
-  CODEX_BRIDGE_AUTO_WATCH_ALARM,
   CODEX_BRIDGE_AUTO_WATCH_GET,
   CODEX_BRIDGE_AUTO_WATCH_SET,
+  CODEX_BRIDGE_AUTO_WATCH_COMPLETED,
   CODEX_BRIDGE_THREAD_MONITOR_ALARM,
   CODEX_BRIDGE_WATCH_ACK_EVENTS,
   CODEX_BRIDGE_WATCH_CLEAR_EVENTS,
@@ -74,6 +74,7 @@ function isCodexBridgeWatchMessage(message: unknown): boolean {
       || message.type === CODEX_BRIDGE_WATCH_LIST || message.type === CODEX_BRIDGE_WATCH_READ
       || message.type === CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH
       || message.type === CODEX_BRIDGE_AUTO_WATCH_GET || message.type === CODEX_BRIDGE_AUTO_WATCH_SET
+      || message.type === CODEX_BRIDGE_AUTO_WATCH_COMPLETED
       || message.type === CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER);
 }
 
@@ -160,9 +161,6 @@ const handleConversationAudioMute = createConversationAudioMuteMessageHandler(
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === CODEX_BRIDGE_THREAD_MONITOR_ALARM) {
     void codexBridgeThreadMonitor.monitor.refreshAlarm().catch(() => {});
-  }
-  if (alarm.name === CODEX_BRIDGE_AUTO_WATCH_ALARM) {
-    void codexBridgeThreadMonitor.autoRegistration.scanBackground().catch(() => {});
   }
 });
 

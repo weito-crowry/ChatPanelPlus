@@ -19,7 +19,7 @@
 リポジトリ：[USER_WORKSPACE_ROOT]\Documents\src\codexapp\ChatPanelPlus
 
 Chrome が現在登録しているロード元：
-[USER_WORKSPACE_ROOT]\Documents\src\codexapp\ChatPanelPlus-Content-Probe-20261021
+D:\weito\Documents\src\codexapp\ChatPanelPlus\dist
 
 開始時に次を読み、相互参照してください。
 

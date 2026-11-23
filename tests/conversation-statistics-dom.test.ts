@@ -8,6 +8,8 @@ import {
   collectTurnObservation,
   conversationIdFromPath,
   findTurnElement,
+  findUniqueTurnElement,
+  readCompletedAssistantMessageText,
 } from '../src/content/conversation-statistics-dom.ts';
 
 class FakeElement {
@@ -221,4 +223,43 @@ test('増分ID走査は本文を複製せず、特定ターンだけを後から
   });
   assert.equal(findTurnElement(root as unknown as ParentNode, 'turn-2'), second);
   assert.ok(first.children[0]?.children[0]?.cloneCalls > 0);
+});
+
+test('完了した正確なassistant messageのDIL本文だけを読み、UIとhidden textを除外する', () => {
+  const candidate = turn('current-turn', 'complete', '質問', 'assistant-current', '完了本文', [
+    new FakeElement({}, 'Copy control text', [], 'button'),
+    new FakeElement({ 'aria-hidden': 'true' }, 'hidden ID text'),
+  ]);
+  const previous = turn('previous-turn', 'complete', '過去質問', 'assistant-previous', '過去のID');
+  const root = new FakeElement({}, '', [previous, candidate]);
+
+  assert.equal(findUniqueTurnElement(root as unknown as ParentNode, 'current-turn'), candidate);
+  assert.equal(findUniqueTurnElement(root as unknown as ParentNode, 'missing-turn'), null);
+  assert.equal(readCompletedAssistantMessageText(candidate as unknown as Element, 'assistant-current'), '完了本文');
+  assert.equal(readCompletedAssistantMessageText(candidate as unknown as Element, 'assistant-previous'), null);
+  assert.equal(readCompletedAssistantMessageText(turn('streaming', 'in_progress', '質問', 'assistant-live', '部分回答') as unknown as Element,
+    'assistant-live'), null);
+  assert.equal(readCompletedAssistantMessageText(new FakeElement({}, '', [candidate, candidate]) as unknown as Element,
+    'assistant-current'), null);
+  const plainText = new FakeElement({ 'data-turn-key': 'plain-text-turn' }, '', [
+    new FakeElement({ 'data-talvt-turn-state': 'complete' }),
+    new FakeElement({ 'data-chatgpt-selection-message-id': 'assistant-text' }, 'plain text answer', [
+      new FakeElement({}, 'copy', [], 'button'),
+    ]),
+  ]);
+  assert.equal(readCompletedAssistantMessageText(plainText as unknown as Element, 'assistant-text'), 'plain text answer');
+});
+
+test('同じ確定message IDに複数の異なる本文があれば完了本文を曖昧として拒否する', () => {
+  const duplicate = new FakeElement({ 'data-turn-key': 'ambiguous-body' }, '', [
+    new FakeElement({ 'data-talvt-turn-state': 'complete' }, '', [
+      new FakeElement({ 'data-chatgpt-selection-message-id': 'assistant-same' }, '', [
+        new FakeElement({ 'data-dil-message-id': 'assistant-same' }, 'first response'),
+      ]),
+      new FakeElement({ 'data-chatgpt-selection-message-id': 'assistant-same' }, '', [
+        new FakeElement({ 'data-dil-message-id': 'assistant-same' }, 'different response'),
+      ]),
+    ]),
+  ]);
+  assert.equal(readCompletedAssistantMessageText(duplicate as unknown as Element, 'assistant-same'), null);
 });

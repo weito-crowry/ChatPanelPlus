@@ -2,7 +2,7 @@
 
 ## 実施条件と記録方法
 
-- 対象はWindows 11上の既存Chromeプロファイルと、2026-11-23に実登録を確認した兄弟フォルダー`D:\weito\Documents\src\codexapp\ChatPanelPlus-Content-Probe-20261021`。同日、配備後の拡張とChatGPT画面をユーザーが再読み込みし、一部のChrome実機観測を行った。
+- 対象はWindows 11上の既存Chromeプロファイルと、ユーザーが明示したリポジトリ直下`D:\weito\Documents\src\codexapp\ChatPanelPlus\dist`。過去記録で兄弟Probeを実登録ロード元とした記述は誤りで、配備先として扱わない。C46の修正後Chrome実機確認は未実施。
 - Phase 1は2026-11-21にユーザーから「Chrome側で再読み込みし、動いた」と報告され、Phase全体の受入PASSを記録済み。個々の操作結果は未報告なので、本書の行を遡ってPASSにはしない。
 - Phase 2〜4の自動テスト・型検査・Lint・配備は各Phase記録を参照する。手動項目は行ごとの結果を使い、ユーザー報告で確認された項目だけPASSとする。
 - Phase 6 UI commit `3aca9ca05b52b0ca4232aee3b80d72dae6f62f70`とrunning_only CPP commit `4cee26e980e2bfaf32e0f2a299c86a0c4082073d`を、それぞれbackup照合後に登録済み`dist/`へbuild・配備した。Bridge再起動はユーザー報告済みだがlive app schemaは未確認。2026-11-23の再読み込み後の観測はC38/C44/C45の該当行だけに記録し、未報告の項目へ結果を広げない。
@@ -13,7 +13,7 @@
 
 | ID | 環境・操作 | 期待結果 | 結果 | 証跡・メモ |
 |---|---|---|---|---|
-| C01 正式ロード元 | `chrome://extensions`で登録済み拡張のロード元が兄弟フォルダー`ChatPanelPlus-Content-Probe-20261021`であることを確認し、配備後の拡張を手動reloadする。 | 正しい拡張が起動し、別のProbeフォルダを読み込んでいない。 | NOT_RUN | 2026-11-23に実登録ロード元フォルダーを読み取り確認し、dist完全版を反映。Chromeの登録画面でパスを確認する操作は未実施。 |
+| C01 正式ロード元 | `chrome://extensions`で登録済み拡張のロード元がこのリポジトリの`dist/`であることを確認し、ビルド後の拡張とChatGPTページを手動再読み込みする。 | `dist/`から拡張が起動する。兄弟Probeを配備先にしない。 | NOT_RUN | ユーザーが実ロード元をリポジトリ直下`dist/`と明示。今回のChrome再読み込み・画面確認は未実施。 |
 | C02 通常画面 | 任意の会話を開き、パネル通常表示を見る。 | ヘッダー、作業中toggle、既存音声・統計操作、Optionsで解決した常時ボタンとタブ／promptボタンが保たれる。Bridge件数欄は2項目だけ。 | PASS（ユーザー報告） | 2026-11-21、通常画面の構成・ボタン類・Bridge件数欄2項目をChrome実機で確認し問題なしとの報告。 |
 | C03 Optionsボタン定義 | Optionsで設定済みのラベル、文面、表示、順序、グループを確認し、4つの既定prompt（全文／要約／翻訳／調べて）を確認する。 | Options設定が優先され、非表示ボタンを強制表示せず、重複表示しない。自動送信しない。 | PASS（ユーザー報告） | 2026-11-21、Options画面を開いて目視確認し問題なしとの報告。個別prompt操作結果は主張しない。 |
 | C04 既存入力操作 | 既存prompt／カスタムボタンを選択し、入力先のcaret・選択位置、paste/manual paste、clear、copyを操作する。 | 既存の挿入・clipboard・focus動作を保ち、不要な本文置換や自動送信をしない。 | NOT_RUN | |
@@ -38,7 +38,7 @@
 | C23 worker／Bridge復旧 | 監視中にService Worker休止・再起動、Bridge接続の切断・復旧を自然に発生させ、一覧を再取得する。 | watch/event owner、mute snapshot、ACK状態が復元される。二重eventや誤通知を発生させず、未知状態を完了と誤判定しない。 | NOT_RUN | 手動でworkerを破壊せず通常の休止／再開で観察 |
 | C24 権限・認証・接続変化 | Bridgeの権限不足、認証切れ、接続先変更を再現できる場合に一覧・read・stopを確認する。 | 現行エラー表示を保ち、別会話情報やfinal本文を返さない。接続先変更中は古いevent本文を再利用しない。 | NOT_RUN | 環境で再現できない項目はNOT_RUN |
 | C25 CPP UIからの実ジョブ開始 | CPPの既存画面に対象環境で使用するジョブ開始導線がある場合だけ、その承認済み手順でテスト用jobを開始する。 | 対象jobが意図した会話・Bridge threadへ紐づき、監視eventがownerを保つ。既存UIに開始機能がない場合は未対応として記録し、新規APIや自動送信を代用しない。 | NOT_RUN | 現在の実ジョブ開始動作は未検証 |
-| C26 deployコマンドの宛先 | 配備手順を記録で確認する。`pnpm deploy:chrome`は実行しない。 | 実際の登録元は兄弟フォルダー`ChatPanelPlus-Content-Probe-20261021`。現行`deploy:chrome`の宛先は登録元と一致しないため使用しない。 | NOT_RUN | 2026-11-23、登録済みロード元は読み取り確認済み。今回の反映は完全バックアップ照合後に手動手順で行い、`pnpm deploy:chrome`は実行していない。スクリプト修正は本Phase外。 |
+| C26 deployコマンドの宛先 | `pnpm deploy:chrome`の固定先と実際のChromeロード元を比較する。 | 実ロード元はrepo `dist/`。`deploy:chrome`は兄弟Probeを指すため、このcheckoutでは使用しない。 | NOT_RUN | スクリプトの宛先は兄弟Probeで、ユーザー明示のロード元`dist/`とは異なる。今回も実行しない。 |
 | C27 大量ACKと部分失敗 | owner会話に129件以上（可能なら256件）の未確認終了eventがあるテスト環境で一括確認する。通信失敗を挿入できる場合は2回目のbatchを失敗させ、その間に新eventを発生させる。 | 最大128 IDsずつ直列処理し、全件成功時は未確認数が減る。部分失敗は応答件数と一覧再取得を表示し、成功済み以外を未確認のまま残す。操作開始時snapshot外の新eventは確認済みにしない。 | NOT_RUN | 自動では129/256、途中失敗、新event並行を検証済み |
 | C28 B/C選択の会話別復元 | 会話AでB監視対象とC終了eventを選ぶ。同じ会話の別tab/reload、別会話B、A thread探索の選択をそれぞれ確認する。watch解除またはevent一覧からの消失後も確認する。 | B/C選択だけが同一conversation ID内で共有・復元される。A探索選択とは独立し、別会話には漏れない。owner一覧にない選択は解除され、最終回答本文は保存・越境表示されない。 | NOT_RUN | 自動ではconversation state、旧schema、owner filterを検証済み |
 | C29 実行中取得mode・C12優先順 | thread一覧を更新し、確定実行中・推定実行中・不明・非実行中を含む状態を確認する。実行中／通常一覧modeを切替え、初回取得・更新・通常一覧の次ページ取得を確認する。mode／target切替中の遅延応答と選択thread・watch維持も確認する。 | 確定中（`in_progress`／`running`）が先頭、推定中はその次に推定ラベル付きで表示。各群は有効な`updatedAt`新しい順、欠損/不正時刻は末尾で安定順。不明とlast_turnだけでは実行中扱いしない。実行中modeが既定でBridgeのrunning_only結果を直接表示し、通常一覧modeは従来の20件cursorを使う。通常一覧は取得済み候補にC12順を適用する。Bridge返却集合が全thread網羅を保証しない点を表示し、空結果・未読込・失敗を区別、非表示選択と監視操作を維持する。 | NOT_RUN | 自動検証は全563/563・focused 50/50 PASS、typecheck/lint/サイズ検査PASS。bundleは登録済み`dist/`へbuild・配備済み。Chrome確認待ち。 |
@@ -59,15 +59,18 @@
 
 | C44 B監視一覧のtimeout・再試行・route競合 | 監視一覧を遅延または無応答にし、5秒foreground更新・storage更新・明示再試行を重ねる。timeout後に再試行し、真の空一覧、storage/sender応答失敗、SPA会話切替も確認する。 | 初回/明示要求のloadingは低優先更新で永久化しない。25秒以内にtimeout等の理由と再試行が表示され、自動要求は積み上がらない。古いrouteのwatch/eventは出ず、失敗/未取得は`—`、成功した空一覧のみ0件。不正/欠落配列も成功0件にしない。WATCH_STARTはBの明示クリックだけで実行される。 | NOT_RUN（異常系）、正常系PASS（部分観測） | 自動検証636/636・focused 38/38、typecheck/lint/size PASS。C44 source commit `39a38f5cd423576294fbd744b41b595a7a0a0578`を登録済みrepo直下`dist/`へ`pnpm build` exit 0で配備。backup 11/11、postbuild manifestもdist現物11/11 hash照合。bundle変更`content.js`のみ。静的検証11 files・Manifest V3/0.1.5・必須6/6・HTML refs 5/5・C44/C37 marker PASS。配備当時はChrome実機未確認。2026-11-23ユーザー報告：再読み込み後にB監視一覧を表示でき、監視が実際に機能した（正常系の部分観測、表示までの時間は未報告）。25秒timeout/再試行/route race/保存失敗の試験は未実施。 |
 | C45 5秒foreground監視・終端後の自動解除 | 前面ChatGPTタブの監視周期を確認する。専用threadで`completed`、`failed`、`interrupted`を一件ずつ発生させ、event・通知・watch一覧・alarmを確認する。他watch併存、baselineが既終端、gap/unknown/inferred、event保存失敗も確認する。 | 前面pollは約5秒、Chrome alarmは30秒のまま。確実な新規終端遷移では一件のeventを保存して対象watchだけを解除し、別watchとevent ownerを保つ。音声の成功/失敗/muteにかかわらず解除し、保存失敗・不確実状態・初期baselineでは解除しない。最終watch解除時alarmを消し、他watchがあれば維持する。安全条件を満たさずwatchが残る終端状態は「通知判定保留」と理由を表示し、新規event成立と混同しない。 | **FAIL（2026-11-23実機で終端表示後もwatch 1件を確認。ソース再現経路に診断表示を修正、Chrome再受入待ち）** | focused 49/49、隔離全suite 639/639、typecheck/lint/size PASS。コードcommit `b2158ddcbfee1be23b7e54e6394950368141411e`をbackup 11/11 hash照合後に`pnpm build` exit 0で正式distへ配備。配備時はChrome実機未確認。先行する2026-11-23ユーザー報告では、拡張とChatGPT画面の再読み込み後、終了した監視対象がB一覧から消え、Cの通知履歴に終了eventが残る正常系の部分観測があった。最新14:34 JST観測ではBがcompleted/liveを表示しながらwatch 1件を保持。Bridge `codex_status`の14:33 JST完了とcurrent_execution unknown/inferred/execution_unconfirmedを確認したが、前回snapshot・`turnChange`は未観測で、この実機発生時の拒否gateは未確定。C画面に「終了通知1件を削除」との表示があるため、Cに新しいeventが見えないことから未生成とは断定しない。ソースでは、前回status取得失敗または90秒gap等で最初のterminal判定が拒否された後、terminal snapshotを保存すると、次回は同一terminalの`turnChange=same`となり、直前in_progressを必要とする遷移条件が失われて解除・通知されない経路を再現した。自動再現テストでこの経路を確認し、通知/解除gateを維持したままBを「終了状態を観測、通知判定保留、監視継続」に整合させ、保留理由と`turnChange`を診断可能にする修正を追加。今回の検証：`pnpm test` 671/671、`pnpm typecheck` PASS、`pnpm lint` PASS（check:size 244 files）、`pnpm build` exit 0。focused terminal/owner/event/表示回帰64/64 PASS。Chrome再受入は未実施。foreground約5秒周期、remote targetでのライブ終端通知、failed/interrupted、baseline既終端、保存失敗、alarm、他watchへの実機影響は未確認。 |
-| C46 新規実行スレッドの自動監視登録 | Bで会話A・targetを明示してONにし、ON前から実行中のthreadとON後に起動したthreadを確認する。OFF、会話B、別target、接続変更競合、手動watch/ownerless、上限、Bridge旧schema・通信失敗、SPA切替、worker再起動、owner tab muteも試す。 | 初期OFF。厳格な同一Turnの`running_only=true` live evidenceだけを既存watch state machineへ登録し、他会話/ownerless watchは移管しない。target・接続ごとにownerを一意化し、OFFは既存watch/eventを保持。前面約5秒・alarm約30秒で探索し、未対応/失敗は0件扱いせず理由とbackoffを表示。owner route/muteを確認できなければ通知音を鳴らさず履歴を保持する。短命Turnを100%捕捉するとは表示しない。 | **PARTIAL（18:51実機：自動登録PASS、終了通知+自動解除PASS。A開始時0→1未確認、件数修正後実機NOT_RUN）** | 2026-11-23 18:51 JST、thread `01a207cf-52ab-7900-a91d-3288982ab221`：A欄・上部実行中0、B上部「監視中0」、B watch list 0件、C完了通知1件で自動登録と終端自動解除はPASS。一方、自動監視設定欄は「実行中候補:0件・この会話の監視:1件」のままで、A開始時0→1は未確認。今回、Bのowner-filtered watch snapshotをowner・current connection・current targetで数えて表示するsource修正を追加し、monitor snapshot未取得/失敗時は「未確認」とする。回帰テスト追加後の件数修正はChrome実機NOT_RUN。固定Chromeロード元への配備、Chrome自動reload、Bridge変更、既存watch/event storage変更は行っていない。 |
+| C46 回答完了時の本文ID一致自動監視登録 | 専用会話・targetを明示してONにする。回答完了前は登録なし、完了後はその最終回答本文に含まれ、同時点の`running_only=true`結果にもliveで載るIDだけ登録されることを確認する。音声ON/OFF、音量0/mute/再生失敗、本文IDなし・過去turnだけ・部分一致/Turn ID・複数/重複ID・hidden/UI、別owner/target、connection/SPA race、Bridge失敗/未対応、manual解除、worker restore、上限、C45通知/自動解除を試す。 | 明示ONかつtrusted owner route/target/connection一致後、完了eventごとにrunning_onlyを一度取得。完了したそのassistant message ID/turn/routeの本文だけからtoken境界付き候補を最大32件抽出し、Bridge応答の正確な`thread.id`と一致するlive `current_execution`のみ登録する。過去本文や実行中thread全件の探索・登録はしない。OFF・restore・alarm・refresh・SPA切替でwatchを登録せず、既存5秒/30秒watch pollとmanual watch、通知、終端自動解除、既存watch/event保持を維持する。短命taskは完了前に終われば見逃してよい。 | **NOT_RUN（訂正後Chrome実機受入待ち）** | 18:51 JSTの過去C46実機PASSは旧誤仕様「実行中thread全件の周期発見・登録」に対する結果で、本行のPASSではない。訂正後のChrome実機受入は未実施。 |
 
 ## C38 / C45 / C46 同日実機観測と修正記録（2026-11-23）
+
+- C46仕様訂正：2026-11-23の旧実装はON後の実行中thread全件を周期登録していた。18:51 JSTの自動登録・終了通知・自動解除PASSはこの誤仕様での観測としてのみ保持する。回答完了イベントの当該本文ID一致登録に対するChrome受入はNOT_RUN。
+- 訂正後source検証：`pnpm test` 716/716、`pnpm typecheck`/`pnpm lint`/`pnpm check:size`（262 files）PASS、`pnpm build` exit 0。実ロード元`dist/`はbuildで更新済みだが、Chrome reload・ChatGPT F5・Bridge操作・既存watch/event storage変更は行っていない。
 
 - A開始同期：C46が新規watchを作った後もAに実行中threadなし・上部0と表示された。成功したowner-filtered watchの実追加だけをtriggerにし、running modeは1応答で一覧と件数を更新、normal modeはsummaryだけ更新する。B一覧取得中のstorage変更は後続snapshot 1回へまとめる。空一覧は0、通信失敗/unsupportedは`—`。追加のA定期pollingは設けない。
 - C45終了追跡：C46自動登録後にcompleted/liveだったTurnでC終了eventがなくwatchが残ったというユーザー実機報告。Bridge `codex_threads(running_only=true)`形状の回帰で、missing current execution turn IDを同時観測の`last_turn`がin_progress/liveの場合だけ結び、completed/inferred/unknownをbaselineへ補わず、terminal event保存と自動解除まで確認した。C45の受入評価は既存FAILのまま。
 - 実装後のChrome実機、固定ロード元への反映、Bridge操作、既存watch/event storageへの操作は行っていない。C38/C46の修正後実機受入とC45再受入はNOT_RUN。C37主要正常系PASSは変更していない。
 - 最終source検証：`pnpm test` 713/713、`pnpm typecheck` PASS、`pnpm lint` PASS、`pnpm check:size` PASS（258 files、500行/32768 bytes上限）、`pnpm build` exit 0。Chrome実機はNOT_RUN。
-- C46 18:51 JST実機再受入とB件数修正：新規threadの自動登録、終了通知1件と自動解除はPASS。A開始時0→1は未確認。B件数不整合をowner-filtered/current connection/current targetのwatch snapshot由来に修正し、未取得は「未確認」と表示する回帰テストを追加。件数修正後source検証は`pnpm test` 716/716、`pnpm typecheck`・`pnpm lint`・`pnpm check:size`（259 files）・`pnpm build` PASS。今回件数修正のChrome実機受入はNOT_RUN。
+- C46旧誤仕様での18:51 JST実機観測とB件数修正：旧方式では新規threadの自動登録、終了通知1件と自動解除をPASS観測。A開始時0→1は未確認。B件数不整合をowner-filtered/current connection/current targetのwatch snapshot由来に修正し、未取得は「未確認」と表示する回帰テストを追加。件数修正時点のsource検証は`pnpm test` 716/716、`pnpm typecheck`・`pnpm lint`・`pnpm check:size`（259 files）・`pnpm build` PASS。今回訂正後C46のChrome実機受入はNOT_RUN。
 
 ## C44 配備後の手動確認
 
@@ -88,12 +91,12 @@
 
 ## C46 配備後の手動確認
 
-1. このsourceをChrome登録済みロード元へ別途配備し、ユーザー自身で拡張とChatGPT会話を再読み込みする。今回のsourceは未配備。
-2. 会話AでBの対象マシンとowner会話表示を確認してONにする。ON時点で既に実行中の専用test threadがBへ追加されることを確認する。OFF後もそのwatchとC履歴が残ることを確認する。
-3. ONのまま新しいCodex Turnを開始し、前面探索では約5秒、backgroundではalarm周期に沿ってBへ追加されることを確認する。開始から次回探索までに完了する短命Turnを取りこぼす可能性があり、全件捕捉保証ではない。
-4. 会話Bで同じ(target, connection)をONにし、競合理由が表示され所有者Aのまま拒否されることを確認する。別targetは独立設定として確認する。ownerless legacy・別会話所有の手動watchは試験前の記録を保持し、移管されないことを確認する。
-5. manual watch解除直後の同一Turn抑止、次Turn登録、watch上限、`running_only`未対応・通信失敗時のerror/backoff、SPA会話切替後のowner保護、worker再起動後の設定/alarm復元を確認する。
-6. owner tabを閉じる／別routeに移す場合、C履歴は保持され通知音は出ないことを確認する。既存のC45 test threadや無関係なwatch/eventは変更せず、C46の実施結果だけを記録する。
+1. `pnpm build`後、Chromeの実ロード元`D:\weito\Documents\src\codexapp\ChatPanelPlus\dist`を使い、ユーザーが`chrome://extensions`で拡張を再読み込みし、対象ChatGPTページをF5する。
+2. 専用会話・targetで自動監視登録をONにする。ON時点ですでに実行中のthreadが本文に出ていない限り登録されないことを確認する。
+3. 専用のlive thread IDを回答本文に含めてChatGPT回答を完了させる。回答完了前は未登録で、完了後に同時点のBridge `running_only=true`結果にもliveとしてある本文一致IDだけが登録されること、他の実行中threadは登録されないことを確認する。音声OFF、音量0/mute、再生失敗のどれでも同じ登録判定になることを確認する。
+4. IDなし・過去turnだけのID・partial/substring/Turn ID・hidden/UI文字列では登録されないこと、複数IDと重複ID、別owner/target/connection、SPA切替、Bridge失敗/未対応、manual解除skip、32件上限も専用データで確認する。短命threadは回答完了前に終了すれば登録されなくてよい。
+5. 拡張worker restore後に旧自動探索alarmが有効化されず、回答完了eventが再送されない限り登録が再実行されないことを確認する。登録済みwatchの5秒/30秒poll、C45終端通知/自動解除、manual watchが維持されることも確認する。
+6. OFF後も既存watchと通知履歴が残ることを確認する。既存の無関係なwatch/eventやBridgeの本番状態は変更せず、C46専用の結果だけを記録する。
 
 ## 判断待ち・実装上の保留
 

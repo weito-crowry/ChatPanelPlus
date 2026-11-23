@@ -78,14 +78,14 @@
 - 初回watch baseline欠落の同日C46原因：Bridge `codex_threads(running_only=true)`の`current_execution`は`in_progress/live/managed_turn`だが`turn_id`がなく、同じ応答の`last_turn`に`01a2077d-c0fa-77b2-95fe-1265f5b4ee21`・`in_progress/live`があった。CPP parserは欠落IDをnull化し、自動登録側がnull baselineを許していたため`baselineTurnKind=unknown`になり得た。厳格なlink helperで、この同時観測のactive/live/in_progressだけを同一Turnとして結び、欠落ID時のcompleted/inferred/unknownはlinkせず登録を遅らせる。`current_execution`に明示IDがある場合は異なる`last_turn` IDで置き換えない。解除skipも正規化後の同一Turn IDで比較する。
 - 実機17:22:57 JST時点でBへ自動登録されたthread `01a2077d-bb7d-7ac3-a190-b36c4c29b8ea`と`01a2077f-848b-72a0-a44a-19359a395311`は両方「不明」、監視中2・通知0。先のTurnは17:21:24 JSTにBridgeで`completed/live`を確認したがC終了eventがなく、もう一方は`in_progress/live`だったとのユーザー報告。修正後自動テストではmissing execution turn IDから正しいbaselineを作り、completed event保存後に対象watchを解除することを確認。Chrome修正後受入はNOT_RUN。
 - `mcp-client.ts`のboolean schema確認・session復旧時の再確認・unsupported応答は既存契約を再確認し、変更していない。local/remote schema未対応時の実機挙動は未確認。Service Worker復旧、SPA、同一会話複数tabはChrome実機未確認。
-- 自動テストPASS：`pnpm test` 668/668、`pnpm typecheck`、`pnpm lint`、`pnpm build` exit 0。Chrome実機NOT_RUN。distはbuildで更新したが、Chrome登録先`D:\weito\Documents\src\codexapp\ChatPanelPlus-Content-Probe-20261021`へは未反映。C38全体受入は`NOT_RUN`を維持。C37とC44/C45の既存判定を維持し、C45の後続観測は下段に追記。
+- 自動テストPASS：`pnpm test` 668/668、`pnpm typecheck`、`pnpm lint`、`pnpm build` exit 0。Chrome実機NOT_RUN。distはbuildで更新したが、Chrome reloadは未実施。以前この記録でProbeをChrome登録先とした記述は、ユーザーが実ロード元をrepo直下`dist/`と明示したため誤記として訂正する。C38全体受入は`NOT_RUN`を維持。C37とC44/C45の既存判定を維持し、C45の後続観測は下段に追記。
 
 ## C37実機再受入と正式ロード元の確認（2026-11-23）
 
 - 時系列：上記の2026-11-22記録時点では、CPPのfinal-answer取得失敗と当時raw MCP応答が未収集だったため原因未特定としていた。履歴はその時点の観測として保持し、後続調査で判明した原因と修正を本節に追記する。
 - Bridgeの永続化API `codex_final_answer(thread_id,turn_id,target_id)`を本番応答で直接確認。返却は`status=retrieved`、`source=app_server.item/completed.agentMessage.phase=final_answer`で、本文が対象回答と完全一致した。応答には`target_id`、`thread_id`、`turn_id`、`status`、`item_id`、`source`、`text`に加えて`native_thread_id`が含まれていた。
 - 根本原因とCPP修正：この正当な追加identity fieldをCPP `parseCodexBridgeFinalAnswerResponse`の`hasExactKeys`が拒否していた。CPP commit `c40dea06814b46257342243fca91dbe5241a6ee0`で`native_thread_id`だけを契約上の任意追加キーとして許容し、存在時は既知のnative identityとの一致を検証するよう修正。ID不一致と未知fieldは拒否し、fallback禁止と`confirmed`の意味を維持した。Bridgeコードは変更していない。
-- 登録済みロード元の記録補正：過去の各配備記録にある「repo直下`dist/`」はその配備時点の記録として保持する。2026-11-23の読み取り確認で、Chromeの実登録ロード元は兄弟フォルダー`D:\weito\Documents\src\codexapp\ChatPanelPlus-Content-Probe-20261021`と確認した。今回のC37受入前にrepo `dist/`の完全版をこの固定ロード元へ全件反映し、11/11ファイルのSHA-256一致とManifest v0.1.5を確認。反映前バックアップ`D:\weito\Documents\src\codexapp\ChatPanelPlus-Content-Probe-20261021-backup-C37-20261123-132015-522`も11/11照合済み。
+- ロード元記録の訂正：過去記録にある兄弟ProbeがChromeの実登録ロード元だという記述は誤り。ユーザー明示の実ロード元はrepo直下`D:\weito\Documents\src\codexapp\ChatPanelPlus\dist`であり、兄弟Probeを配備先として扱わない。過去にProbeへコピー・照合した操作記録はChrome配備の証拠ではないため、そのように解釈しない。
 - ユーザー実機受入：2026-11-23、Chrome拡張とChatGPTページをユーザーが再読み込み。CPPパネルCで完了eventを開き最終回答を取得、UIに「完了済みturnの確定した最終回答を取得しました。」と本文が表示された。以前の「Bridgeの応答形式を確認できません。」は再発せず。ユーザー追加報告でcopyとChatGPT入力欄への挿入も成功。Bridge API直読でも対応Turnのcompleted/retrievedと本文一致を確認した。C37は「主要正常系PASS／詳細異常系NOT_RUN」とする。
 - 関連項目の範囲：C20は最終回答の取得・表示・copy・入力欄挿入までの部分観測。別会話/別接続先のowner越境、同一会話別tab、挿入後の下書き保持、自動送信しないことの独立試験は報告されておらずNOT_RUN。C34のA/B/C全体も未確認。B監視0件でCに完了eventが残るスクリーンショットはC45主要正常系の部分観測として記録し、5秒周期、failed/interrupted、異常・競合系、event保存失敗、他watch/alarm影響はNOT_RUNのまま。
 
@@ -97,23 +97,18 @@
 - 再現テストは修正前、watchを保持したままBが「新しいturnの完了を観測」と誤表示することを確認。修正後はイベントを作らずwatch/alarmを維持し、「完了状態を観測しました。通知判定保留（前回の状態取得に失敗）。監視継続中。」と表示し、保留理由をstorage snapshotと技術情報に残す。既終端baseline、unknown/gap/inferred-only、別turn current_execution、event保存失敗、duplicate/owner、同一watchの原子的解除、failed/interruptedの既存gateは変更していない。
 - remote public thread IDの`targetId::native_thread_id`形式とtarget整合性検査`matchesTargetThread`、connection/target/threadを含むwatch/event keyは変更していない。既存handler testは他target prefixのthreadを拒否する。remote targetからのライブ終端eventは実機未確認で、status証拠gateはremote/local間で緩和していない。
 - 最終自動検証：`pnpm test` 671/671、`pnpm typecheck` PASS、`pnpm lint` PASS（`check:size` 244 files、500行/32768 bytes上限）、`pnpm build` exit 0。Focused terminal/owner/event/表示回帰64/64 PASS。これはsource-only検証で、Chrome実機ではない。
-- 実機watch/eventを含むChrome storageは読まず・変更せず、Chrome/Bridge操作とProbe反映も行っていない。
-- C38変更commit `52767e06cac283ed3e924097a25109678cff327a`は現Chrome登録ロード元`ChatPanelPlus-Content-Probe-20261021`へ未配備・未検証のまま維持し、C38受入は`NOT_RUN`。今回の変更を含むsourceもProbe未反映で、C45 Chrome再受入は今後の配備と手動reload後に必要。
+- 実機watch/eventを含むChrome storageは読まず・変更せず、Chrome/Bridge操作とChrome reloadも行っていない。
+- C38変更commit `52767e06cac283ed3e924097a25109678cff327a`は実ロード元`dist/`へのbuild後reload・C38実機検証を行っておらず、C38受入は`NOT_RUN`。C45 Chrome再受入も未実施。
 - 17:22:57 JSTのC46実機ではcompleted/live後もwatchが残りCにeventなしとの報告があり、C45終了追跡もFAIL。上記missing-turn-ID baseline linkでsource経路を修正したが、C45の既存FAIL判定は維持し、修正後Chrome実機はNOT_RUN。
 - 修正後source検証は同じcheckoutで`pnpm test` 713/713、typecheck/lint/size/buildがすべてPASS。これはC45実機再受入の代替ではなく、Chrome実機はNOT_RUNのまま。
 
-## C46 新規実行スレッドの自動監視登録（2026-11-23）
+## C46 回答完了時のID一致自動監視登録（2026-11-23訂正）
 
-- B欄にtarget単位の明示ON/OFFを追加。初期OFFで、ONは現在のtrusted ChatGPT会話・tab・routeからのみ受付ける。保存先は`chatPanelPlus.codexBridgeAutoWatch.v1`の独立keyで、connection ID、target ID、owner会話/tab、mute snapshotを厳密検証する。tokenは保存しない。
-- 探索は表示A欄、通常一覧、手動refresh、running modeに依存せず、既存MCP clientのschema/capability確認済み`codex_threads(running_only=true)`を使用。既知target、完全なsingle page、正確なtarget/thread ID、`current_execution`の`in_progress`/`running`かつ`evidence=live`だけを候補にする。execution ID欠落時は同時応答の`last_turn`が非null ID・`in_progress/live`の場合だけ結び付ける。終了済み・estimated/inferred・unknown・last_turnだけの項目は候補外。ON時点ですでにliveなthreadも同じ探索で登録する。探索時のconnection IDをwatch開始時にも照合し、接続変更競合の誤登録を拒否する。
-- 登録は既存watch state machine、storage mutation、32件上限、alarm、C45 terminal event/解除、C38 foreground更新へ接続。自動経路はowner移管を禁止し、他会話owner/ownerless watchと衝突したthreadは変更せず理由を保存する。manual watchの既存後勝ち登録動作は維持。手動解除したexecutionは永続skipし、unknown turn IDは同じthreadがrunning_onlyから消えるまで抑止する。OFFは新規登録だけを止め、既存watchと通知履歴を残す。
-- 前面5秒/背景alarm約30秒、targetごとの重複flight、既存watch pollと共有するtarget queue/request slot、周期上限12target、古い期限から処理する公平性、指数backoffを実装。未対応schema/通信異常は0件扱いせずerrorとし再試行を遅らせる。5秒/30秒の間に開始・終了する短命Turnは見落とし得て、全件捕捉は保証しない。
-- owner tabが閉じた／別route／mute取得不能の場合はmuteをnullにし、通知音を鳴らさずevent履歴を保持する。通知時にもowner tab URLと会話routeを再検証。SPA遷移後に別会話へ設定やwatchを移さない。
-- 初期化/削除の扱いを確認：Options設定保存・既定値復元はconfig/view-state keyだけを更新し、自動watch keyと既存`chatPanelPlus.codexBridgeThreadMonitor.v1` watch/event keyを消さない。自動設定データのschema異常時は上書きせずerrorで停止する。
-- 自動検証PASS：`pnpm test` 694/694、`pnpm typecheck` PASS、`pnpm lint` PASS、source size 248 files（各500行/32768 bytes以下）、独立した`pnpm build` exit 0。
-- 初回実装時点ではChrome登録ロード元への反映・Chrome自動操作・実機受入・Bridge停止/再起動/変更は行っていない。C46 Chrome受入はNOT_RUN。C37主要正常系PASSを維持、C38 Chrome受入NOT_RUNとC45既存FAIL/再受入待ちは既存判定のまま。
-- 追加実機観測（17:22:57 JST）：自動登録自体はPASSだが、新規2件のB状態は「不明」、監視中2・通知0。うち一件は17:21:24 JSTにBridgeでcompleted/liveだったがC終了eventがなく、別件はin_progress/liveだった。実機ではA一覧同期FAILも同時に観測。source回帰で実Bridge形状（`current_execution.turn_id`欠落、同一応答の`last_turn`がin_progress/live）を入力し、同Turn baseline→completed event→watch自動解除を確認。修正後Chrome NOT_RUN。
-- 17:22時点の同checkout source検証：`pnpm test` 713/713、`pnpm typecheck` PASS、`pnpm lint` PASS、`pnpm check:size` PASS（258 files、各500行/32768 bytes以下）、`pnpm build` exit 0。固定Chromeロード元と実機storageには触れず、当時の修正後Chrome実機受入はNOT_RUN。
-- 18:51 JST C46実機再受入：新規監視thread `01a207cf-52ab-7900-a91d-3288982ab221` の自動登録と、終了通知1件・B一覧からの自動解除はPASS。A欄・上部実行中0、B欄上部「監視中0」、B watch list 0件、C完了通知1件を確認。一方で自動監視設定欄に「実行中候補:0件・この会話の監視:1件」が残り、B一覧との件数不整合を確認。A開始時の0→1反映は未確認。
-- 件数不整合の原因は、自動監視欄が最後のauto-watch GETの`watchingThreadCount`を表示し、monitor storage変更ではそのstatusを更新しないこと。B欄のowner-filtered watch snapshotからowner・current connection・current targetが一致する件数を渡すsource修正と、snapshot未取得/失敗/identity不明では「未確認」とする回帰を追加。新しいnetwork probeや自動ON/OFF・watch移管の変更は加えていない。今回の件数修正後Chrome実機確認はNOT_RUN。固定Chromeロード元とBridge/watch/event storageには触れていない。
-- 件数修正後source検証：`pnpm test` 716/716、`pnpm typecheck` PASS、`pnpm lint` PASS、`pnpm check:size` PASS（259 files、各500行/32768 bytes以下）、`pnpm build` exit 0。
+- **正仕様**：ChatGPT回答完了イベントの直後に、回答完了音と独立して、そのイベントの会話・turn・assistant message IDに一致する完了済み最終回答本文だけをDOMから読む。回答本文中の独立tokenとしてthread ID候補を最大32件抽出し、候補IDだけを認証済みcontent/background messageで渡す。過去会話・ユーザー本文・別turn・streaming・hidden/UI文字列は検索しない。
+- 明示ONかつowner tab/会話route/target/current connectionが一致するときに限り、完了イベントごとに`codex_threads(running_only=true)`を一度取得する。そのレスポンスの`thread.id`と候補IDを完全一致（同じtargetのremote prefix形式は正規化）で比較し、`current_execution`がliveの`running`/`in_progress`である一致項目だけを既存watchへ登録する。他の実行中threadは登録しない。
+- DOMの不足・重複・曖昧・大容量、候補IDなし/32件超過、Bridge未対応・取得失敗、接続/owner競合は登録を見送る。回答完了前に終了した短命taskは登録されなくてよい。Turn IDや部分一致をthread IDとして扱わない。本文やDOMをbackground保存・ログ化せず、回答eventの重複送信は抑止する。
+- 自動登録のON/OFFは回答完了時のID照合だけを切り替える。ON、foreground/background alarm、worker restore、refresh、SPA遷移で実行中threadを全件探索・登録しない。既存watchの5秒/30秒poll、C45通知・終端自動解除、manual watch、32件上限、他owner/ownerless拒否、手動解除skipは維持する。`chatPanelPlus.codexBridgeAutoWatch.v1`は読取互換し、OFFでもwatch/eventは消さない。旧自動探索alarmはrestore時に解除する。
+- B欄には「回答完了時の自動監視登録」と説明を表示し、定期探索候補件数を示さない。音声OFF、音量0、mute、再生失敗でも回答完了イベントの登録判定は動く。
+- 以前のC46実装は「ON中の実行中thread全件を5秒/30秒周期で発見・登録」しており、この仕様は誤りだった。18:51 JSTの実機PASS（thread `01a207cf-52ab-7900-a91d-3288982ab221`の自動登録、終了通知、自動解除）は**旧誤仕様に対する結果**であり、今回訂正したC46の受入PASSではない。旧実機での候補件数/A同期の観測も新仕様の判定には流用しない。
+- 17:22/18:51の当時のsource検証結果（713/713、716/716等）は旧定期探索実装の履歴として保持する。訂正後source検証は`pnpm test` 716/716、`pnpm typecheck` PASS、`pnpm lint` PASS、`pnpm check:size` PASS（262 files、各500行/32768 bytes以下）、`pnpm build` exit 0。Chrome実ロード元は`dist/`。今回Chrome reload・ChatGPT F5・Bridge/既存storage操作は行わず、訂正後Chrome実機受入はNOT_RUN。C37主要正常系PASS、C38 Chrome NOT_RUN、C45の既存FAIL/再受入待ちは独立して維持する。
+- Chromeの実ロード元はユーザー明示のrepo直下`D:\weito\Documents\src\codexapp\ChatPanelPlus\dist`。この作業ではChrome reload、ChatGPT F5、Bridge操作、既存watch/event/storage変更を行わない。

@@ -9,11 +9,11 @@
 ## 1. 前提・着手条件
 
 - 既存 checkout: [USER_WORKSPACE_ROOT]\Documents\src\codexapp\ChatPanelPlus
-- Chrome 新IDロード元: [USER_WORKSPACE_ROOT]\Documents\src\codexapp\ChatPanelPlus-Content-Probe-20261021
+- Chrome登録済みロード元: リポジトリの`dist/`（ユーザー明示）。`pnpm build`後、拡張のreloadとChatGPTページF5はユーザーが手動で行う。固定宛先が兄弟Probeの`pnpm deploy:chrome`は使わない。
 - main は初回コミット前の unborn branch、ソースは未追跡。全資産の保全・初回ベースラインコミット実施はユーザーの別途承認を要する。
 - AGENTS.md を常に優先し、新 worktree・ブランチ・破壊的 checkout・reset・clean・stash を無断で行わない。
 - Windows 11 ネイティブで作業。原則として単一checkoutを使い、ChatGPTが設計・独立レビュー、Codexが承認済みの実装・テストを担当する。
-- 旧IDに切替えない。Chromeロード元フォルダへ無断で直接書かない。ビルド成果物 dist も本番デプロイ対象とは区別する。
+- 旧IDに切替えない。`dist/`はChrome登録済みロード元でもあるため、`pnpm build`で更新する。Chrome拡張のreloadはユーザーが手動で行う。
 
 ## 2. 依存関係マップ
 

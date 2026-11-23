@@ -2,13 +2,13 @@
 
 ## 現在の開発版
 
-正式な開発用ロード元は、Chromeに登録済みの次のフォルダです。フォルダを移動・改名したり、拡張機能を再登録したりしないでください。
+ユーザーが明示したChrome登録済みの開発用ロード元は、このリポジトリの`dist/`です。兄弟のProbeフォルダをChromeロード元・配備先として扱ったり、移動・改名・再登録したりしないでください。
 
 ```text
-[USER_WORKSPACE_ROOT]\Documents\src\codexapp\ChatPanelPlus-Content-Probe-20261021
+D:\weito\Documents\src\codexapp\ChatPanelPlus\dist
 ```
 
-このフォルダの0.1.5では、React/Shadow DOMパネル、Service Worker、Optionsページ、会話読み込みをChrome上で確認済みです。旧ID側の障害原因はChrome登録状態・ID・パス要因のいずれかに絞られていますが、根本原因は未特定です。旧IDと診断用フォルダ、各段階バックアップは調査用に保持します。
+旧ID側の障害原因は未特定です。旧IDと診断用フォルダ、各段階バックアップは調査用に保持します。
 
 ## ビルドとデプロイ
 
@@ -16,15 +16,7 @@ Node.js 22.12以降、pnpm 10.30.1以降を使います。通常の`pnpm build`�
 
 `pnpm build:noop`は旧来の原因切り分け用無機能版を`dist/`に別生成します。通常ビルドと出力先を共有するため、続けて開発版を使うときは`pnpm build`を実行してください。無機能版は権限・サイトアクセス・実行参照を持ちません。
 
-新IDの登録済みフォルダへ反映する場合は、次を実行します。
-
-```powershell
-pnpm deploy:chrome
-```
-
-このコマンドは完全版を再ビルドし、manifest・参照ファイル・出力パスを検査します。固定された上記フォルダ以外は宛先にせず、対象とdist内のシンボリックリンクを拒否します。反映前に対象の全ファイルを同じ親ディレクトリの`ChatPanelPlus-Content-Probe-Backup-<時刻>`へ複製し、反映後にdistとのファイル名・SHA-256一致を確認します。失敗時はバックアップから対象フォルダを復元します。Chromeの起動、登録変更、再読み込みは行いません。
-
-反映後はユーザーがChromeで`chrome://extensions`を開き、ChatPanelPlusカードの再読み込みボタンを手動で押してください。Chrome実機での最終確認も手動で行います。
+`pnpm build`は完全版を`dist/`に生成します。`pnpm deploy:chrome`の固定宛先は兄弟のProbeフォルダなので、このcheckoutのChrome登録済みロード元へ反映する手順として使いません。ビルド後、ユーザーが`chrome://extensions`でChatPanelPlusを手動再読み込みし、対象ChatGPTページをF5します。Chrome実機での最終確認も手動で行います。
 
 ## 検証
 
