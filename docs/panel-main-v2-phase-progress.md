@@ -68,3 +68,12 @@
 - C38要改善観測：対象thread終了後もAの「実行中」一覧と上部件数が自動更新されなかった。既存設計ではrunning_only取得を定期更新しない。C38全体のChrome受入とlive app schema確認は未完了のため`NOT_RUN`を維持する。
 - 未実装の改善案：監視の確実な終了event後に同一targetのrunning_onlyを再取得し、A一覧と件数を同期する。件数を単純減算しない。設計案の記録であり、実装済みとは扱わない。
 - C37の`FAIL`（原因未特定）は維持する。
+
+## C37実機再受入と正式ロード元の確認（2026-11-23）
+
+- 時系列：上記の2026-11-22記録時点では、CPPのfinal-answer取得失敗と当時raw MCP応答が未収集だったため原因未特定としていた。履歴はその時点の観測として保持し、後続調査で判明した原因と修正を本節に追記する。
+- Bridgeの永続化API `codex_final_answer(thread_id,turn_id,target_id)`を本番応答で直接確認。返却は`status=retrieved`、`source=app_server.item/completed.agentMessage.phase=final_answer`で、本文が対象回答と完全一致した。応答には`target_id`、`thread_id`、`turn_id`、`status`、`item_id`、`source`、`text`に加えて`native_thread_id`が含まれていた。
+- 根本原因とCPP修正：この正当な追加identity fieldをCPP `parseCodexBridgeFinalAnswerResponse`の`hasExactKeys`が拒否していた。CPP commit `c40dea06814b46257342243fca91dbe5241a6ee0`で`native_thread_id`だけを契約上の任意追加キーとして許容し、存在時は既知のnative identityとの一致を検証するよう修正。ID不一致と未知fieldは拒否し、fallback禁止と`confirmed`の意味を維持した。Bridgeコードは変更していない。
+- 登録済みロード元の記録補正：過去の各配備記録にある「repo直下`dist/`」はその配備時点の記録として保持する。2026-11-23の読み取り確認で、Chromeの実登録ロード元は兄弟フォルダー`D:\weito\Documents\src\codexapp\ChatPanelPlus-Content-Probe-20261021`と確認した。今回のC37受入前にrepo `dist/`の完全版をこの固定ロード元へ全件反映し、11/11ファイルのSHA-256一致とManifest v0.1.5を確認。反映前バックアップ`D:\weito\Documents\src\codexapp\ChatPanelPlus-Content-Probe-20261021-backup-C37-20261123-132015-522`も11/11照合済み。
+- ユーザー実機受入：2026-11-23、Chrome拡張とChatGPTページをユーザーが再読み込み。CPPパネルCで完了eventを開き最終回答を取得、UIに「完了済みturnの確定した最終回答を取得しました。」と本文が表示された。以前の「Bridgeの応答形式を確認できません。」は再発せず。ユーザー追加報告でcopyとChatGPT入力欄への挿入も成功。Bridge API直読でも対応Turnのcompleted/retrievedと本文一致を確認した。C37は「主要正常系PASS／詳細異常系NOT_RUN」とする。
+- 関連項目の範囲：C20は最終回答の取得・表示・copy・入力欄挿入までの部分観測。別会話/別接続先のowner越境、同一会話別tab、挿入後の下書き保持、自動送信しないことの独立試験は報告されておらずNOT_RUN。C34のA/B/C全体も未確認。B監視0件でCに完了eventが残るスクリーンショットはC45主要正常系の部分観測として記録し、5秒周期、failed/interrupted、異常・競合系、event保存失敗、他watch/alarm影響はNOT_RUNのまま。
