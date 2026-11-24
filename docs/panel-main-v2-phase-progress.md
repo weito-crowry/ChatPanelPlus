@@ -1,5 +1,18 @@
 # メインパネル再設計 v2 — Phase進捗
 
+## 現在地と残工程（2026-11-24）
+
+- Chrome実ロード元はユーザー確認済みのrepo直下`dist/`。ユーザーが拡張reloadとChatGPT F5を実施し、10:00:42 JSTにC46回答完了検出、Bridge候補2件、コード装飾付き対象IDの本文照合1件、明示対象1件だけの監視登録を確認した。対照候補は登録されていない。対象終了後はA実行中0、B監視0、設定内監視0、C通知1を表示。これはC46の基本正常経路PASSで、C46全項目やC38/C45全体のPASSではない。
+- C38はC46前後でA件数2→0を表示した部分観測。Aの独立手動更新有無、live schema、mode・target・失敗時の表示等は未確認。C45は対象watchの終了後にB/設定が0、C通知1となった部分観測。技術情報内のnotification identityは直接照合しておらず、厳密poll周期、音声、異常系、worker復旧等は未確認。2026-11-23に記録したC45のFAILと修正経路は履歴として保持し、今回の限定観測を専用C45再受入へ拡張しない。
+- **現時点で追加の機能修正を始める根拠はない。** C46の通常経路は実機で動作した一方、残項目の受入は未完了なので「メインパネルv2全体受入済み」や全面的なmerge-readyとは扱わない。残る項目と推奨順は`docs/panel-main-v2-final-acceptance-checklist.md`の残工程節と行別状態を参照する。
+
+### 残工程の推奨順
+
+1. **受入判断に直結**：C45専用の通常終端ケースを通知identityまで照合し、前面約5秒監視・自動解除を確認する。続けてC38のA一覧/件数更新、実行中modeと通常mode、Bridge未対応・取得失敗を確認する。既知の修正後未確認項目C12/C29/C30、C31–C36、C44も現行distで確認する。
+2. **C46の範囲補完**：コード装飾付きIDの今回観測は記録済み。前後の日本語段落を含む独立code span、表/コードブロック、候補外・過去turn・部分一致等の拒否、会話/owner/target競合、手動解除、音声状態、worker restoreを必要な順に確認する。
+3. **残りの手動受入**：C04、C06–C11、C13–C28、C39–C43等をチェックリストに沿って優先度順に実施。異常系/復旧系は実際に観測した個別ケースだけを更新し、未実施は`NOT_RUN`のままにする。Phase 4のevent総保持上限判断は別途未決のまま。
+4. **merge準備**：各修正後の行別結果と残る制約をレビューし、既知FAILが修正済みかつ必要な再受入済みであること、Phase 4の未決事項をどう扱うかを整理してからmerge可否を判断する。この依頼ではmergeしない。
+
 ## 完了記録
 
 | Phase | 状態 | 実装／記録コミット | 自動検証・配備 |
@@ -10,7 +23,7 @@
 | 3 会話別UI状態・タブ別ミュート | AUTO_ACCEPTED / CHROME_SMOKE_DEFERRED | 初回 `132218761d66a566c1e91d2831a5d292ffa6aa74`、B/C選択補正 `048953c3bd44298a9261048209c433eb9acc2d40` | 初回518/518、最終レビュー後の累積回帰539/539とtypecheck/lint PASS。B watch identity/C event IDの保存不足は補正commitで修正し、後続の登録済み`dist/`配備に含む。Chrome操作は未実施。 |
 | 4 Bridge owner・会話別通知・認可 | PARTIAL / AUTO_TESTS_AND_DEPLOY_PASS / CHROME_SMOKE_DEFERRED | 初回 `f321cf50f6f81a2fd38975dda79a8e5d1a0cff26`、レビュー修正 `048953c3bd44298a9261048209c433eb9acc2d40`、C12 follow-up `c528acd37e9b0d907175f4e19019c6913f027eca` | C12 follow-up後548/548、typecheck/lint PASS。隔離テスト中live `dist/` 11/11 hash一致。バックアップ `ChatPanelPlus-dist-c12-predeploy-backup-20261121-215034-e7f2d76cca0346e5a440171dffb49bda` 11/11照合後、登録済み`dist/`に`pnpm build` exit 0。Chrome C12再確認NOT_RUN。総保持上限の判断保留でPhase 4 PARTIAL。 |
 | 5 最終統合・受入準備 | AUTO_REVIEW_COMPLETE / PARTIAL_USER_REPORTED | C30実装 `82c0dd7fc131dec320a47c4cd16b9c8a22e6b454`、受入 `docs/panel-main-v2-final-acceptance-checklist.md` | スピーカー操作を1個に統合。全体音声ON/OFFはOptionsへ残し、パネルは会話別muteだけを操作。全548/548、typecheck/lint PASS、隔離中live `dist/` 11/11 hash一致。バックアップ `ChatPanelPlus-dist-c30-predeploy-backup-20261121-220527-c5308142b8dd48208b4c600962dee589` 11/11照合後`pnpm build` exit 0で配備。Chrome C30確認はNOT_RUN。 |
-| 6 パネル外観・Bridge表示 | CPP_AUTO_TESTS_AND_DEPLOY_PASS / C37_FAIL / C31_C36_NOT_RUN / BRIDGE_SCHEMA_UNVERIFIED / C38_IMPROVEMENT_OBSERVED / C38_ACCEPTANCE_NOT_RUN | 仕様docs `fcafcca4bf17be62f34b15220be2879e966722bf`、UI `3aca9ca05b52b0ca4232aee3b80d72dae6f62f70`、running_only CPP `4cee26e980e2bfaf32e0f2a299c86a0c4082073d` | UI 552/552、Phase6 focused 34/34、running_only連携前回全suite 563/563・focused 50/50、typecheck/lint・サイズ検査PASS。今回`pnpm typecheck`/`pnpm lint` PASS、`pnpm build` exit 0。登録済みlive `dist/`の新規backup `D:\weito\Documents\src\codexapp\ChatPanelPlus-dist-phase6-runningonly-predeploy-backup-20261122-072227-7ce881baefb7451d8d5438a8d5f9e510`とbuild前に11/11 path/size/SHA-256一致。配備後11ファイル、Manifest V3/version 0.1.5、必須6ファイル、HTML参照2件、marker 8/8。Bridge再起動はユーザー報告済みだがlive app `tools/list` schemaは未確認。配備時点ではChrome reload・C31–C36/C38実機受入はNOT_RUN。2026-11-23のC38要改善観測は後段に記録。C37 final-answer不一致はFAIL・原因未特定のまま。 |
+| 6 パネル外観・Bridge表示 | CPP_AUTO_TESTS_AND_DEPLOY_PASS / C37_MAIN_NORMAL_PASS / C31_C36_NOT_RUN / BRIDGE_SCHEMA_UNVERIFIED / C38_PARTIAL / C45_REACCEPT_PARTIAL / C46_NORMAL_PATH_PASS | 仕様docs `fcafcca4bf17be62f34b15220be2879e966722bf`、UI `3aca9ca05b52b0ca4232aee3b80d72dae6f62f70`、running_only CPP `4cee26e980e2bfaf32e0f2a299c86a0c4082073d` | UI 552/552、Phase6 focused 34/34、running_only連携前回全suite 563/563・focused 50/50、typecheck/lint・サイズ検査PASS。今回`pnpm typecheck`/`pnpm lint` PASS、`pnpm build` exit 0。登録済みlive `dist/`の新規backup `D:\weito\Documents\src\codexapp\ChatPanelPlus-dist-phase6-runningonly-predeploy-backup-20261122-072227-7ce881baefb7451d8d5438a8d5f9e510`とbuild前に11/11 path/size/SHA-256一致。配備後11ファイル、Manifest V3/version 0.1.5、必須6ファイル、HTML参照2件、marker 8/8。Bridge再起動はユーザー報告済みだがlive app `tools/list` schemaは未確認。配備時点ではChrome reload・C31–C36/C38実機受入はNOT_RUN。2026-11-23のC38要改善観測は後段に記録。C37の当時のfinal-answer不一致は後続修正後に主要正常系PASS。詳細異常系は未確認。 |
 
 ## B監視一覧の読み込み停止修正（2026-11-22）
 
@@ -18,7 +31,9 @@
 - ソースで確認したgeneration競合に対し、B一覧要求の優先度調停、単一flightの自動更新、25秒bounded timeout、失敗原因表示/再試行、route tokenによる遅延応答破棄を追加。失敗を0件にせず`—`とし、B開始は一覧の成功・current connection・current route等が有効な時だけ許可する。owner filter、sender URL/tab URL検証、保存済みwatch/eventは変更しない。
 - 実機の症状がこの競合だったかは未確定。欠落/不正なwatch/event配列を成功0件扱いしない検査も追加。隔離全suite 636/636、focused 38/38、`pnpm typecheck`・`pnpm lint`・`pnpm check:size` PASS。source-only suite前後はlive `dist/`11/11 hash一致。2026-11-22 source commit `39a38f5cd423576294fbd744b41b595a7a0a0578`を登録済みrepo直下`dist/`へ`pnpm build` exit 0で配備。backup `D:\weito\Documents\src\codexapp\ChatPanelPlus-dist-c44-predeploy-20261122-225802-220-e09b3e603f0a489b98ea9bc8ef2c6edb`はbuild前11/11 relative path/size/SHA-256一致、reparseなし。prebuild manifest `D:\weito\Documents\src\codexapp\ChatPanelPlus-dist-c44-predeploy-20261122-225802-220.manifest.csv`、postbuild manifest `D:\weito\Documents\src\codexapp\ChatPanelPlus-dist-c44-postbuild-20261122-225802-220.manifest.csv`は生成後11/11 hashを現物照合、bundle変更は`content.js`のみ。静的検証11 files、Manifest V3/0.1.5、必須6/6、HTML refs 5/5、CSS URL refs 0、C44/C37 markers PASS。Chrome reloadとC44はNOT_RUN、手動確認手順は最終チェックリストC44に記録。
 
-## 最終受入の保留
+## 最終受入の保留（2026-11-21〜23時点の記録）
+
+この節は当時の保留事項を残す履歴。2026-11-24のC46実機観測と現行の優先順は、本書冒頭および最終Chromeチェックリストの最新記録を参照する。
 
 - Chrome実機受入はユーザー実施待ちで、Phase 2〜5の未確認項目は`docs/panel-main-v2-final-acceptance-checklist.md`に`NOT_RUN`として集約した。Phase 1のユーザー報告によるPASSは別記録で維持する。
 - Phase 4は総保持上限の判断が残るためPARTIAL。実装済みの未確認event保護と確認済み最新128件保持を変えずに、その判断を保留する。
@@ -27,15 +42,17 @@
 - 2026-11-21のユーザー実機報告: C02通常画面、C03 Options表示、C05 A→B→Cと最小化・復帰をPASS。C17は当該会話のwatch/eventが0/0で他会話情報の混入兆候なしだがownerless legacyを実際に用意した確認は未実施のためNOT_RUN。C30スピーカー重複は修正前FAIL、修正後確認はNOT_RUN。
 - C30はスピーカー1個の`aria-pressed`を会話別muteだけに結び、iconは全体OFFまたは会話別mute中に消音表示する。ARIA/titleは両状態を別々に説明し、全体OFF時も会話ID・読込・保存待ち条件を満たせば会話別muteを操作できる。全体設定はOptionsに集約し、パネルから`answerCompletionSoundEnabled`を書き換える経路を削除した。実機でのON/OFF・tab別確認はNOT_RUN。
 
-## 残る仕様判断
+## 過去の仕様判断と保留（2026-11-22時点の記録）
+
+以下は当時の判断・報告を残す履歴で、最新状態の要約ではない。C37の後続結果、C38/C45の部分観測、現在の残工程は本書冒頭と最終Chromeチェックリストを参照する。
 
 - conversation ID不明時の通常回答完了音の再生可否。
 - Optionsの「既定値に戻す」が会話別パネル表示状態へ及ぼす範囲。
 - Bridge event保持方針。確認済み履歴は最新128件、未確認eventは件数保護のため保持する。総保持件数上限は未決定で、Phase 4をPARTIALとする。
-- Bridge final-answer本文の完全性と取得時点差。CPPがno-final-answerを返した場面のraw応答は未取得だが、native include_historyの別経路では同じTurnのfinal_answer itemが存在。原因特定とC37の再検証が必要。
+- （当時の未解決記録）Bridge final-answer本文の完全性と取得時点差。CPPがno-final-answerを返した場面のraw応答は未取得だった。後続でC37の応答形式不一致を修正し、2026-11-23の主要正常系PASSを確認。項目欠落・複数候補・履歴不足等の詳細異常系は未確認。
 - CodexBridge側の`codex_threads(running_only=true)`はlocal commit `41faae1`に実装済みとのユーザー報告があり、Bridge再起動もユーザー報告で完了。現在のCodexBridge connectorからlive app `tools/list` schemaは読めず、boolean能力の公開状態は未確認。CPPは実機でschema能力を確認してから実行中要求を送り、remote targetが拒否した場合は実行中値を`—`にして通常一覧を維持する。
 - Phase 6 UIはユーザー提示の画像構成に沿ってReact/CSSに実装し、自動回帰を通して登録済みdistへ配備した。UIコードcommitは`3aca9ca05b52b0ca4232aee3b80d72dae6f62f70`。Chrome表示は未確認でC31–C36は実機受入NOT_RUN。
-- 2026-11-22 01:40 JSTのユーザー報告: CPP監視からTurn完了と回答完了音は確認できたが、Cの最終回答取得はno-final-answerとなった。同じ対象Turnはnative `codex_threads(include_history=true)`の別経路応答に`agentMessage`/`final_answer` itemがあるとの確認がある。CPP失敗時のraw MCP応答はなく、時刻差・経路差・競合などの原因は未特定。最終ChromeチェックリストC37をFAIL（再検証待ち）として記録。C31–C36はNOT_RUN、Chrome reload状況も未確認。
+- （履歴）2026-11-22 01:40 JSTの報告ではC37が`no-final-answer`だった。当時のraw応答未取得・原因未特定は履歴として保持し、後続の応答形式修正後にC37主要正常系PASSを確認。詳細異常系は未確認。
 - 2026-11-22 04:00 JSTの再発報告: 03:41完了Turnで終了eventと回答完了音は成功したが、CPPのfinal_answer取得はno-final-answer。後刻native historyは41 itemsでphase=final_answerのagentMessageは0件。一方、`codex_status.latest_agent_message`には最終報告があったが、これはhistory itemとは別情報。前回01:29対象Turnでは後刻native historyにfinal_answer itemが存在した。失敗時のCPP raw responseは未取得で原因未特定。C37 FAILを維持、C31–C36とC38はNOT_RUN。
 - B表示名fallback/ID tooltipとUI仕様は`docs/panel-main-phase6-visual-spec.md`に記録。CPP running_only連携commit `4cee26e980e2bfaf32e0f2a299c86a0c4082073d`は2026-11-22に登録済みrepo直下`dist/`へ配備済み。Bridge再起動はユーザー報告済みだが、live schemaとChrome実行結果は未確認。C38はChrome統合試験までNOT_RUN。
 - 2026-11-22 running_only CPP follow-up: 既定「実行中」modeはserver-side `running_only=true`結果を直接表示し、通常一覧は`limit=20`・cursorを維持。schema未対応／不明、remote拒否、失敗、target切替時は古い件数を消し、通常一覧は利用可能。件数はBridge返却集合の数で、未把握threadまでの完全網羅は保証しない。通常／展開／最小化で同一targetのsummaryを使い、定期pollingは追加していない。全563/563・focused 50/50 PASSは直前の隔離テスト記録、今回のtypecheck/lint PASSとbuild exit 0を追加記録。新規backup 11/11照合後に配備したがChrome reloadは未実施。
@@ -119,4 +136,4 @@
 - Source原因は、main外の変更を除外するcommit `12b82ea965180a940cb5d3c8785fa23380d8ac13`以後も、`turn.contains(record.target)`により回答turn内の属性・装飾・非本文UI変更を本文変更と同等に扱っていたこと。Bridge候補OK後、本文を読む前に`dom-changed`で停止する。画面だけでは個別mutation種別は分からない。
 - 修正後はsemantic本文一致とroute/root/unique turn/assistant ID/complete状態の再検証で判定する。Bridge候補2件、回答本文の完全一致1件なら対象1件だけ登録しcontrol候補は登録しない。本文/DOMはbackgroundへ送らず、診断は既存の安全な理由コード・件数だけを使う。
 - 自動検証：`pnpm test` 756/756、C46 bridge-first 16件と登録連携20件を含む。`pnpm typecheck`、`pnpm lint`、`pnpm check:size`（269 files）、`pnpm build`、`git diff --check`もPASS。
-- Chrome受入はsource修正後に未実施。ユーザーが登録済みrepo直下`dist/`を手動reloadし、ChatGPTをF5した後に再確認する。
+- この記録時点ではsource修正後のChrome受入は未実施だった。その後ユーザーがrepo直下`dist/`をreloadしChatGPTをF5し、10:00:42 JSTのC46基本正常経路を確認した。限定的なPASSと未確認項目は本書冒頭に記録する。
