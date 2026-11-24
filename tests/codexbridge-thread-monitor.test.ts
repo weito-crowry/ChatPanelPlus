@@ -277,13 +277,28 @@ test('a long offline interval followed by a changed turn is recorded as a gap wi
   const h = harness({ status: async () => observed });
   await h.monitor.startWatch('target-1', 'thread-1');
   h.advance(120_000);
-  observed = makeStatus('target-1', 'thread-1', 'turn-4', 'completed');
+  observed = makeStatus('target-1', 'thread-1', 'turn-4', 'in_progress');
   await h.monitor.refreshAlarm();
   const item = (await h.monitor.list())[0]!;
   assert.equal(item.baselineTurnId, 'turn-1');
   assert.equal(item.lastObservedTurnId, 'turn-4');
   assert.equal(item.turnChange, 'gap');
   assert.equal(deriveCodexBridgeWatchTurnState(item), 'gap');
+  assert.equal((await h.monitor.listEvents()).length, 0);
+});
+
+test('a terminal turn after a long gap records only its known ID and removes the watch once', async () => {
+  let observed = makeStatus('target-1', 'thread-1', 'turn-1', 'in_progress');
+  const h = harness({ status: async () => observed });
+  await h.monitor.startWatch('target-1', 'thread-1');
+  h.advance(120_000);
+  observed = makeStatus('target-1', 'thread-1', 'turn-4', 'completed');
+  await h.monitor.refreshAlarm();
+  const events = await h.monitor.listEvents();
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.turnId, 'turn-4');
+  assert.deepEqual(await h.monitor.list(), []);
+  assert.equal(h.alarms.active, false);
 });
 
 test('a baseline turn completing later creates one event and removes its one-shot watch', async () => {

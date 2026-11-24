@@ -81,6 +81,11 @@ test('a completed baseline does not create an event or prepare audio', async () 
   assert.equal(h.alarms.active, true);
   assert.equal(preparationCalls, 0);
   assert.ok(CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY in h.storage.values);
+
+  h.advance(120_000);
+  await h.monitor.refreshAlarm();
+  assert.equal((await h.monitor.listEvents()).length, 0);
+  assert.equal((await h.monitor.list()).length, 1);
 });
 
 test('an actively observed baseline turn and a later new terminal turn notify once', async () => {
@@ -237,7 +242,7 @@ test('live terminal turns complete when current execution is specifically unconf
       turnId: null, state: 'unknown', evidence: 'inferred', reason: 'execution_unconfirmed',
       observedAt: null, needsAttention: false,
     }, 'live', terminal));
-    h.advance(30_000);
+    h.advance(120_000);
     await h.monitor.refreshAlarm();
     assert.equal((await h.monitor.listEvents()).length, 1);
     assert.equal((await h.monitor.listEvents())[0]?.status, terminal);
@@ -400,7 +405,7 @@ test('new turns ending as failed or interrupted after a confirmed empty baseline
   }
 });
 
-test('inferred, unknown, not_loaded, estimated, live-next-turn, authentication failure, and gaps never create a guessed event', async () => {
+test('inferred, unknown, not_loaded, estimated, and live-next-turn evidence never create a guessed event', async () => {
   const uncertain: CodexBridgeThreadStatus[] = [
     status('turn-a', 'completed', null, 'inferred'),
     status('turn-a', 'completed', null, 'live', 'unknown'),
@@ -415,25 +420,8 @@ test('inferred, unknown, not_loaded, estimated, live-next-turn, authentication f
     h.advance(30_000);
     await h.monitor.refreshAlarm();
     assert.equal((await h.monitor.listEvents()).length, 0);
+    assert.equal((await h.monitor.list()).length, 1);
   }
-  const failedPoll = harness(status('turn-a', 'in_progress'));
-  await failedPoll.monitor.startWatch('target-1', 'thread-1');
-  failedPoll.setFailure(Object.assign(new Error('auth'), { code: 'authentication-required' }));
-  failedPoll.advance(30_000);
-  await failedPoll.monitor.refreshAlarm();
-  failedPoll.setStatus(status('turn-a', 'completed'));
-  failedPoll.setFailure(null);
-  failedPoll.advance(30_000);
-  await failedPoll.monitor.refreshAlarm();
-  assert.equal((await failedPoll.monitor.listEvents()).length, 0);
-
-  const gap = harness(status('turn-a', 'in_progress'));
-  await gap.monitor.startWatch('target-1', 'thread-1');
-  gap.setStatus(status('turn-a', 'completed'));
-  gap.advance(120_000);
-  await gap.monitor.refreshAlarm();
-  assert.equal((await gap.monitor.listEvents()).length, 0);
-  assert.equal((await gap.monitor.list()).length, 1);
 });
 
 test('unwatch during a delayed status request ignores the old response and its event', async () => {

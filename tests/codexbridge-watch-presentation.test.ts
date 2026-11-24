@@ -8,6 +8,7 @@ import {
   filterOwnedWatchData,
   finalAnswerLabel,
   watchListFailureLabel,
+  watchTurnStateLabel,
 } from '../src/content/codexbridge-watch-presentation.ts';
 
 function item(ownerConversationId: string): CodexBridgeWatchSnapshot {
@@ -48,4 +49,20 @@ test('B一覧の失敗理由をtimeout・送信元・保存領域・不正応答
   assert.match(watchListFailureLabel('sender-unverified'), /送信元.*SPA/);
   assert.match(watchListFailureLabel('storage-error'), /保存領域.*削除していません/);
   assert.match(watchListFailureLabel('invalid-response'), /応答が空または不正.*送信元検証/);
+});
+
+test('terminal valueの保留理由とgapを同時に表示する', () => {
+  const snapshot: CodexBridgeWatchSnapshot = {
+    watchId: 'watch', connectionId: 'connection-A', targetId: 'target-A', threadId: 'thread-A', enabled: true,
+    baselineCaptured: true, baselineTurnKind: 'turn', baselineTurnId: 'turn-a', baselineTurnStatus: 'in_progress',
+    lastObservedTurnId: 'turn-b', statusState: 'completed', lastTurnStatus: 'completed', lastTurnEvidence: 'live',
+    currentExecutionState: 'unknown', currentExecutionEvidence: 'inferred', currentExecutionReason: 'other_reason',
+    currentExecutionTurnId: null, terminalHoldReason: 'execution-evidence-unconfirmed', needsAttention: false,
+    turnChange: 'gap', observedAt: null, lastSuccessAt: null, fetchOutcome: 'ok', nextPollAt: 0, failureCount: 0,
+  };
+
+  const label = watchTurnStateLabel(snapshot, true);
+  assert.match(label, /完了状態を観測しました/);
+  assert.match(label, /current_executionの証拠を確認できない/);
+  assert.match(label, /観測gapあり/);
 });

@@ -3,7 +3,6 @@ import test from 'node:test';
 import {
   CODEX_BRIDGE_THREAD_MONITOR_ALARM,
   CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY,
-  deriveCodexBridgeWatchTurnState,
 } from '../src/shared/codexbridge-thread-monitor-protocol.ts';
 import { CodexBridgeThreadMonitor } from '../src/background/thread-monitor.ts';
 import { watchTurnStateLabel } from '../src/content/codexbridge-watch-presentation.ts';
@@ -45,7 +44,7 @@ function status(terminal = false): CodexBridgeThreadStatus {
   };
 }
 
-test('failed status fetch preserves the watch and labels the live terminal state as notification hold', async () => {
+test('a confirmed same-turn terminal state recovers after a failed status fetch', async () => {
   const storage = new MemoryStorage();
   const alarms = new MemoryAlarms();
   let now = Date.parse('2026-11-23T05:30:00.000Z');
@@ -69,49 +68,106 @@ test('failed status fetch preserves the watch and labels the live terminal state
   now += 30_000;
   await monitor.refreshAlarm();
 
-  let [item] = await monitor.list();
-  assert.equal((await monitor.listEvents()).length, 0);
-  assert.equal(item?.fetchOutcome, 'ok');
-  assert.equal(item?.turnChange, 'same');
-  assert.equal(Date.parse(item!.lastSuccessAt!) - Date.parse(failedSnapshot.lastSuccessAt!), 60_000);
-  assert.equal(deriveCodexBridgeWatchTurnState(item!), 'completed');
-  assert.equal(watchTurnStateLabel(item!, true), '完了状態を観測しました。通知判定保留（前回の状態取得に失敗）。監視継続中。');
-
-  now += 30_000;
-  await monitor.refreshAlarm();
-  [item] = await monitor.list();
-  assert.equal((await monitor.listEvents()).length, 0);
-  assert.equal((await monitor.list()).length, 1);
-  assert.equal(item?.turnChange, 'same');
-  assert.equal(item?.terminalHoldReason, 'previous-fetch-failed');
-  assert.equal(alarms.active, true);
+  assert.equal((await monitor.listEvents()).length, 1);
+  assert.equal((await monitor.listEvents())[0]?.turnId, 'turn-a');
+  assert.deepEqual(await monitor.list(), []);
+  assert.equal(alarms.active, false);
   const saved = storage.values[CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY] as { items: unknown[] };
-  assert.equal(saved.items.length, 1);
+  assert.equal(saved.items.length, 0);
 });
 
-test('terminal status after a 90-second observation gap stays held on repeated polls', async () => {
+test('a saved legacy watch resumes the confirmed same-turn completion after a 90-second gap', async () => {
+  const storage = new MemoryStorage();
+  const alarms = new MemoryAlarms();
+  const now = Date.parse('2026-11-24T00:03:00.000Z');
+  const oldObservation = '2026-11-24T00:00:00.000Z';
+  storage.values[CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY] = {
+    version: 1,
+    items: [{
+      watchId: 'watch-persisted', connectionId: 'connection-a', targetId: 'target-a', threadId: 'thread-a', enabled: true,
+      baselineCaptured: true, baselineTurnId: 'turn-a', baselineTurnStatus: 'in_progress',
+      lastObservedTurnId: 'turn-a', statusState: 'completed', lastTurnStatus: 'completed', lastTurnEvidence: 'live',
+      currentExecutionState: 'unknown', currentExecutionEvidence: 'inferred',
+      currentExecutionReason: 'execution_unconfirmed', currentExecutionTurnId: null,
+      needsAttention: false, turnChange: 'same', observedAt: oldObservation, lastSuccessAt: oldObservation,
+      fetchOutcome: 'ok', nextPollAt: now - 1, failureCount: 0,
+    }],
+  };
+  alarms.active = true;
+  let notificationCalls = 0;
+  let reflectedEvents = 0;
+  let statusReads = 0;
+  const monitor = new CodexBridgeThreadMonitor(storage, alarms, async () => ({
+    connectionId: 'connection-a',
+    async readStatus() { statusReads += 1; return status(true); },
+  }), {
+    now: () => now,
+    createWatchId: () => 'unused-watch',
+    createEventId: () => 'event-recovered',
+    notification: { async prepare() {
+      return { state: 'ready', async play() { notificationCalls += 1; return { ok: true }; } };
+    } },
+    onTerminalEventSaved(event) {
+      reflectedEvents += 1;
+      assert.equal(event.turnId, 'turn-a');
+    },
+  });
+
+  await monitor.refreshAlarm();
+  const events = await monitor.listEvents();
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.eventId, 'event-recovered');
+  assert.equal(events[0]?.turnId, 'turn-a');
+  assert.deepEqual(await monitor.list(), []);
+  assert.equal(alarms.active, false);
+  const upgraded = storage.values[CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY] as { version: number; items: unknown[]; events: unknown[] };
+  assert.equal(upgraded.version, 2);
+  assert.equal(upgraded.items.length, 0);
+  assert.equal(upgraded.events.length, 1);
+
+  // Repeated refreshes cannot re-run a removed watch or replay its event.
+  await monitor.refreshAlarm();
+  assert.equal(statusReads, 1);
+  assert.equal(notificationCalls, 1);
+  assert.equal(reflectedEvents, 1);
+});
+
+test('unconfirmed execution remains held and a later clear poll recovers the same turn', async () => {
   const storage = new MemoryStorage();
   const alarms = new MemoryAlarms();
   let now = Date.parse('2026-11-23T05:30:00.000Z');
   let current = status();
   const monitor = new CodexBridgeThreadMonitor(storage, alarms, async () => ({
     connectionId: 'connection-a', async readStatus() { return current; },
-  }), { now: () => now, createWatchId: () => 'watch-gap', createEventId: () => 'event-gap' });
+  }), { now: () => now, createWatchId: () => 'watch-evidence', createEventId: () => 'event-evidence' });
 
   await monitor.startWatch('target-a', 'thread-a');
-  current = status(true);
+  current = {
+    ...status(true),
+    currentExecution: {
+      turnId: null, state: 'unknown', evidence: 'inferred', reason: 'other_reason',
+      observedAt: null, needsAttention: false,
+    },
+  };
   now += 120_000;
   await monitor.refreshAlarm();
   let [item] = await monitor.list();
-  assert.equal(item?.terminalHoldReason, 'observation-gap');
-  assert.equal(item?.turnChange, 'same');
-  assert.match(watchTurnStateLabel(item!, true), /成功観測の間隔が上限以上/);
   assert.equal((await monitor.listEvents()).length, 0);
+  assert.equal(item?.terminalHoldReason, 'execution-evidence-unconfirmed');
+  assert.equal(item?.baselineTurnStatus, 'in_progress');
+  assert.equal(item?.lastObservedTurnId, 'turn-a');
+  assert.match(watchTurnStateLabel(item!, true), /current_executionの証拠を確認できない/);
 
   now += 30_000;
   await monitor.refreshAlarm();
   [item] = await monitor.list();
-  assert.equal(item?.terminalHoldReason, 'observation-gap');
-  assert.equal((await monitor.list()).length, 1);
   assert.equal((await monitor.listEvents()).length, 0);
+  assert.equal(item?.terminalHoldReason, 'execution-evidence-unconfirmed');
+
+  current = status(true);
+  now += 30_000;
+  await monitor.refreshAlarm();
+  assert.equal((await monitor.listEvents()).length, 1);
+  assert.deepEqual(await monitor.list(), []);
+  assert.equal(alarms.active, false);
 });

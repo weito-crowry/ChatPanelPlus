@@ -51,7 +51,15 @@ export function watchTurnStateLabel(snapshot: CodexBridgeWatchSnapshot, sameConn
     const status = state === 'completed' ? '完了' : state === 'failed' ? '失敗' : '中断';
     return `${status}状態を観測しました。通知判定保留（${terminalHoldReasonLabel(snapshot.terminalHoldReason)}）。監視継続中。`;
   }
-  if (state === 'gap') return '観測gapあり（中間turn不明）';
+  if (state === 'gap') {
+    const terminalStatus = snapshot.lastTurnStatus;
+    if ((terminalStatus === 'completed' || terminalStatus === 'failed' || terminalStatus === 'interrupted')
+      && snapshot.terminalHoldReason) {
+      const status = terminalStatus === 'completed' ? '完了' : terminalStatus === 'failed' ? '失敗' : '中断';
+      return `${status}状態を観測しました。通知判定保留（${terminalHoldReasonLabel(snapshot.terminalHoldReason)}）。監視継続中。観測gapあり（中間turn不明）。`;
+    }
+    return '観測gapあり（中間turn不明）';
+  }
   return '不明';
 }
 

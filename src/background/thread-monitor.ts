@@ -338,7 +338,7 @@ export class CodexBridgeThreadMonitor {
         nextPollAt: now + (interval ?? (cadence === 'foreground' || this.foregroundUntil > now ? CODEX_BRIDGE_THREAD_MONITOR_FOREGROUND_MS : 30_000)),
         failureCount: 0, terminalHoldReason: null,
       };
-      const terminalStatus = detectCodexBridgeTerminalStatus(previous, success, this.gapThresholdMs);
+      const terminalStatus = detectCodexBridgeTerminalStatus(previous, success);
       const holdReason = terminalStatus ? null : codexBridgeTerminalHoldReason(previous, success, this.gapThresholdMs);
       const next = [...items];
       next[index] = { ...success, terminalHoldReason: holdReason };
