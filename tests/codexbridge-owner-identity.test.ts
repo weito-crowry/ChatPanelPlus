@@ -119,5 +119,5 @@ test('owner確認失敗と同一会話別tab競合を区別し、保持データ
   assert.equal(label!('owner-tab-unavailable'),
     'この会話の自動登録は別タブが所有中か、ownerタブを確認できません。設定と監視・通知履歴は保持されています。');
   assert.equal(label!('auto-owner-conflict'),
-    '同じ会話の別タブが自動登録を所有中です。旧タブの確認が取れるまで設定を引き継ぎません。');
+    '同じ会話の別タブが自動登録を所有中です。このtabは処理しません。');
 });

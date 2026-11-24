@@ -11,37 +11,29 @@ import {
 import type { CodexBridgeTarget, CodexBridgeThread } from '../shared/codexbridge-mcp-protocol.ts';
 import { isConversationId } from '../shared/conversation-route.ts';
 import type { LocalStorageLike } from './thread-monitor-storage.ts';
-import { isAutoWatchFailure, MAX_ENTRIES, MAX_SKIPS_PER_ENTRY, readAutoWatchState,
+import { MAX_ENTRIES, MAX_SKIPS_PER_ENTRY, readAutoWatchState,
   type AutoEntry, type AutoState } from './thread-monitor-auto-registration-state.ts';
 import { CodexBridgeAutoWatchCandidates, type CodexBridgeAutoWatchCandidateLookupResult }
   from './thread-monitor-auto-registration-candidates.ts';
-import { currentExecution, isLiveCandidate, statusFromThread, threadIdsMatch }
+import { currentExecution, failureFor, isLiveCandidate, isRecord, statusFromThread, threadIdsMatch }
   from './thread-monitor-auto-registration-utils.ts';
+import { CodexBridgeAutoRegistrationQueue } from './thread-monitor-auto-registration-queue.ts';
+import type { CodexBridgeOwnerIdentity } from './thread-monitor-owner-lease.ts';
+import type { CodexBridgeSessionOwnerLeases } from './thread-monitor-owner-lease.ts';
+import { CodexBridgeAutoRegistrationOwner, claimOwnerForIdentity, hasOwnerRecords, readOwnerMute,
+  rebindAutoEntryState, type OwnerClaimResult, type OwnerMuteResult, type RuntimeOwnerClaim }
+  from './thread-monitor-auto-registration-owner.ts';
 import type { CodexBridgeMonitorAccess, CodexBridgeThreadMonitor } from './thread-monitor.ts';
 
 type AlarmLike = Readonly<{ clear(name: string): Promise<boolean> }>;
 type MonitorLike = Pick<CodexBridgeThreadMonitor, 'list' | 'read' | 'startWatch' | 'stopWatch' | 'updateOwnerMute'
-  | 'scheduleTargetRequest'>;
-type OwnerMuteResult = { readonly ok: true; readonly muted: boolean; readonly revision: number } | { readonly ok: false };
+  | 'scheduleTargetRequest'> & Partial<Pick<CodexBridgeThreadMonitor, 'listEvents' | 'rebindOwner'>>;
 type Result = Readonly<{ ok: true; status: CodexBridgeAutoWatchStatus }>
   | Readonly<{ ok: false; reason: CodexBridgeAutoWatchFailure | 'connection-unavailable' | 'auto-owner-conflict' }>;
 
 const MAX_COMPLETION_DEDUPLICATION = 256;
 const MAX_RUNNING_THREADS = 1_000;
 const MAX_THREAD_ID_LENGTH = 512;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function errorCode(error: unknown): string | null {
-  return isRecord(error) && typeof error.code === 'string' ? error.code : null;
-}
-
-function failureFor(error: unknown): CodexBridgeAutoWatchFailure {
-  const code = errorCode(error);
-  return isAutoWatchFailure(code) ? code : 'unknown';
-}
 
 export class CodexBridgeAutoThreadRegistration {
   private readonly storage: LocalStorageLike;
@@ -51,9 +43,10 @@ export class CodexBridgeAutoThreadRegistration {
   private readonly loadOwnerMute: (tabId: number, conversationId: string) => Promise<OwnerMuteResult>;
   private readonly ownerTabMatches: (tabId: number, conversationId: string) => Promise<boolean>;
   private readonly ownerTabCanBeRebound: (tabId: number, conversationId: string) => Promise<boolean>;
+  private readonly ownerLeases?: Pick<CodexBridgeSessionOwnerLeases, 'claim' | 'release'>;
+  private readonly runtimeOwner?: CodexBridgeAutoRegistrationOwner;
   private readonly candidates: CodexBridgeAutoWatchCandidates;
-  private storageTail: Promise<void> = Promise.resolve();
-  private readonly targetTails = new Map<string, Promise<void>>();
+  private readonly queues = new CodexBridgeAutoRegistrationQueue();
   private readonly completionFlights = new Set<string>();
   private readonly recentCompletions = new Set<string>();
 
@@ -65,32 +58,61 @@ export class CodexBridgeAutoThreadRegistration {
     loadOwnerMute: (tabId: number, conversationId: string) => Promise<OwnerMuteResult>,
     ownerTabMatches: (tabId: number, conversationId: string) => Promise<boolean>,
     ownerTabCanBeRebound: (tabId: number, conversationId: string) => Promise<boolean> = async () => false,
+    ownerLeases?: Pick<CodexBridgeSessionOwnerLeases, 'claim' | 'release'>,
+    onOwnerClaim?: (identity: CodexBridgeOwnerIdentity, tabId: number) => Promise<void>,
   ) {
     this.storage = storage; this.alarms = alarms; this.monitor = monitor; this.resolveAccess = resolveAccess;
     this.loadOwnerMute = loadOwnerMute; this.ownerTabMatches = ownerTabMatches; this.ownerTabCanBeRebound = ownerTabCanBeRebound;
-    this.candidates = new CodexBridgeAutoWatchCandidates(storage, monitor, resolveAccess, ownerTabMatches);
+    this.ownerLeases = ownerLeases;
+    if (ownerLeases) this.runtimeOwner = new CodexBridgeAutoRegistrationOwner({
+      leases: ownerLeases, loadMute: loadOwnerMute,
+      persist: async (identity, binding) => await this.mutate((state) => rebindAutoEntryState(state, identity, binding)) !== null,
+      rebind: (identity, binding) => this.monitor.rebindOwner?.(identity, binding) ?? Promise.resolve(),
+      onClaim: onOwnerClaim,
+    });
+    this.candidates = new CodexBridgeAutoWatchCandidates(storage, monitor, resolveAccess,
+      ownerLeases ? async () => true : ownerTabMatches);
   }
 
   async getStatus(targetId: string, conversationId: string, ownerTabId: number): Promise<CodexBridgeAutoWatchStatus> {
     let access: CodexBridgeMonitorAccess | null = null;
     try { access = await this.resolveAccess(); } catch { /* Report the current connection state below. */ }
     const connectionId = access?.connectionId ?? null;
-    const state = await this.readState();
+    let state = await this.readState();
     if (!state) return this.emptyStatus(targetId, connectionId, conversationId, 'error', 'storage-error');
     if (!connectionId) return this.emptyStatus(targetId, null, conversationId, 'error', access?.failure ?? 'connection-unavailable');
-    const selected = state.entries.find((item) => item.connectionId === connectionId && item.targetId === targetId
+    let selected = state.entries.find((item) => item.connectionId === connectionId && item.targetId === targetId
       && item.ownerConversationId === conversationId) ?? null;
+    const items = await this.monitor.list();
+    const events = await this.monitor.listEvents?.() ?? [];
+    const hasWork = selected?.enabled || hasOwnerRecords({ connectionId, targetId, conversationId }, [...items, ...events]);
+    const ownerState = this.ownerLeases && hasWork
+      ? await this.claimRuntimeOwner({ connectionId, targetId, conversationId }, ownerTabId) : null;
+    if (ownerState === 'storage-error') return this.emptyStatus(targetId, connectionId, conversationId, 'error', 'storage-error');
+    if (ownerState) {
+      state = await this.readState();
+      if (!state) return this.emptyStatus(targetId, connectionId, conversationId, 'error', 'storage-error');
+      selected = state.entries.find((item) => item.connectionId === connectionId && item.targetId === targetId
+        && item.ownerConversationId === conversationId) ?? null;
+    }
+    const watchingThreadCount = items.filter((item) => item.connectionId === connectionId && item.targetId === targetId
+      && item.ownerConversationId === conversationId).length;
     if (!selected) {
       const staleEnabled = state.entries.some((item) => item.targetId === targetId && item.enabled
         && item.ownerConversationId === conversationId && item.connectionId !== connectionId);
-      return this.emptyStatus(targetId, connectionId, conversationId, staleEnabled ? 'error' : 'off',
-        staleEnabled ? 'connection-changed' : null);
+      if (staleEnabled) return this.emptyStatus(targetId, connectionId, conversationId, 'error', 'connection-changed');
+      if (ownerState === 'other-tab') return this.emptyStatus(targetId, connectionId, conversationId, 'conflict', 'auto-owner-conflict');
+      if (ownerState === 'recovering') return this.emptyStatus(targetId, connectionId, conversationId, 'recovering', 'owner-recovering');
+      return this.emptyStatus(targetId, connectionId, conversationId, 'off', null);
     }
-    if (selected.enabled && (selected.ownerTabId !== ownerTabId
+    if (ownerState === 'other-tab') return { targetId, connectionId: selected.connectionId, enabled: selected.enabled,
+      ownerConversationId: null, state: 'conflict', failure: 'auto-owner-conflict', watchingThreadCount };
+    if (ownerState === 'recovering') return { targetId, connectionId: selected.connectionId, enabled: selected.enabled,
+      ownerConversationId: conversationId, state: 'recovering', failure: 'owner-recovering', watchingThreadCount };
+    if (!this.ownerLeases && selected.enabled && (selected.ownerTabId !== ownerTabId
       || !await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false))) {
       return this.emptyStatus(targetId, selected.connectionId, conversationId, 'error', 'owner-tab-unavailable');
     }
-    const items = await this.monitor.list();
     return {
       targetId,
       connectionId: selected.connectionId,
@@ -98,9 +120,21 @@ export class CodexBridgeAutoThreadRegistration {
       ownerConversationId: selected.ownerConversationId,
       state: selected.failure && selected.failure !== 'owner-tab-unavailable' ? 'error' : selected.enabled ? 'ready' : 'off',
       failure: selected.failure === 'owner-tab-unavailable' ? null : selected.failure,
-      watchingThreadCount: items.filter((item) => item.connectionId === selected.connectionId && item.targetId === targetId
-        && item.ownerConversationId === conversationId).length,
+      watchingThreadCount,
     };
+  }
+
+  async claimOwner(targetId: string, conversationId: string, ownerTabId: number): Promise<OwnerClaimResult> {
+    if (!this.ownerLeases) return 'current';
+    return claimOwnerForIdentity(targetId, conversationId, ownerTabId,
+      async () => (await this.resolveAccess()).connectionId ?? null,
+      async (identity) => {
+        const state = await this.readState();
+        if (!state) return null;
+        const [items, events] = await Promise.all([this.monitor.list(), this.monitor.listEvents?.() ?? Promise.resolve([])]);
+        return state.entries.some((entry) => entry.connectionId === identity.connectionId && entry.targetId === targetId
+          && entry.ownerConversationId === conversationId && entry.enabled) || hasOwnerRecords(identity, [...items, ...events]);
+      }, this.ownerLeases, (identity, tabId) => this.claimRuntimeOwner(identity, tabId));
   }
 
   async setEnabled(targetId: string, ownerTabId: number, conversationId: string, enabled: boolean): Promise<Result> {
@@ -112,7 +146,7 @@ export class CodexBridgeAutoThreadRegistration {
     try { initialAccess = await this.resolveAccess(); } catch (error) { return { ok: false, reason: failureFor(error) }; }
     if (!initialAccess.connectionId) return { ok: false, reason: initialAccess.failure ?? 'connection-unavailable' };
     const expectedConnectionId = initialAccess.connectionId;
-    return this.withTarget(this.entryKey(expectedConnectionId, targetId, conversationId),
+    return this.queues.withTarget(this.entryKey(expectedConnectionId, targetId, conversationId),
       () => this.setEnabledForConnection(targetId, ownerTabId, conversationId, expectedConnectionId, enabled));
   }
 
@@ -126,13 +160,19 @@ export class CodexBridgeAutoThreadRegistration {
       const before = await this.readState();
       if (!before) return { ok: false, reason: 'storage-error' };
       const saved = await this.mutate((state) => ({ ...state, entries: state.entries.map((item) =>
-        item.connectionId === expectedConnectionId && item.targetId === targetId && item.ownerTabId === ownerTabId
+        item.connectionId === expectedConnectionId && item.targetId === targetId
           && item.ownerConversationId === conversationId ? { ...item, enabled: false, failure: null,
             liveThreadCount: null, lastScannedAt: null, nextScanAt: 0, failureCount: 0 } : item) }));
       if (saved === null) return { ok: false, reason: 'storage-error' };
       return { ok: true, status: await this.getStatus(targetId, conversationId, ownerTabId) };
     }
-    if (!await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false)) {
+    if (this.ownerLeases) {
+      const claim = await this.claimOwner(targetId, conversationId, ownerTabId);
+      if (claim === 'storage-error') return { ok: false, reason: 'storage-error' };
+      if (claim === 'other-tab') return { ok: false, reason: 'auto-owner-conflict' };
+      if (claim === 'recovering') return { ok: false, reason: 'owner-recovering' };
+      if (claim === 'connection-unavailable') return { ok: false, reason: 'connection-unavailable' };
+    } else if (!await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false)) {
       return { ok: false, reason: 'owner-tab-unavailable' };
     }
     const configured = await this.readState();
@@ -153,11 +193,12 @@ export class CodexBridgeAutoThreadRegistration {
     let latestAccess: CodexBridgeMonitorAccess;
     try { latestAccess = await this.resolveAccess(); } catch (error) { return { ok: false, reason: failureFor(error) }; }
     if (latestAccess.connectionId !== expectedConnectionId) return { ok: false, reason: 'connection-changed' };
-    if (!await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false)) {
+    if (!this.ownerLeases && !await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false)) {
       return { ok: false, reason: 'owner-tab-unavailable' };
     }
-    const ownerMute = await this.readOwnerMute(ownerTabId, conversationId);
-    if (staleOwnerTabId !== null && !await this.ownerTabCanBeRebound(staleOwnerTabId, conversationId).catch(() => false)) return { ok: false, reason: 'auto-owner-conflict' };
+    const ownerMute = await readOwnerMute(this.loadOwnerMute, ownerTabId, conversationId);
+    if (!this.ownerLeases && staleOwnerTabId !== null
+      && !await this.ownerTabCanBeRebound(staleOwnerTabId, conversationId).catch(() => false)) return { ok: false, reason: 'auto-owner-conflict' };
     const stored = await this.mutate((current) => {
       const competing = current.entries.find((item) => item.connectionId === expectedConnectionId && item.targetId === targetId
         && item.ownerConversationId === conversationId && item.enabled && item.ownerTabId !== ownerTabId);
@@ -199,7 +240,7 @@ export class CodexBridgeAutoThreadRegistration {
     if (this.recentCompletions.has(dedupeKey) || this.completionFlights.has(dedupeKey)) return 0;
     this.completionFlights.add(dedupeKey);
     try {
-      return await this.withTarget(this.entryKey(candidateConnectionId, targetId, conversationId),
+      return await this.queues.withTarget(this.entryKey(candidateConnectionId, targetId, conversationId),
         () => this.registerCompletedAnswerOnce(targetId, candidateConnectionId, ownerTabId, conversationId, threadIds));
     } finally {
       this.rememberCompletion(dedupeKey);
@@ -211,13 +252,22 @@ export class CodexBridgeAutoThreadRegistration {
     try { await this.alarms.clear(CODEX_BRIDGE_AUTO_WATCH_ALARM); } catch { /* Retire legacy discovery alarms only. */ }
   }
 
-  getRunningCandidates(targetId: string, ownerTabId: number, conversationId: string, turnKey: string,
+  async getRunningCandidates(targetId: string, ownerTabId: number, conversationId: string, turnKey: string,
     assistantMessageId: string): Promise<CodexBridgeAutoWatchCandidateLookupResult> {
+    if (this.ownerLeases) {
+      let access: CodexBridgeMonitorAccess;
+      try { access = await this.resolveAccess(); } catch (error) { return { ok: false, reason: failureFor(error) }; }
+      if (!access.connectionId) return { ok: false, reason: access.failure ?? 'connection-unavailable' };
+      const claim = await this.claimRuntimeOwner({ connectionId: access.connectionId, targetId, conversationId }, ownerTabId);
+      if (claim === 'storage-error') return { ok: false, reason: 'storage-error' };
+      if (claim === 'other-tab') return { ok: false, reason: 'auto-owner-conflict' };
+      if (claim === 'recovering') return { ok: false, reason: 'owner-recovering' };
+    }
     return this.candidates.get(targetId, ownerTabId, conversationId, turnKey, assistantMessageId);
   }
 
   async stopWatch(connectionId: string, targetId: string, threadId: string, ownerConversationId: string): Promise<boolean> {
-    return this.withTarget(this.entryKey(connectionId, targetId, ownerConversationId), async () => {
+    return this.queues.withTarget(this.entryKey(connectionId, targetId, ownerConversationId), async () => {
       const entry = await this.findEntry(connectionId, targetId, ownerConversationId);
       const item = await this.monitor.read(connectionId, targetId, threadId);
       if (entry?.enabled && entry.ownerConversationId === ownerConversationId
@@ -248,6 +298,10 @@ export class CodexBridgeAutoThreadRegistration {
     conversationId: string,
     candidateThreadIds: readonly string[],
   ): Promise<number> {
+    if (this.ownerLeases) {
+      const claim = await this.claimRuntimeOwner({ connectionId: candidateConnectionId, targetId, conversationId }, ownerTabId);
+      if (claim !== 'current') return 0;
+    }
     const state = await this.readState();
     if (!state) return 0;
     const hasEnabledOwner = state.entries.some((entry) => entry.enabled && entry.connectionId === candidateConnectionId
@@ -273,7 +327,7 @@ export class CodexBridgeAutoThreadRegistration {
       && candidate.targetId === targetId && candidate.ownerTabId === ownerTabId
       && candidate.ownerConversationId === conversationId);
     if (!entry) return 0;
-    if (!await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false)) {
+    if (!this.ownerLeases && !await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false)) {
       await this.recordFailureForEntry(entry, 'owner-tab-unavailable');
       return 0;
     }
@@ -307,7 +361,7 @@ export class CodexBridgeAutoThreadRegistration {
       && candidate.targetId === targetId && candidate.ownerTabId === ownerTabId
       && candidate.ownerConversationId === conversationId);
     if (!entry) return 0;
-    if (!await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false)) {
+    if (!this.ownerLeases && !await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false)) {
       await this.recordFailureForEntry(entry, 'owner-tab-unavailable');
       return 0;
     }
@@ -331,7 +385,7 @@ export class CodexBridgeAutoThreadRegistration {
         && candidate.targetId === targetId && candidate.ownerTabId === ownerTabId
         && candidate.ownerConversationId === conversationId ? { ...candidate, skippedExecutions: remainingSkips } : candidate) }));
     }
-    const ownerMute = await this.readOwnerMute(ownerTabId, conversationId);
+    const ownerMute = await readOwnerMute(this.loadOwnerMute, ownerTabId, conversationId);
     if (ownerMute.muted !== entry.ownerMuted || ownerMute.revision !== entry.ownerMuteRevision) {
       entry = { ...entry, ownerMuted: ownerMute.muted, ownerMuteRevision: ownerMute.revision };
       await this.mutate((current) => ({ ...current, entries: current.entries.map((candidate) => candidate.connectionId === entry!.connectionId
@@ -351,7 +405,7 @@ export class CodexBridgeAutoThreadRegistration {
       const turnId = liveByThread.get(thread.id) ?? null;
       if (remainingSkips.some((skip) => skip.threadId === thread.id
         && (skip.turnId === null || skip.turnId === turnId))) continue;
-      if (!await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false)) {
+      if (!this.ownerLeases && !await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false)) {
         failure = 'owner-tab-unavailable';
         break;
       }
@@ -361,7 +415,7 @@ export class CodexBridgeAutoThreadRegistration {
         else if (!current.ownerConversationId) failure = 'ownerless-watch';
         continue;
       }
-      if (!await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false)) {
+      if (!this.ownerLeases && !await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false)) {
         failure = 'owner-tab-unavailable';
         break;
       }
@@ -404,14 +458,9 @@ export class CodexBridgeAutoThreadRegistration {
       } : candidate) }));
   }
 
-  private async readOwnerMute(tabId: number, conversationId: string): Promise<{ muted: boolean | null; revision: number }> {
-    try {
-      const value = await this.loadOwnerMute(tabId, conversationId);
-      return value.ok && typeof value.muted === 'boolean' && Number.isSafeInteger(value.revision) && value.revision >= 0
-        ? { muted: value.muted, revision: value.revision } : { muted: null, revision: 0 };
-    } catch { return { muted: null, revision: 0 }; }
+  private claimRuntimeOwner(identity: CodexBridgeOwnerIdentity, ownerTabId: number): Promise<RuntimeOwnerClaim> {
+    return this.runtimeOwner!.claim(identity, ownerTabId);
   }
-
   private emptyStatus(targetId: string, connectionId: string | null, conversationId: string,
     state: CodexBridgeAutoWatchStatus['state'], failure: CodexBridgeAutoWatchFailure | null): CodexBridgeAutoWatchStatus {
     return { targetId, connectionId, enabled: false, ownerConversationId: state === 'conflict' ? null : conversationId,
@@ -421,20 +470,20 @@ export class CodexBridgeAutoThreadRegistration {
   private entryKey(connectionId: string, targetId: string, conversationId: string): string {
     return `${connectionId}\u0000${targetId}\u0000${conversationId}`;
   }
+
   private findEntry(connectionId: string, targetId: string, conversationId: string): Promise<AutoEntry | null> {
     return this.readState().then((state) => state?.entries.find((entry) => entry.connectionId === connectionId
       && entry.targetId === targetId && entry.ownerConversationId === conversationId) ?? null);
   }
-
   private readState(): Promise<AutoState | null> {
-    return this.withStorage(async () => {
+    return this.queues.withStorage(async () => {
       try { return readAutoWatchState((await this.storage.get([CODEX_BRIDGE_AUTO_WATCH_STORAGE_KEY]))[CODEX_BRIDGE_AUTO_WATCH_STORAGE_KEY]); }
       catch { return null; }
     });
   }
 
   private mutate<T>(operation: (state: AutoState) => AutoState | { state: AutoState; value: T }): Promise<T | null> {
-    return this.withStorage(async () => {
+    return this.queues.withStorage(async () => {
       try {
         const state = readAutoWatchState((await this.storage.get([CODEX_BRIDGE_AUTO_WATCH_STORAGE_KEY]))[CODEX_BRIDGE_AUTO_WATCH_STORAGE_KEY]);
         if (!state) return null;
@@ -447,20 +496,5 @@ export class CodexBridgeAutoThreadRegistration {
         return undefined as T;
       } catch { return null; }
     });
-  }
-
-  private withStorage<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.storageTail.then(operation, operation);
-    this.storageTail = result.then(() => undefined, () => undefined);
-    return result;
-  }
-
-  private withTarget<T>(key: string, operation: () => Promise<T>): Promise<T> {
-    const previous = this.targetTails.get(key) ?? Promise.resolve();
-    const result = previous.then(operation, operation);
-    const tail = result.then(() => undefined, () => undefined);
-    this.targetTails.set(key, tail);
-    void tail.then(() => { if (this.targetTails.get(key) === tail) this.targetTails.delete(key); });
-    return result;
   }
 }

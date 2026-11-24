@@ -58,6 +58,7 @@ type MonitorOptions = Readonly<{
   createEventId?: () => string;
   notification?: CodexBridgeNotificationHandler;
   onTerminalEventSaved?: CodexBridgeTerminalEventSavedHandler;
+  storage?: CodexBridgeThreadMonitorStorage;
 }>;
 
 const MAX_POLL_FAILURES = 8;
@@ -89,7 +90,7 @@ export class CodexBridgeThreadMonitor {
     resolveAccess: () => Promise<CodexBridgeMonitorAccess>,
     options: MonitorOptions = {},
   ) {
-    this.storage = new CodexBridgeThreadMonitorStorage(storage);
+    this.storage = options.storage ?? new CodexBridgeThreadMonitorStorage(storage);
     this.alarms = alarms;
     this.resolveAccess = resolveAccess;
     this.now = options.now ?? Date.now;
@@ -114,6 +115,11 @@ export class CodexBridgeThreadMonitor {
   async readEvent(eventId: string, ownerConversationId?: string): Promise<CodexBridgeTerminalEvent | null> {
     const event = await this.storage.readEvent(eventId);
     return ownerConversationId === undefined || event?.ownerConversationId === ownerConversationId ? event : null;
+  }
+
+  rebindOwner(identity: Readonly<{ connectionId: string; targetId: string; conversationId: string }>,
+    owner: CodexBridgeWatchOwnerMute): Promise<void> {
+    return this.storage.rebindOwner(identity, owner);
   }
 
   async read(connectionId: string, targetId: string, threadId: string): Promise<CodexBridgeWatchSnapshot | null> {
@@ -352,6 +358,7 @@ export class CodexBridgeThreadMonitor {
         targetId: success.targetId, threadId: success.threadId, turnId: success.lastObservedTurnId!,
         status: terminalStatus, detectedAt: timestamp(now) ?? new Date(now).toISOString(),
         notificationState: 'pending', notificationReason: null,
+        ownerDeliveryState: success.ownerConversationId ? 'pending' : 'skipped',
         ...(success.ownerTabId !== undefined && success.ownerConversationId !== undefined
           && success.ownerMuted !== undefined && success.ownerMuteRevision !== undefined
           ? {

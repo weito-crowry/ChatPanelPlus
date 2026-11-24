@@ -24,7 +24,7 @@ const AUTO_FAILURES = new Set([
   'endpoint-not-found', 'session-expired', 'http-error', 'protocol-error', 'protocol-version-unsupported',
   'readonly-tool-unavailable', 'readonly-probe-failed', 'running-only-unsupported', 'connection-changed',
   'connection-unavailable', 'target-unavailable', 'owner-conflict', 'auto-owner-conflict', 'ownerless-watch',
-  'watch-limit', 'owner-tab-unavailable', 'storage-error',
+  'watch-limit', 'owner-tab-unavailable', 'owner-recovering', 'storage-error',
 ]);
 
 type AutoWatchDiagnosticStage = Readonly<{
@@ -98,7 +98,7 @@ function parseStatus(value: unknown): CodexBridgeAutoWatchStatus | null {
   if (!isRecord(value) || !isCodexBridgeWatchIdentifier(value.targetId)
     || !(value.connectionId === null || (isCodexBridgeWatchIdentifier(value.connectionId) && value.connectionId.length <= 96))
     || typeof value.enabled !== 'boolean' || !(value.ownerConversationId === null || isConversationId(value.ownerConversationId))
-    || !['off', 'ready', 'error', 'conflict'].includes(String(value.state))
+    || !['off', 'ready', 'error', 'conflict', 'recovering'].includes(String(value.state))
     || !(value.failure === null || (typeof value.failure === 'string' && AUTO_FAILURES.has(value.failure)))
     || !Number.isSafeInteger(value.watchingThreadCount) || (value.watchingThreadCount as number) < 0) return null;
   return value as unknown as CodexBridgeAutoWatchStatus;
@@ -129,7 +129,7 @@ export function CodexBridgeAutoWatchControl({ targetId, targetName, conversation
   const currentStatus = statusIsCurrent ? status : null;
 
   async function refresh(expectedTarget = targetId, expectedConversation = conversationId,
-    token = generation.current): Promise<CodexBridgeAutoWatchStatus | null> {
+    token = generation.current, onRetryable?: () => void): Promise<CodexBridgeAutoWatchStatus | null> {
     if (!expectedTarget || !expectedConversation || conversationIdFromPath(window.location.pathname) !== expectedConversation) return null;
     try {
       const response: unknown = await chrome.runtime.sendMessage({
@@ -139,7 +139,9 @@ export function CodexBridgeAutoWatchControl({ targetId, targetName, conversation
         || conversationIdFromPath(window.location.pathname) !== expectedConversation) return null;
       if (!isRecord(response) || response.ok !== true) {
         setStatus(null);
-        setFailure(isRecord(response) && typeof response.reason === 'string' ? response.reason : 'runtime-unavailable');
+        const reason = isRecord(response) && typeof response.reason === 'string' ? response.reason : 'runtime-unavailable';
+        setFailure(reason);
+        if (reason === 'runtime-unavailable' || reason === 'storage-error') onRetryable?.();
         return null;
       }
       const parsed = parseStatus(response.data);
@@ -147,10 +149,12 @@ export function CodexBridgeAutoWatchControl({ targetId, targetName, conversation
         setStatus(null); setFailure('protocol-error'); return null;
       }
       setStatus(parsed); setFailure(null);
+      if (parsed.failure === 'storage-error') onRetryable?.();
       return parsed;
     } catch {
       if (token === generation.current && identity.current.targetId === expectedTarget
         && identity.current.conversationId === expectedConversation) { setStatus(null); setFailure('runtime-unavailable'); }
+      onRetryable?.();
       return null;
     }
   }
@@ -160,7 +164,16 @@ export function CodexBridgeAutoWatchControl({ targetId, targetName, conversation
     diagnosticRun.current += 1;
     setDiagnostic(null);
     setStatus(null); setFailure(null); setBusy(false);
-    void refresh(targetId, conversationId, token);
+    let retryTimer: number | null = null;
+    let disposed = false;
+    const refreshWithRetry = async () => {
+      let retryableFailure = false;
+      const next = await refresh(targetId, conversationId, token, () => { retryableFailure = true; });
+      if (!disposed && (next?.state === 'recovering' || retryableFailure)) {
+        retryTimer = window.setTimeout(() => { void refreshWithRetry(); }, 1_000);
+      }
+    };
+    void refreshWithRetry();
     const unsubscribeCheck = subscribeCodexBridgeAutoWatchCompletionCheck((check) => {
       if (!conversationId || conversationIdFromPath(window.location.pathname) !== conversationId) return;
       const scope = diagnosticScope.current.version;
@@ -274,10 +287,16 @@ export function CodexBridgeAutoWatchControl({ targetId, targetName, conversation
       })();
     });
     const onStorageChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
-      if (area === 'local' && changes[CODEX_BRIDGE_AUTO_WATCH_STORAGE_KEY]) void refresh(targetId, conversationId, token);
+      if (area === 'local' && changes[CODEX_BRIDGE_AUTO_WATCH_STORAGE_KEY]) {
+        if (retryTimer !== null) window.clearTimeout(retryTimer);
+        retryTimer = null;
+        void refreshWithRetry();
+      }
     };
     chrome.storage.onChanged.addListener(onStorageChanged);
     return () => {
+      disposed = true;
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
       ++generation.current;
       ++diagnosticRun.current;
       unsubscribeCheck();
@@ -320,8 +339,13 @@ export function CodexBridgeAutoWatchControl({ targetId, targetName, conversation
 
   const visibleFailure = failure ?? currentStatus?.failure ?? null;
   const stateLabel = !currentStatus ? '状態を確認できません' : currentStatus.state === 'conflict'
-    ? 'ownerタブを確認できません' : currentStatus.enabled ? currentStatus.state === 'error' ? '有効・登録エラー' : '有効' : 'OFF';
+    ? currentStatus.enabled ? '有効・別タブが実行中' : '別タブがwatchを実行中'
+    : currentStatus.state === 'recovering' ? 'owner再確認中・自動復帰待ち'
+      : currentStatus.enabled ? currentStatus.state === 'error' ? '有効・登録エラー' : '有効' : 'OFF';
   const displayedOwner = currentStatus?.ownerConversationId ?? conversationId;
+  const ownerLabel = currentStatus?.state === 'conflict' ? '別タブで実行中（このtabは処理しません）'
+    : currentStatus?.state === 'recovering' ? '確認応答待ち（状態を自動再確認します）'
+      : displayedOwner ?? '確認できません';
   const diagnosticSummary = currentDiagnostic
     ? `${diagnosticTime(currentDiagnostic.checkedAt)} · ${currentDiagnostic.eventDetected ? 'イベント検出' : 'イベント未検出'}`
     : '未実行';
@@ -329,13 +353,13 @@ export function CodexBridgeAutoWatchControl({ targetId, targetName, conversation
     <div className="codex-bridge-auto-watch" aria-label="回答完了時の自動監視登録">
       <strong>回答完了時の自動監視登録</strong>
       <p className="codex-bridge-note">状態: {stateLabel} · 対象マシン: {targetName || targetId || '未選択'}</p>
-      <p className="codex-bridge-note">owner ChatGPT会話: {currentStatus?.state === 'conflict' ? '確認できません' : displayedOwner ?? '確認できません'}</p>
+      <p className="codex-bridge-note">owner ChatGPT会話: {ownerLabel}</p>
       {currentStatus?.enabled && <p className="codex-bridge-note">
         この会話の監視: {watchingThreadCount === null ? '未確認' : `${watchingThreadCount}件`}
       </p>}
       <button type="button" className="codex-bridge-button" onClick={() => { void toggle(); }}
         disabled={!routeValid || !targetId || busy || !statusIsCurrent}>
-        {busy ? '更新中…' : currentStatus?.enabled ? '自動監視登録をOFF' : '自動監視登録をON'}
+        {busy ? '更新中…' : currentStatus?.enabled ? 'この会話全体の自動登録をOFF' : 'この会話全体の自動登録をON'}
       </button>
       {visibleFailure && <p className="codex-bridge-error" role="status">{codexBridgeAutoWatchFailureLabel(visibleFailure)}</p>}
       {currentStatus?.enabled && <details className="phase6-technical-details">

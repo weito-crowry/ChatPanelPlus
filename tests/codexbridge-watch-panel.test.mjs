@@ -33,7 +33,9 @@ test('自動監視の技術情報は直近照合の理由・件数・時刻だ�
   assert.match(source, /diagnosticScope\.current\.targetId !== targetId \|\| diagnosticScope\.current\.conversationId !== conversationId/);
   assert.match(source, /diagnostic\?\.scope === diagnosticScope\.current\.version/);
   assert.doesNotMatch(source, /chrome\.storage\.local\.set/);
-  assert.doesNotMatch(source, /setInterval|setTimeout/);
+  assert.match(source, /next\?\.state === 'recovering' \|\| retryableFailure/);
+  assert.match(source, /window\.setTimeout\(\(\) => \{ void refreshWithRetry\(\); \}, 1_000\)/);
+  assert.match(source, /window\.clearTimeout\(retryTimer\)/);
   assert.doesNotMatch(source, /console\.(?:log|debug)\([^\n]*(?:turnKey|assistantMessageId|threadIds|text)/);
 });
 

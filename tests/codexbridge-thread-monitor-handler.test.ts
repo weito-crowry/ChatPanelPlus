@@ -38,7 +38,8 @@ const event: CodexBridgeTerminalEvent = {
 
 function handlerFixture(connectionId = item.connectionId, sourceItems: readonly CodexBridgeWatchSnapshot[] = [item],
   sourceEvents: readonly CodexBridgeTerminalEvent[] = [event], startTransferred = false, includeAuto = false,
-  changeConnectionAfterRead = false, removeEventAfterRead = false) {
+  changeConnectionAfterRead = false, removeEventAfterRead = false,
+  ownerClaim: 'current' | 'other-tab' | 'recovering' | 'storage-error' | 'connection-unavailable' = 'current') {
   const calls: string[] = [];
   const requestedOwners: CodexBridgeWatchOwnerMute[] = [];
   let finalAnswerRead = false;
@@ -83,6 +84,10 @@ function handlerFixture(connectionId = item.connectionId, sourceItems: readonly 
   }
   const autoRegistration = {
     getStatus: getAutoStatus,
+    async claimOwner(targetId: string, conversationId: string, tabId: number) {
+      calls.push(`auto:claim:${targetId}:${conversationId}:${tabId}`);
+      return ownerClaim;
+    },
     async setEnabled(targetId: string, tabId: number, conversationId: string, enabled: boolean) {
       calls.push(`auto:set:${targetId}:${tabId}:${conversationId}:${enabled}`);
       return { ok: true as const, status: await getAutoStatus(targetId, conversationId, tabId) };
@@ -144,6 +149,31 @@ test('only top-level ChatGPT senders can use the typed watch messages', async ()
     type: CODEX_BRIDGE_WATCH_START, targetId: 'target-1', threadId: 'target-2::thread-1',
   }, trustedSender), { ok: false, reason: 'invalid-request' });
   assert.deepEqual(calls, []);
+});
+
+test('manual watch claims the verified conversation owner and distinguishes active owner from recovery', async () => {
+  const current = handlerFixture(item.connectionId, [item], [event], false, true);
+  assert.deepEqual(await current.handle({ type: CODEX_BRIDGE_WATCH_START, targetId: item.targetId,
+    threadId: item.threadId, conversationId: 'test' }, trustedSender), {
+    ok: true, data: { item, created: true, transferred: false },
+  });
+  assert.deepEqual(current.calls, ['auto:claim:target-1:test:4', 'start:target-1:thread-1']);
+
+  const competing = handlerFixture(item.connectionId, [item], [event], false, true,
+    false, false, 'other-tab');
+  assert.deepEqual(await competing.handle({ type: CODEX_BRIDGE_WATCH_START, targetId: item.targetId,
+    threadId: item.threadId, conversationId: 'test' }, trustedSender), {
+    ok: false, reason: 'auto-owner-conflict',
+  });
+  assert.deepEqual(competing.calls, ['auto:claim:target-1:test:4']);
+
+  const recovering = handlerFixture(item.connectionId, [item], [event], false, true,
+    false, false, 'recovering');
+  assert.deepEqual(await recovering.handle({ type: CODEX_BRIDGE_WATCH_START, targetId: item.targetId,
+    threadId: item.threadId, conversationId: 'test' }, trustedSender), {
+    ok: false, reason: 'owner-recovering',
+  });
+  assert.deepEqual(recovering.calls, ['auto:claim:target-1:test:4']);
 });
 
 test('start, stop, read, list, and foreground refresh are explicit bounded operations', async () => {

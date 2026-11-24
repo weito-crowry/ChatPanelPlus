@@ -34,6 +34,7 @@ export type CodexBridgeNotificationState = 'pending' | 'requested' | 'played' | 
 export type CodexBridgeNotificationReason = 'disabled' | 'volume-zero' | 'settings-unavailable'
   | 'output-device-unavailable' | 'device-unavailable' | 'permission-denied' | 'sink-failed' | 'playback-failed'
   | 'muted' | 'owner-unavailable' | 'partial-output';
+export type CodexBridgeOwnerDeliveryState = 'pending' | 'requested' | 'delivered' | 'skipped';
 
 export type CodexBridgeWatchOwnerMute = Readonly<{
   ownerTabId: number;
@@ -57,6 +58,7 @@ export type CodexBridgeTerminalEvent = Readonly<{
   ownerConversationId?: string;
   ownerMuted?: boolean | null;
   ownerMuteRevision?: number;
+  ownerDeliveryState?: CodexBridgeOwnerDeliveryState;
   acknowledgedAt?: string | null;
 }>;
 
@@ -97,14 +99,14 @@ export type CodexBridgeWatchFetchOutcome =
 
 export type CodexBridgeAutoWatchFailure = CodexBridgeWatchFetchOutcome
   | 'connection-unavailable' | 'target-unavailable' | 'owner-conflict' | 'ownerless-watch' | 'watch-limit' | 'owner-tab-unavailable'
-  | 'storage-error';
+  | 'auto-owner-conflict' | 'owner-recovering' | 'storage-error';
 
 export type CodexBridgeAutoWatchStatus = Readonly<{
   targetId: string;
   connectionId: string | null;
   enabled: boolean;
   ownerConversationId: string | null;
-  state: 'off' | 'ready' | 'error' | 'conflict';
+  state: 'off' | 'ready' | 'error' | 'conflict' | 'recovering';
   failure: CodexBridgeAutoWatchFailure | null;
   watchingThreadCount: number;
 }>;
@@ -235,7 +237,9 @@ export function isCodexBridgeTerminalEvent(value: unknown): value is CodexBridge
     && Number.isSafeInteger(event.ownerMuteRevision) && (event.ownerMuteRevision as number) >= 0);
   const validAcknowledgement = !('acknowledgedAt' in event) || event.acknowledgedAt === null
     || (typeof event.acknowledgedAt === 'string' && event.acknowledgedAt.length <= 40);
-  return validOwner && validAcknowledgement
+  const validOwnerDelivery = !('ownerDeliveryState' in event)
+    || ['pending', 'requested', 'delivered', 'skipped'].includes(String(event.ownerDeliveryState));
+  return validOwner && validAcknowledgement && validOwnerDelivery
     && typeof event.eventId === 'string' && event.eventId.length > 0 && event.eventId.length <= 96
     && typeof event.watchId === 'string' && event.watchId.length > 0 && event.watchId.length <= 96
     && isCodexBridgeWatchIdentifier(event.connectionId) && event.connectionId.length <= 96

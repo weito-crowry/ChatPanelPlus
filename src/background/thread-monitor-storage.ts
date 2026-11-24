@@ -9,6 +9,7 @@ import {
   type CodexBridgeTerminalEvent,
   type CodexBridgeTerminalHoldReason,
   type CodexBridgeWatchSnapshot,
+  type CodexBridgeWatchOwnerMute,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import { isConversationId } from '../shared/conversation-route.ts';
 
@@ -130,6 +131,22 @@ export class CodexBridgeThreadMonitorStorage {
     return this.withStorage(async () => (await this.read()).events.find((event) => event.eventId === eventId) ?? null);
   }
 
+  rebindOwner(
+    identity: Readonly<{ connectionId: string; targetId: string; conversationId: string }>,
+    owner: CodexBridgeWatchOwnerMute,
+  ): Promise<void> {
+    return this.mutate((items, events) => {
+      const matches = (record: { connectionId: string; targetId: string; ownerConversationId?: string }) =>
+        record.connectionId === identity.connectionId && record.targetId === identity.targetId
+        && record.ownerConversationId === identity.conversationId;
+      return {
+        items: items.map((item) => matches(item) ? { ...item, ...owner } : item),
+        events: events.map((event) => matches(event) ? { ...event, ...owner } : event),
+        result: undefined,
+      };
+    });
+  }
+
   mutate<T>(mutation: Mutation<T>): Promise<T> {
     return this.withStorage(async () => {
       const current = await this.read();
@@ -160,13 +177,21 @@ function mergeDuplicateEvent(existing: CodexBridgeTerminalEvent, candidate: Code
     ? candidate : existing;
   const { ownerTabId, ownerConversationId, ownerMuted, ownerMuteRevision } = existing;
   const acknowledgedAt = existing.acknowledgedAt ?? candidate.acknowledgedAt;
+  const ownerDeliveryState = existing.ownerDeliveryState === undefined || candidate.ownerDeliveryState === undefined
+    ? undefined : deliveryStatePriority(candidate.ownerDeliveryState) > deliveryStatePriority(existing.ownerDeliveryState)
+      ? candidate.ownerDeliveryState : existing.ownerDeliveryState;
   return {
     ...preferred,
     ...(ownerTabId !== undefined && ownerConversationId !== undefined && ownerMuted !== undefined && ownerMuteRevision !== undefined
       ? { ownerTabId, ownerConversationId, ownerMuted, ownerMuteRevision }
       : {}),
     ...(acknowledgedAt !== undefined ? { acknowledgedAt } : {}),
+    ...(ownerDeliveryState !== undefined ? { ownerDeliveryState } : {}),
   };
+}
+
+function deliveryStatePriority(state: NonNullable<CodexBridgeTerminalEvent['ownerDeliveryState']>): number {
+  return { pending: 0, skipped: 1, requested: 2, delivered: 3 }[state];
 }
 
 function retainEvents(events: readonly CodexBridgeTerminalEvent[]): CodexBridgeTerminalEvent[] {

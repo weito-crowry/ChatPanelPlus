@@ -39,8 +39,10 @@ import {
   CODEX_BRIDGE_WATCH_START,
   CODEX_BRIDGE_WATCH_STOP,
 } from './shared/codexbridge-thread-monitor-protocol.ts';
-import { createDefaultCodexBridgeThreadMonitor, ownerTabMatchesConversation } from './background/codexbridge-thread-monitor.ts';
-import { dispatchCodexBridgeTerminalEventSaved } from './background/terminal-event-dispatch.ts';
+import { createDefaultCodexBridgeThreadMonitor, readOwnerTabIdentity } from './background/codexbridge-thread-monitor.ts';
+import { CodexBridgeSessionOwnerLeases } from './background/thread-monitor-owner-lease.ts';
+import { CodexBridgeThreadMonitorStorage } from './background/thread-monitor-storage.ts';
+import { CodexBridgeTerminalEventDelivery } from './background/terminal-event-delivery.ts';
 
 type OpenOptionsMessage = Readonly<{ type: 'OPEN_OPTIONS' }>;
 
@@ -87,6 +89,8 @@ const handleCodexWorkModeMessage = createCodexWorkModeMessageHandler(
   (tabId, message) => chrome.tabs.sendMessage(tabId, message),
 );
 const conversationAudioMuteStore = new ConversationAudioMuteStore(chrome.storage.session);
+const codexBridgeOwnerLeases = new CodexBridgeSessionOwnerLeases(chrome.storage.session,
+  (tabId) => readOwnerTabIdentity(chrome.tabs, tabId, 1_000));
 const handleCodexBridgeMcpTest = createCodexBridgeMcpTestHandler({
   sessionStorage: chrome.storage.session,
   permissions: chrome.permissions,
@@ -132,33 +136,35 @@ const notification = createCodexBridgeNotificationHandler({
   assets: soundAssetRepository,
   audio: offscreenTransport,
   loadOwnerMute: async (event) => {
-    if (event.ownerTabId === undefined || event.ownerConversationId === undefined || event.ownerMuted === undefined) return { ok: false };
-    if (!await ownerTabMatchesConversation(chrome.tabs, event.ownerTabId, event.ownerConversationId)) {
-      return { ok: true, muted: null };
-    }
-    const loaded = await conversationAudioMuteStore.load(event.ownerTabId, event.ownerConversationId);
+    if (event.ownerConversationId === undefined) return { ok: false };
+    const identity = { connectionId: event.connectionId, targetId: event.targetId, conversationId: event.ownerConversationId };
+    const owner = await codexBridgeOwnerLeases.resolveOwner(identity);
+    if (owner.kind !== 'owner') return { ok: true, muted: null };
+    const loaded = await conversationAudioMuteStore.load(owner.tabId, event.ownerConversationId);
     if (!loaded.ok) return { ok: false };
-    return { ok: true, muted: loaded.saved ? loaded.value.muted : event.ownerMuted };
+    return { ok: true, muted: loaded.saved ? loaded.value.muted : event.ownerMuted ?? null };
   },
   playWithOwnerMuteGuard: async (event, action) => {
-    if (event.ownerTabId === undefined || event.ownerConversationId === undefined) return { ok: false, reason: 'owner-unavailable' };
-    if (!await ownerTabMatchesConversation(chrome.tabs, event.ownerTabId, event.ownerConversationId)) {
-      return { ok: false, reason: 'owner-unavailable' };
-    }
+    if (event.ownerConversationId === undefined) return { ok: false, reason: 'owner-unavailable' };
+    const owner = await codexBridgeOwnerLeases.resolveOwner({ connectionId: event.connectionId,
+      targetId: event.targetId, conversationId: event.ownerConversationId });
+    if (owner.kind !== 'owner') return { ok: false, reason: 'owner-unavailable' };
     const result = await conversationAudioMuteStore.runIfOwnerUnmuted(
-      event.ownerTabId, event.ownerConversationId, event.ownerMuted, action,
+      owner.tabId, event.ownerConversationId, event.ownerMuted, action,
     );
     if (!result.ok) return { ok: false, reason: result.reason === 'muted' ? 'muted' : 'owner-unavailable' };
     return result.value;
   },
 });
+const codexBridgeThreadMonitorStorage = new CodexBridgeThreadMonitorStorage(chrome.storage.local);
+const codexBridgeTerminalEventDelivery = new CodexBridgeTerminalEventDelivery(codexBridgeThreadMonitorStorage,
+  (identity) => codexBridgeOwnerLeases.resolveOwner(identity),
+  (tabId, message) => chrome.tabs.sendMessage(tabId, message));
 const codexBridgeThreadMonitor = createDefaultCodexBridgeThreadMonitor(chrome.runtime.id, notification, async (tabId, conversationId) => {
   const mute = await conversationAudioMuteStore.load(tabId, conversationId);
   return mute.ok ? { ok: true, muted: mute.value.muted, revision: mute.value.revision } : { ok: false };
-}, async (event) => { await dispatchCodexBridgeTerminalEventSaved(event, {
-  ownerMatches: (tabId, conversationId) => ownerTabMatchesConversation(chrome.tabs, tabId, conversationId),
-  send: (tabId, message) => chrome.tabs.sendMessage(tabId, message),
-}); });
+}, async (event) => { await codexBridgeTerminalEventDelivery.dispatch(event.eventId); }, codexBridgeOwnerLeases,
+  (identity, tabId) => codexBridgeTerminalEventDelivery.resume(identity, tabId), codexBridgeThreadMonitorStorage);
 const handleConversationAudioMute = createConversationAudioMuteMessageHandler(
   conversationAudioMuteStore,
   chrome.runtime.id,
@@ -176,6 +182,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 function restoreBridgeMonitoring(): void {
   void codexBridgeThreadMonitor.monitor.restore().catch(() => {});
   void codexBridgeThreadMonitor.autoRegistration.restore().catch(() => {});
+  void codexBridgeTerminalEventDelivery.resumeAll().catch(() => {});
 }
 
 chrome.runtime.onStartup.addListener(() => {
@@ -187,6 +194,9 @@ chrome.runtime.onInstalled.addListener(() => {
 restoreBridgeMonitoring();
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  void codexBridgeOwnerLeases.releaseTab(tabId, async () => {
+    try { await chrome.tabs.get(tabId); return false; } catch { return true; }
+  }).catch(() => {});
   void removeCodexWorkModeEntriesForTab(chrome.storage.session, tabId);
   void removeConversationAudioMuteEntriesForTab(chrome.storage.session, tabId, async (conversationId, value) => {
     await codexBridgeThreadMonitor.autoRegistration.updateOwnerMute(tabId, conversationId, value?.muted ?? null, value?.revision);

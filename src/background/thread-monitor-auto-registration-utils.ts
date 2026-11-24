@@ -3,8 +3,19 @@ import {
   isCodexBridgeWatchIdentifier,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import type { CodexBridgeThread, CodexBridgeThreadStatus } from '../shared/codexbridge-mcp-protocol.ts';
+import type { CodexBridgeAutoWatchFailure } from '../shared/codexbridge-thread-monitor-protocol.ts';
+import { isAutoWatchFailure } from './thread-monitor-auto-registration-state.ts';
 
 const MAX_THREAD_ID_LENGTH = 512;
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function failureFor(error: unknown): CodexBridgeAutoWatchFailure {
+  const code = isRecord(error) && typeof error.code === 'string' ? error.code : null;
+  return code && isAutoWatchFailure(code) ? code : 'unknown';
+}
 
 export function currentExecution(thread: CodexBridgeThread) {
   return linkLiveCodexBridgeExecutionTurn(thread.currentExecution, thread.lastTurn);

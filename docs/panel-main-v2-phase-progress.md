@@ -174,3 +174,10 @@
 - 同一出力要求は出力ごとに独立AudioContextを作り、複数物理出力へ並行再生する。部分成功・全失敗を区別し、切断/権限/sink/context/playback失敗を他出力へ波及させず、成功先の再生を重複しない。部分失敗時の全体retryや既定出力fallbackを行わない。空選択時のChatGPT/試聴ローカル経路とCodex Offscreen既定経路、C51の通知別音源・音量・enabled、既存mute/owner/dedupe意味を維持する。
 - Chrome受入手順は`docs/c52-multiple-output-devices-acceptance.md`。今回の実機結果は未報告のため全項目`NOT_RUN`。C48/C49/C50既存観測を変更せず、C51実機受入も全項目`NOT_RUN`を維持する。
 - 詳細計画は`docs/superpowers/plans/2026-11-24-issue-20-multi-output-devices.md`。最終自動検証は`pnpm test` 851/851、`pnpm typecheck` PASS、`pnpm lint` PASS（check:size 295 files、500行/32768 bytes以下）、`pnpm build` PASS、`git diff --check` PASS。実機のChrome reload、ChatGPT F5、デバイス切断/再接続、複数実音再生は行っていないためC52はNOT_RUNのまま。
+
+## Issue #23 / C54 session owner再bind（2026-11-24）
+
+- 永続ON/OFFはlocal設定に残し、実行ownerは`chrome.storage.session`の`(connectionId, targetId, conversationId)` leaseで扱う。OFFかつwatch/eventがない会話はstatus表示でleaseを占有せず、明示ON/手動watch時に休止leaseを渡してclaimする。active watch/eventがある場合は同一identityだけowner hintとmute revisionを再bindし、異会話へ移さない。
+- 同じ会話のlive owner、確認応答待ち、session storage errorをUIで区別する。pendingの新規terminal eventだけを現在ownerへidentity-onlyで送信し、requestedを保存してから送る。結果不明は再送せず、owner不在・mute不明時にskipした終端音を遅れて鳴らさない。
+- Chrome再起動時のtab ID変化は原因候補のままで、今回も原因確定の実測はしていない。C54手順は[`docs/c54-session-owner-rebind-acceptance.md`](c54-session-owner-rebind-acceptance.md)、全ケース`NOT_RUN`。C48〜C53の既存観測行は変更せず、C53未報告項目も`NOT_RUN`を維持する。
+- 自動検証：`pnpm test` 872/872 PASS、focused owner/delivery/handler/UI suite 39/39 PASS、`pnpm typecheck` PASS、`pnpm lint` PASS（check:size 301 files、各500行/32768 bytes以下）、独立`pnpm build` PASS、commit前の`git diff --check` PASS。Chrome reload/F5・browser restart・同一会話複数tabは未実施。

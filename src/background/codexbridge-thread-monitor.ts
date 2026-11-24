@@ -37,6 +37,7 @@ import {
 import { createChromeSettingsRepository } from '../shared/settings-repository.ts';
 import { CodexBridgeMcpClient } from './mcp-client.ts';
 import { CodexBridgeAutoThreadRegistration } from './thread-monitor-auto-registration.ts';
+import type { CodexBridgeSessionOwnerLeases } from './thread-monitor-owner-lease.ts';
 import { McpTransportError } from './mcp-transport.ts';
 import {
   CodexBridgeThreadMonitor,
@@ -44,6 +45,7 @@ import {
   type CodexBridgeNotificationHandler,
   type CodexBridgeTerminalEventSavedHandler,
 } from './thread-monitor.ts';
+import type { CodexBridgeThreadMonitorStorage } from './thread-monitor-storage.ts';
 
 type SessionStorageLike = Readonly<{ get(keys: string[]): Promise<Record<string, unknown>> }>;
 type PermissionApiLike = Readonly<{ contains(permissions: { origins: string[] }): Promise<boolean> }>;
@@ -66,7 +68,7 @@ export type CodexBridgeThreadMonitorHandlerOptions = Readonly<{
     | { readonly ok: false }
   >;
   autoRegistration?: Pick<CodexBridgeAutoThreadRegistration, 'getStatus' | 'setEnabled' | 'getRunningCandidates'
-    | 'registerCompletedAnswer' | 'stopWatch'>;
+    | 'registerCompletedAnswer' | 'stopWatch'> & Partial<Pick<CodexBridgeAutoThreadRegistration, 'claimOwner'>>;
 }>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -93,10 +95,10 @@ export async function ownerTabMatchesConversation(
   return identity.kind === 'identity' && identity.conversationId === conversationId;
 }
 
-type OwnerTabIdentityResult = Readonly<{ kind: 'identity'; conversationId: string }>
+export type OwnerTabIdentityResult = Readonly<{ kind: 'identity'; conversationId: string }>
   | Readonly<{ kind: 'closed' | 'unknown' }>;
 
-async function readOwnerTabIdentity(
+export async function readOwnerTabIdentity(
   tabs: Readonly<{ get(tabId: number): Promise<unknown>; sendMessage(tabId: number, message: unknown, options: { frameId: number }): Promise<unknown> }>,
   tabId: number,
   timeoutMs: number,
@@ -275,6 +277,10 @@ export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridg
         return { ok: true, data: { registeredCount } };
       }
       if (message.type === CODEX_BRIDGE_WATCH_START) {
+        const ownerClaim = await options.autoRegistration?.claimOwner?.(message.targetId, identity.conversationId, identity.tabId);
+        if (ownerClaim === 'other-tab') return { ok: false, reason: 'auto-owner-conflict' };
+        if (ownerClaim === 'recovering') return { ok: false, reason: 'owner-recovering' };
+        if (ownerClaim === 'storage-error') return { ok: false, reason: 'storage-error' };
         const mute = await options.loadOwnerMute(identity.tabId, identity.conversationId);
         if (!mute.ok) return { ok: false, reason: 'storage-error' };
         const owner: CodexBridgeWatchOwnerMute = {
@@ -364,6 +370,9 @@ export function createDefaultCodexBridgeThreadMonitor(
   notification?: CodexBridgeNotificationHandler,
   loadOwnerMute: CodexBridgeThreadMonitorHandlerOptions['loadOwnerMute'] = async () => ({ ok: false }),
   onTerminalEventSaved?: CodexBridgeTerminalEventSavedHandler,
+  ownerLeases?: Pick<CodexBridgeSessionOwnerLeases, 'claim' | 'release'>,
+  onOwnerClaim?: (identity: import('./thread-monitor-owner-lease.ts').CodexBridgeOwnerIdentity, tabId: number) => Promise<void>,
+  storage?: CodexBridgeThreadMonitorStorage,
 ) {
   const sessionStorage = chrome.storage.session as SessionStorageLike;
   const settings = createChromeSettingsRepository();
@@ -423,11 +432,13 @@ export function createDefaultCodexBridgeThreadMonitor(
   };
 
   const monitor = new CodexBridgeThreadMonitor(chrome.storage.local, chrome.alarms, resolveAccess,
-    { notification, onTerminalEventSaved });
+    { notification, onTerminalEventSaved, storage });
   const autoRegistration = new CodexBridgeAutoThreadRegistration(
     chrome.storage.local, chrome.alarms, monitor, resolveAccess, loadOwnerMute,
     (tabId, conversationId) => ownerTabMatchesConversation(chrome.tabs, tabId, conversationId),
     (tabId, conversationId) => ownerTabCanBeRebound(chrome.tabs, tabId, conversationId),
+    ownerLeases,
+    onOwnerClaim,
   );
   const handleMessage = createCodexBridgeThreadMonitorMessageHandler({
     extensionId, monitor, resolveAccess, loadOwnerMute, autoRegistration,

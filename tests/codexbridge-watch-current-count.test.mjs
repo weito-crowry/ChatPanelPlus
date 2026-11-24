@@ -63,3 +63,16 @@ test('B passes its current watch snapshot count to the auto-watch setting', asyn
   assert.match(control, /watchingThreadCount === null \? '未確認'/);
   assert.doesNotMatch(control, /currentStatus\.watchingThreadCount/);
 });
+
+test('auto-watch clearly names conversation-wide ON/OFF and retries recovery or startup failures', async () => {
+  const [control, presentation] = await Promise.all([
+    read('../src/content/CodexBridgeAutoWatchControl.tsx'),
+    read('../src/content/codexbridge-auto-watch-presentation.ts'),
+  ]);
+  assert.match(control, /この会話全体の自動登録をOFF/);
+  assert.match(control, /この会話全体の自動登録をON/);
+  assert.match(control, /owner再確認中・自動復帰待ち/);
+  assert.match(control, /next\?\.state === 'recovering' \|\| retryableFailure/);
+  assert.match(presentation, /同じ会話の別タブが自動登録を所有中です。このtabは処理しません。/);
+  assert.match(presentation, /ownerの応答を確認中です。状態を再確認します。/);
+});
