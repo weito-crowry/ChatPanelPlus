@@ -135,7 +135,7 @@ test('ONは設定だけを保存し、すでに実行中のthreadを検索も登
   assert.equal(stored.entries.length, 1);
 });
 
-test('Bridge候補取得は明示ON後だけ行い、応答中のlive thread.idだけを返す', async () => {
+test('Bridge候補取得は明示ON後だけ行い、応答中のlive thread-turn組だけを返す', async () => {
   const finishedId = 'finished-candidate';
   const estimatedId = 'estimated-candidate';
   const h = harness([
@@ -145,10 +145,12 @@ test('Bridge候補取得は明示ON後だけ行い、応答中のlive thread.id�
       ...liveThread(estimatedId, turnTwoId).currentExecution!, state: 'estimated_running', evidence: 'inferred',
     } },
   ]);
-  assert.deepEqual(await getCandidates(h), { ok: true, data: { connectionId: null, threadIds: [] } });
+  assert.deepEqual(await getCandidates(h), { ok: true, data: { connectionId: null, threads: [] } });
   assert.equal(h.runningOnlyCalls, 0);
   assert.equal((await enable(h)).ok, true);
-  assert.deepEqual(await getCandidates(h), { ok: true, data: { connectionId: 'connection-A', threadIds: [threadOneId] } });
+  assert.deepEqual(await getCandidates(h), { ok: true, data: {
+    connectionId: 'connection-A', threads: [{ threadId: threadOneId, turnId: turnOneId }],
+  } });
   assert.equal(h.runningOnlyCalls, 1);
 });
 
@@ -161,7 +163,7 @@ test('完了turn/message identityはthread ID上限512文字ではなくschema�
   assert.equal(assistantMessageId.length, 900);
   assert.deepEqual(await h.auto.getRunningCandidates(target.id, ownerA.ownerTabId, ownerA.ownerConversationId,
     turnKey, assistantMessageId), {
-    ok: true, data: { connectionId: 'connection-A', threadIds: [threadOneId] },
+    ok: true, data: { connectionId: 'connection-A', threads: [{ threadId: threadOneId, turnId: turnOneId }] },
   });
   assert.equal(h.runningOnlyCalls, 1);
 });

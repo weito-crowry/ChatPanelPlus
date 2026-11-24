@@ -2,12 +2,14 @@ import {
   CODEX_BRIDGE_AUTO_WATCH_ALARM,
   CODEX_BRIDGE_AUTO_WATCH_THREAD_IDS_LIMIT,
   isCodexBridgeAutoWatchIdentity,
+  isCodexBridgeAutoWatchExpectedTurns,
   CODEX_BRIDGE_AUTO_WATCH_STORAGE_KEY,
   isCodexBridgeWatchIdentifier,
   type CodexBridgeAutoWatchFailure,
   type CodexBridgeAutoWatchRegistrationReason,
   type CodexBridgeAutoWatchRegistrationResult,
   type CodexBridgeAutoWatchStatus,
+  type CodexBridgeAutoWatchExpectedTurn,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import { isConversationId } from '../shared/conversation-route.ts';
 import type { LocalStorageLike } from './thread-monitor-storage.ts';
@@ -232,9 +234,10 @@ export class CodexBridgeAutoThreadRegistration {
     turnKey: string,
     assistantMessageId: string,
     candidateThreadIds: readonly string[],
+    expectedTurns: readonly CodexBridgeAutoWatchExpectedTurn[] = [],
   ): Promise<number> {
     return (await this.registerCompletedAnswerWithDiagnostics(targetId, candidateConnectionId, ownerTabId, conversationId,
-      turnKey, assistantMessageId, candidateThreadIds)).registeredCount;
+      turnKey, assistantMessageId, candidateThreadIds, expectedTurns)).registeredCount;
   }
 
   async registerCompletedAnswerWithDiagnostics(
@@ -245,6 +248,7 @@ export class CodexBridgeAutoThreadRegistration {
     turnKey: string,
     assistantMessageId: string,
     candidateThreadIds: readonly string[],
+    expectedTurns: readonly CodexBridgeAutoWatchExpectedTurn[] = [],
   ): Promise<CodexBridgeAutoWatchRegistrationResult> {
     if (!isCodexBridgeWatchIdentifier(targetId) || targetId.length > MAX_THREAD_ID_LENGTH
       || !isCodexBridgeWatchIdentifier(candidateConnectionId) || candidateConnectionId.length > 96
@@ -252,7 +256,8 @@ export class CodexBridgeAutoThreadRegistration {
       || !isCodexBridgeAutoWatchIdentity(turnKey) || !isCodexBridgeAutoWatchIdentity(assistantMessageId)
       || !Array.isArray(candidateThreadIds) || !candidateThreadIds.length
       || candidateThreadIds.length > CODEX_BRIDGE_AUTO_WATCH_THREAD_IDS_LIMIT
-      || Array.from(candidateThreadIds).some((id) => !isCodexBridgeWatchIdentifier(id) || id.length > MAX_THREAD_ID_LENGTH)) {
+      || Array.from(candidateThreadIds).some((id) => !isCodexBridgeWatchIdentifier(id) || id.length > MAX_THREAD_ID_LENGTH)
+      || !isCodexBridgeAutoWatchExpectedTurns(expectedTurns, candidateThreadIds)) {
       return completionOutcome('invalid-request');
     }
     const threadIds = [...new Set(candidateThreadIds)];
@@ -271,7 +276,7 @@ export class CodexBridgeAutoThreadRegistration {
           recordFailureForOwner: (connectionId, targetId, tabId, ownerConversationId, failure) =>
             this.recordFailureForOwner(connectionId, targetId, tabId, ownerConversationId, failure),
           recordFailureForEntry: (entry, failure) => this.recordFailureForEntry(entry, failure),
-        }, targetId, candidateConnectionId, ownerTabId, conversationId, threadIds));
+        }, targetId, candidateConnectionId, ownerTabId, conversationId, threadIds, expectedTurns));
     } finally {
       this.rememberCompletion(dedupeKey);
       this.completionFlights.delete(dedupeKey);

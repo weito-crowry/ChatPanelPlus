@@ -78,7 +78,7 @@ export class CodexBridgeAutoWatchCandidates {
     catch { return { ok: false, reason: 'storage-error' }; }
     const configuredEntries = ownerEntries(stateValue, targetId, ownerTabId, conversationId);
     if (configuredEntries === undefined) return { ok: false, reason: 'storage-error' };
-    if (!configuredEntries.length) return { ok: true, data: { connectionId: null, threadIds: [] } };
+    if (!configuredEntries.length) return { ok: true, data: { connectionId: null, threads: [] } };
 
     let access: CodexBridgeMonitorAccess;
     try { access = await this.resolveAccess(); } catch (error) { return { ok: false, reason: failureFor(error) }; }
@@ -107,7 +107,7 @@ export class CodexBridgeAutoWatchCandidates {
     const latestEntries = ownerEntries(stateValue, targetId, ownerTabId, conversationId);
     if (latestEntries === undefined) return { ok: false, reason: 'storage-error' };
     const latestEntry = latestEntries.find((candidate) => candidate.connectionId === entry.connectionId);
-    if (!latestEntry) return { ok: true, data: { connectionId: null, threadIds: [] } };
+    if (!latestEntry) return { ok: true, data: { connectionId: null, threads: [] } };
     if (!await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false)) {
       return { ok: false, reason: 'owner-tab-unavailable' };
     }
@@ -116,20 +116,28 @@ export class CodexBridgeAutoWatchCandidates {
     if (latestAccess.connectionId !== entry.connectionId || (access.generation !== undefined
       && latestAccess.generation !== access.generation)) return { ok: false, reason: 'connection-changed' };
 
-    const seen = new Set<string>();
-    const threadIds: string[] = [];
+    const seen = new Map<string, string>();
+    const threads: { threadId: string; turnId: string }[] = [];
     let totalCharacters = 0;
     for (const thread of page.threads) {
-      if (!isLiveCandidate(thread, targetId) || seen.has(thread.id) || thread.id.length > MAX_THREAD_ID_LENGTH) continue;
-      totalCharacters += thread.id.length + 1;
-      if (threadIds.length >= CODEX_BRIDGE_AUTO_WATCH_BRIDGE_CANDIDATE_IDS_LIMIT
+      if (!isLiveCandidate(thread, targetId) || thread.id.length > MAX_THREAD_ID_LENGTH) continue;
+      const execution = linkLiveCodexBridgeExecutionTurn(thread.currentExecution, thread.lastTurn);
+      if (!execution?.turnId) continue;
+      const turnId = execution.turnId;
+      const priorTurnId = seen.get(thread.id);
+      if (priorTurnId !== undefined) {
+        if (priorTurnId !== turnId) return { ok: false, reason: 'protocol-error' };
+        continue;
+      }
+      totalCharacters += thread.id.length + turnId.length + 2;
+      if (threads.length >= CODEX_BRIDGE_AUTO_WATCH_BRIDGE_CANDIDATE_IDS_LIMIT
         || totalCharacters > CODEX_BRIDGE_AUTO_WATCH_BRIDGE_CANDIDATE_CHARS_LIMIT) {
         return { ok: false, reason: 'protocol-error' };
       }
-      seen.add(thread.id);
-      threadIds.push(thread.id);
+      seen.set(thread.id, turnId);
+      threads.push({ threadId: thread.id, turnId });
     }
-    const data: CodexBridgeAutoWatchCandidateData = { connectionId: entry.connectionId, threadIds };
+    const data: CodexBridgeAutoWatchCandidateData = { connectionId: entry.connectionId, threads };
     return { ok: true, data };
   }
 }

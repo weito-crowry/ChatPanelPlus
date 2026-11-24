@@ -208,7 +208,10 @@ export type CodexBridgeAutoWatchMessage =
   | Readonly<{ type: typeof CODEX_BRIDGE_AUTO_WATCH_GET_RUNNING_CANDIDATES; targetId: string; conversationId: string;
     turnKey: string; assistantMessageId: string }>
   | Readonly<{ type: typeof CODEX_BRIDGE_AUTO_WATCH_COMPLETED; targetId: string; candidateConnectionId: string;
-    conversationId: string; turnKey: string; assistantMessageId: string; threadIds: readonly string[] }>;
+    conversationId: string; turnKey: string; assistantMessageId: string; threadIds: readonly string[];
+    expectedTurns?: readonly CodexBridgeAutoWatchExpectedTurn[] }>;
+
+export type CodexBridgeAutoWatchExpectedTurn = Readonly<{ threadId: string; turnId: string }>;
 
 export type CodexBridgeAutoWatchCompletionMessage = Extract<CodexBridgeAutoWatchMessage,
   Readonly<{ type: typeof CODEX_BRIDGE_AUTO_WATCH_COMPLETED }>>;
@@ -216,9 +219,10 @@ export type CodexBridgeAutoWatchCompletionMessage = Extract<CodexBridgeAutoWatch
 export type CodexBridgeAutoWatchCandidateRequest = Extract<CodexBridgeAutoWatchMessage,
   Readonly<{ type: typeof CODEX_BRIDGE_AUTO_WATCH_GET_RUNNING_CANDIDATES }>>;
 
+export type CodexBridgeAutoWatchCandidateThread = Readonly<{ threadId: string; turnId: string }>;
 export type CodexBridgeAutoWatchCandidateData = Readonly<{
   connectionId: string | null;
-  threadIds: readonly string[];
+  threads: readonly CodexBridgeAutoWatchCandidateThread[];
 }>;
 
 export type CodexBridgeWatchListData = Readonly<{
@@ -298,6 +302,25 @@ export function isCodexBridgeAutoWatchIdentity(value: unknown): value is string 
       const code = character.codePointAt(0) ?? 0;
       return code <= 0x1f || (code >= 0x7f && code <= 0x9f);
     });
+}
+
+export function isCodexBridgeAutoWatchExpectedTurns(value: unknown,
+  threadIds: readonly string[]): value is readonly CodexBridgeAutoWatchExpectedTurn[] {
+  if (!Array.isArray(value) || value.length > threadIds.length) return false;
+  const seen = new Set<string>();
+  let totalCharacters = threadIds.reduce((total, id) => total + id.length + 1, 0);
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null || Array.isArray(item) || Object.keys(item).length !== 2) return false;
+    const expected = item as Record<string, unknown>;
+    if (!Object.hasOwn(expected, 'threadId') || !Object.hasOwn(expected, 'turnId')
+      || !isCodexBridgeWatchIdentifier(expected.threadId) || expected.threadId.length > 512
+      || !threadIds.includes(expected.threadId) || seen.has(expected.threadId)
+      || !isCodexBridgeWatchIdentifier(expected.turnId) || expected.turnId.length > 512) return false;
+    seen.add(expected.threadId);
+    totalCharacters += expected.threadId.length + expected.turnId.length + 2;
+    if (totalCharacters > CODEX_BRIDGE_AUTO_WATCH_BRIDGE_CANDIDATE_CHARS_LIMIT) return false;
+  }
+  return true;
 }
 
 export function linkLiveCodexBridgeExecutionTurn(

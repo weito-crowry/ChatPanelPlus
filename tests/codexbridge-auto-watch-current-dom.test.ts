@@ -8,6 +8,7 @@ import { harness as statisticsHarness, turn, FakeElement } from './conversation-
 
 const THREAD_A = '01a207cf-52ab-7900-a91d-3288982ab221';
 const THREAD_B = '01a207d0-12ab-7c00-a911-3288982ab222';
+const TURN_A = '01a20fc8-e85f-7333-9501-cac4e67cd7dd';
 const notice = { conversationId: 'owner', turnKey: 'completed-turn', assistantMessageId: 'assistant-id' };
 
 function getPage(h: ReturnType<typeof statisticsHarness>) {
@@ -86,4 +87,25 @@ test('登録要求直前の再照合は最新本文からBridge候補の一致ID
   currentTurn.querySelectorAll('[data-dil-message-id]')[0]!.text = `最終表示の本文 ${THREAD_B}`;
   assert.deepEqual(matchCurrentCompletedAssistantMessage(getPage(h), 'target-1', 'owner', '/c/owner', notice,
     matching.candidateThreadIds), { status: 'ready', threadIds: [THREAD_B] });
+});
+
+test('Bridgeのlive thread-turn組を使い、回答本文のTurn IDだけから対応threadを選ぶ', async () => {
+  const h = statisticsHarness('/c/owner');
+  h.document.root.append(turn(notice.turnKey, '質問', `実行中 Turn ID: ${TURN_A}`, notice.assistantMessageId));
+  const progress: unknown[] = [];
+  const result = await matchCompletedAnswerAfterBridgeCandidates(async () => ({
+    ok: true,
+    data: { connectionId: 'connection-A', threads: [{ threadId: THREAD_A, turnId: TURN_A }] },
+  }), () => getPage(h), 'target-1', 'owner', notice, (item) => progress.push(item));
+
+  assert.deepEqual(result, {
+    status: 'ready', connectionId: 'connection-A', threadIds: [THREAD_A], candidateThreadIds: [THREAD_A],
+    candidateThreads: [{ threadId: THREAD_A, turnId: TURN_A }],
+    expectedTurns: [{ threadId: THREAD_A, turnId: TURN_A }],
+  });
+  assert.deepEqual(progress, [
+    { stage: 'candidates', status: 'ok', count: 1 },
+    { stage: 'match', status: 'ok', count: 1 },
+  ]);
+  assert.doesNotMatch(JSON.stringify(progress), new RegExp(`${THREAD_A}|${TURN_A}`));
 });

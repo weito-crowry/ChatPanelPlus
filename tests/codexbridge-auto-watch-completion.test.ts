@@ -34,6 +34,49 @@ test('大きすぎる回答と32件を超えるBridge ID一致は登録候補を
   });
 });
 
+test('live Turn IDは対応threadへ一度だけ結び、明示thread IDと同時記載ならthread指定を保つ', async () => {
+  const api = await import('../src/content/codexbridge-auto-watch-completion.ts') as Record<string, unknown>;
+  const match = api.matchKnownBridgeRunningExecutionIds as
+    ((text: string, targetId: string, candidates: readonly { threadId: string; turnId: string | null }[]) => unknown) | undefined;
+  assert.equal(typeof match, 'function');
+  const turnA = '01a20fc8-e85f-7333-9501-cac4e67cd7dd';
+  const turnB = '01a20fc9-e85f-7333-9501-cac4e67cd7de';
+  const candidates = [
+    { threadId: THREAD_A, turnId: turnA },
+    { threadId: THREAD_B, turnId: turnB },
+  ];
+
+  assert.deepEqual(match!(`running turn ${turnA}`, 'target-1', candidates), {
+    status: 'ok', threadIds: [THREAD_A], expectedTurns: [{ threadId: THREAD_A, turnId: turnA }],
+  });
+  assert.deepEqual(match!(`thread ${THREAD_A}; turn ${turnA}; turn ${turnA}`, 'target-1', candidates), {
+    status: 'ok', threadIds: [THREAD_A], expectedTurns: [],
+  });
+  assert.deepEqual(match!(`${turnA} and ${THREAD_B}`, 'target-1', candidates), {
+    status: 'ok', threadIds: [THREAD_A, THREAD_B], expectedTurns: [{ threadId: THREAD_A, turnId: turnA }],
+  });
+});
+
+test('Turn ID照合は厳密な境界・URL・targetとalias衝突をthread候補と同様に扱う', async () => {
+  const api = await import('../src/content/codexbridge-auto-watch-completion.ts') as Record<string, unknown>;
+  const match = api.matchKnownBridgeRunningExecutionIds as
+    ((text: string, targetId: string, candidates: readonly { threadId: string; turnId: string | null }[]) => unknown) | undefined;
+  assert.equal(typeof match, 'function');
+  const turnA = '01a20fc8-e85f-7333-9501-cac4e67cd7dd';
+  const turnB = '01a20fc9-e85f-7333-9501-cac4e67cd7de';
+  const candidates = [{ threadId: THREAD_A, turnId: turnA }];
+  for (const text of [`x${turnA}`, `${turnA}suffix`, `https://bridge.example/turn/${turnA}`]) {
+    assert.deepEqual(match!(text, 'target-1', candidates), { status: 'ok', threadIds: [], expectedTurns: [] }, text);
+  }
+  assert.deepEqual(match!(`other::${THREAD_A}; ${turnB}`, 'target-1', candidates), {
+    status: 'ok', threadIds: [], expectedTurns: [],
+  });
+  assert.deepEqual(match!('native_thread-7', 'target-1', [
+    { threadId: 'target-1::native_thread-7', turnId: turnA },
+    { threadId: 'target-1::other-native', turnId: 'native_thread-7' },
+  ]), { status: 'ok', threadIds: [], expectedTurns: [] });
+});
+
 test('AnswerCompletionTrackerは本文scanより前にidentity-only通知し、過去turnと本文を渡さない', async () => {
   const prior = turn('prior-turn', '過去質問', `過去 ${THREAD_B}`, 'prior-assistant');
   const active = turn('active-turn', '質問', '', 'active-assistant', 'in_progress');
@@ -143,4 +186,17 @@ test('final registration requestにはcanonical Bridge IDとconnectionだけを�
     completionNotice, [THREAD_A]), null);
   assert.equal(createCodexBridgeAutoWatchCompletionMessage('target-1', 'connection-A', 'owner', '/c/owner',
     completionNotice, Array.from({ length: 33 }, (_, index) => `candidate-${index}`)), null);
+});
+
+test('Turn IDだけで選ばれたcanonical threadの期待turnを登録要求に保持する', () => {
+  const turnA = '01a20fc8-e85f-7333-9501-cac4e67cd7dd';
+  const expectedTurns = [{ threadId: THREAD_A, turnId: turnA }];
+  const message = createCodexBridgeAutoWatchCompletionMessage('target-1', 'connection-A', 'owner', '/c/owner',
+    completionNotice, [THREAD_A], expectedTurns);
+  assert.deepEqual(message, {
+    type: 'CODEX_BRIDGE_AUTO_WATCH_COMPLETED', targetId: 'target-1', candidateConnectionId: 'connection-A',
+    conversationId: 'owner', turnKey: 'completed-turn', assistantMessageId: 'assistant-message', threadIds: [THREAD_A],
+    expectedTurns,
+  });
+  assert.equal(JSON.stringify(message).includes('本文'), false);
 });

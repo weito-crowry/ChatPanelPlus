@@ -247,7 +247,8 @@ export function CodexBridgeAutoWatchControl({ targetId, targetName, conversation
             isCurrentRun()
               ? { document, pathname: window.location.pathname, targetId: expectedTarget, conversationId: expectedConversation }
               : null,
-            expectedTarget, expectedConversation, expectedPathname, notice, match.candidateThreadIds,
+            expectedTarget, expectedConversation, expectedPathname, notice,
+            match.candidateThreads ?? match.candidateThreadIds,
           );
           if (currentMatch.status !== 'ready') {
             updateDiagnostic({ match: diagnosticStage('skipped', null, safeDiagnosticReason(currentMatch.reason)) });
@@ -256,6 +257,7 @@ export function CodexBridgeAutoWatchControl({ targetId, targetName, conversation
           updateDiagnostic({ match: diagnosticStage('ok', currentMatch.threadIds.length) });
           const message = createCodexBridgeAutoWatchCompletionMessage(
             expectedTarget, match.connectionId, expectedConversation, expectedPathname, notice, currentMatch.threadIds,
+            currentMatch.expectedTurns,
           );
           if (!message) {
             updateDiagnostic({ registration: diagnosticStage('skipped', null, 'invalid-request') });
@@ -387,7 +389,7 @@ export function CodexBridgeAutoWatchControl({ targetId, targetName, conversation
           <span>監視登録: {stageLabel(currentDiagnostic.registration)}</span>
         </> : <span>この会話で回答完了イベントはまだありません。</span>}
       </details>}
-      <small className="codex-bridge-note">ON中は回答完了時、その回答本文にあるthread IDのうちBridgeがliveと返したものだけを登録します。完了前に終了した短命タスクは登録しません。OFFでも既存watchと通知履歴は残ります。</small>
+      <small className="codex-bridge-note">ON中は回答完了時、その回答本文にあるThread IDまたは実行中Turn IDから、Bridgeがliveと返したthreadを登録します。Turn IDだけの一致は登録直前にも同じ実行中turnであることを確認します。完了前に終了した短命タスクは登録しません。OFFでも既存watchと通知履歴は残ります。</small>
       {!routeValid && <small className="codex-bridge-note">会話routeを確認できないため、設定を表示・変更していません。</small>}
     </div>
   );

@@ -5,9 +5,11 @@ import {
   CODEX_BRIDGE_AUTO_WATCH_GET_RUNNING_CANDIDATES,
   CODEX_BRIDGE_AUTO_WATCH_THREAD_IDS_LIMIT,
   isCodexBridgeAutoWatchIdentity,
+  isCodexBridgeAutoWatchExpectedTurns,
   isCodexBridgeWatchIdentifier,
   type CodexBridgeAutoWatchCandidateRequest,
   type CodexBridgeAutoWatchCompletionMessage,
+  type CodexBridgeAutoWatchExpectedTurn,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import { conversationIdFromPath, isConversationId } from '../shared/conversation-route.ts';
 import type { AnswerCompletionCheckReason, AnswerCompletionEvent } from './answer-completion-sound.ts';
@@ -42,14 +44,16 @@ export type CodexBridgeAutoWatchCompletionPublishResult = Readonly<{ status: 're
   | Readonly<{ status: 'skipped'; reason: 'invalid-route' | 'duplicate-event' }>;
 
 export type CodexBridgeAutoWatchMatchResult = Readonly<{ status: 'ready'; connectionId: string; threadIds: readonly string[];
-  candidateThreadIds: readonly string[] }>
+  candidateThreadIds: readonly string[]; candidateThreads?: readonly CodexBridgeAutoWatchLiveCandidate[];
+  expectedTurns?: readonly CodexBridgeAutoWatchExpectedTurn[] }>
   | Readonly<{ status: 'skipped'; reason: 'invalid-route' | 'candidate-response-invalid' | 'no-running-candidates'
     | 'dom-unavailable' | 'turn-not-unique' | 'answer-not-confirmed' | 'answer-too-large' | 'no-matching-ids'
     | 'ambiguous-match'
     | 'too-many-matches' }>
   | Readonly<{ status: 'failed'; reason: string }>;
 
-export type CodexBridgeAutoWatchCurrentMatchResult = Readonly<{ status: 'ready'; threadIds: readonly string[] }>
+export type CodexBridgeAutoWatchCurrentMatchResult = Readonly<{ status: 'ready'; threadIds: readonly string[];
+  expectedTurns?: readonly CodexBridgeAutoWatchExpectedTurn[] }>
   | Readonly<{ status: 'skipped'; reason: 'invalid-route' | 'dom-unavailable' | 'turn-not-unique'
     | 'answer-not-confirmed' | 'answer-too-large' | 'no-matching-ids' | 'ambiguous-match' | 'too-many-matches' }>;
 
@@ -68,7 +72,10 @@ export type CodexBridgeAutoWatchDomContext = Readonly<{
 
 type CompletionListener = (notice: CodexBridgeAutoWatchCompletionNotice) => void;
 type CompletionCheckListener = (check: CodexBridgeAutoWatchCompletionCheck) => void;
-type CandidateSet = Readonly<{ connectionId: string | null; threadIds: readonly string[] }>;
+export type CodexBridgeAutoWatchLiveCandidate = Readonly<{ threadId: string; turnId: string | null }>;
+export type { CodexBridgeAutoWatchExpectedTurn } from '../shared/codexbridge-thread-monitor-protocol.ts';
+type CandidateSet = Readonly<{ connectionId: string | null; threadIds: readonly string[];
+  threads: readonly CodexBridgeAutoWatchLiveCandidate[] }>;
 const listeners = new Set<CompletionListener>();
 const completionCheckListeners = new Set<CompletionCheckListener>();
 const recentCompletionKeys = new Set<string>();
@@ -149,6 +156,7 @@ export function createCodexBridgeAutoWatchCompletionMessage(
   pathname: string,
   notice: CodexBridgeAutoWatchCompletionNotice,
   threadIds: readonly string[],
+  expectedTurns: readonly CodexBridgeAutoWatchExpectedTurn[] = [],
 ): CodexBridgeAutoWatchCompletionMessage | null {
   if (!targetId || !isCodexBridgeWatchIdentifier(targetId) || targetId.length > 512
     || !candidateConnectionId || !isCodexBridgeWatchIdentifier(candidateConnectionId) || candidateConnectionId.length > 96
@@ -157,9 +165,11 @@ export function createCodexBridgeAutoWatchCompletionMessage(
     || !isCodexBridgeAutoWatchIdentity(notice.assistantMessageId) || !Array.isArray(threadIds) || threadIds.length === 0
     || threadIds.length > CODEX_BRIDGE_AUTO_WATCH_THREAD_IDS_LIMIT
     || Array.from(threadIds).some((id) => !isCodexBridgeWatchIdentifier(id) || id.length > 512)
-    || new Set(threadIds).size !== threadIds.length) return null;
+    || new Set(threadIds).size !== threadIds.length || !Array.isArray(expectedTurns)
+    || !isCodexBridgeAutoWatchExpectedTurns(expectedTurns, threadIds)) return null;
   return { type: CODEX_BRIDGE_AUTO_WATCH_COMPLETED, targetId, candidateConnectionId, conversationId,
-    turnKey: notice.turnKey, assistantMessageId: notice.assistantMessageId, threadIds: [...threadIds] };
+    turnKey: notice.turnKey, assistantMessageId: notice.assistantMessageId, threadIds: [...threadIds],
+    ...(expectedTurns.length ? { expectedTurns: [...expectedTurns] } : {}) };
 }
 
 function parseCandidateResponse(value: unknown): CandidateSet | null | Readonly<{ failed: string }> {
@@ -172,16 +182,30 @@ function parseCandidateResponse(value: unknown): CandidateSet | null | Readonly<
   if (Object.keys(response).length !== 2 || typeof response.data !== 'object' || response.data === null
     || Array.isArray(response.data)) return null;
   const data = response.data as Record<string, unknown>;
-  if (Object.keys(data).length !== 2 || !(data.connectionId === null
-    || (isCodexBridgeWatchIdentifier(data.connectionId) && data.connectionId.length <= 96))
-    || !Array.isArray(data.threadIds) || data.threadIds.length > CODEX_BRIDGE_AUTO_WATCH_BRIDGE_CANDIDATE_IDS_LIMIT
-    || Array.from(data.threadIds).some((id) => !isCodexBridgeWatchIdentifier(id) || id.length > 512)
-    || new Set(data.threadIds).size !== data.threadIds.length) return null;
-  const ids = Array.from(data.threadIds) as string[];
-  const totalCharacters = ids.reduce((total, id) => total + id.length + 1, 0);
+  if (!(data.connectionId === null || (isCodexBridgeWatchIdentifier(data.connectionId) && data.connectionId.length <= 96))) {
+    return null;
+  }
+  let threads: CodexBridgeAutoWatchLiveCandidate[];
+  if (Object.keys(data).length === 2 && Array.isArray(data.threads)) {
+    if (data.threads.length > CODEX_BRIDGE_AUTO_WATCH_BRIDGE_CANDIDATE_IDS_LIMIT
+      || Array.from(data.threads).some((item) => !item || typeof item !== 'object' || Array.isArray(item)
+        || Object.keys(item).length !== 2 || !isCodexBridgeWatchIdentifier((item as Record<string, unknown>).threadId)
+        || !isCodexBridgeWatchIdentifier((item as Record<string, unknown>).turnId)
+        || ((item as Record<string, unknown>).threadId as string).length > 512
+        || ((item as Record<string, unknown>).turnId as string).length > 512)) return null;
+    threads = Array.from(data.threads) as CodexBridgeAutoWatchLiveCandidate[];
+  } else if (Object.keys(data).length === 2 && Array.isArray(data.threadIds)) {
+    if (data.threadIds.length > CODEX_BRIDGE_AUTO_WATCH_BRIDGE_CANDIDATE_IDS_LIMIT
+      || Array.from(data.threadIds).some((id) => !isCodexBridgeWatchIdentifier(id) || id.length > 512)) return null;
+    threads = Array.from(data.threadIds, (threadId) => ({ threadId: threadId as string, turnId: null }));
+  } else return null;
+  const ids = threads.map(({ threadId }) => threadId);
+  if (new Set(ids).size !== ids.length) return null;
+  const totalCharacters = threads.reduce((total, candidate) =>
+    total + candidate.threadId.length + (candidate.turnId?.length ?? 0) + 2, 0);
   if (totalCharacters > CODEX_BRIDGE_AUTO_WATCH_BRIDGE_CANDIDATE_CHARS_LIMIT
     || (data.connectionId === null && ids.length > 0)) return null;
-  return { connectionId: data.connectionId, threadIds: ids };
+  return { connectionId: data.connectionId, threadIds: ids, threads };
 }
 
 function isExpectedCompletionPage(page: CodexBridgeAutoWatchDomContext | null, targetId: string,
@@ -196,7 +220,7 @@ export function matchCurrentCompletedAssistantMessage(
   conversationId: string,
   pathname: string,
   event: AnswerCompletionEvent,
-  candidateThreadIds: readonly string[],
+  candidateThreadIds: readonly string[] | readonly CodexBridgeAutoWatchLiveCandidate[],
 ): CodexBridgeAutoWatchCurrentMatchResult {
   if (!isExpectedCompletionPage(page, targetId, conversationId, pathname)) {
     return { status: 'skipped', reason: 'invalid-route' };
@@ -208,10 +232,15 @@ export function matchCurrentCompletedAssistantMessage(
   const text = readCompletedAssistantMessageText(turn, event.assistantMessageId);
   if (text === null) return { status: 'skipped', reason: 'answer-not-confirmed' };
   if (text.length > MAX_ANSWER_TEXT_CODE_UNITS) return { status: 'skipped', reason: 'answer-too-large' };
-  const matched = matchKnownBridgeRunningThreadIds(text, targetId, candidateThreadIds);
+  const candidates: CodexBridgeAutoWatchLiveCandidate[] = candidateThreadIds.length === 0
+    || typeof candidateThreadIds[0] === 'string'
+    ? Array.from(candidateThreadIds as readonly string[], (threadId) => ({ threadId, turnId: null }))
+    : Array.from(candidateThreadIds as readonly CodexBridgeAutoWatchLiveCandidate[]);
+  const matched = matchKnownBridgeRunningExecutionIds(text, targetId, candidates);
   if (matched.status === 'skipped') return matched;
   if (!matched.threadIds.length) return { status: 'skipped', reason: 'no-matching-ids' };
-  return { status: 'ready', threadIds: matched.threadIds };
+  return { status: 'ready', threadIds: matched.threadIds,
+    ...(matched.expectedTurns.length ? { expectedTurns: matched.expectedTurns } : {}) };
 }
 
 function charBefore(text: string, index: number): string {
@@ -263,21 +292,38 @@ export function matchKnownBridgeRunningThreadIds(
   bridgeThreadIds: readonly string[],
 ): Readonly<{ status: 'ok'; threadIds: readonly string[] }>
   | Readonly<{ status: 'skipped'; reason: 'answer-too-large' | 'too-many-matches' | 'ambiguous-match' }> {
+  const matched = matchKnownBridgeRunningExecutionIds(text, targetId,
+    bridgeThreadIds.map((threadId) => ({ threadId, turnId: null })));
+  return matched.status === 'ok' ? { status: 'ok', threadIds: matched.threadIds } : matched;
+}
+
+export function matchKnownBridgeRunningExecutionIds(
+  text: string,
+  targetId: string,
+  candidates: readonly CodexBridgeAutoWatchLiveCandidate[],
+): Readonly<{ status: 'ok'; threadIds: readonly string[]; expectedTurns: readonly CodexBridgeAutoWatchExpectedTurn[] }>
+  | Readonly<{ status: 'skipped'; reason: 'answer-too-large' | 'too-many-matches' | 'ambiguous-match' }> {
   if (text.length > MAX_ANSWER_TEXT_CODE_UNITS) return { status: 'skipped', reason: 'answer-too-large' };
-  const aliases = new Map<string, Set<string>>();
-  for (const bridgeId of bridgeThreadIds) {
-    if (!isCodexBridgeWatchIdentifier(bridgeId) || bridgeId.length > 512) continue;
-    for (const alias of aliasesForBridgeId(targetId, bridgeId)) {
-      const ids = aliases.get(alias) ?? new Set<string>();
-      ids.add(bridgeId);
-      aliases.set(alias, ids);
+  const aliases = new Map<string, Map<string, { threadId: string; threadAlias: boolean }>>();
+  const addAlias = (alias: string, candidate: CodexBridgeAutoWatchLiveCandidate, kind: 'thread' | 'turn') => {
+    const entries = aliases.get(alias) ?? new Map<string, { threadId: string; threadAlias: boolean }>();
+    const entry = entries.get(candidate.threadId) ?? { threadId: candidate.threadId, threadAlias: false };
+    if (kind === 'thread') entry.threadAlias = true;
+    entries.set(candidate.threadId, entry);
+    aliases.set(alias, entries);
+  };
+  for (const candidate of candidates) {
+    if (!isCodexBridgeWatchIdentifier(candidate.threadId) || candidate.threadId.length > 512) continue;
+    for (const alias of aliasesForBridgeId(targetId, candidate.threadId)) addAlias(alias, candidate, 'thread');
+    if (candidate.turnId && isCodexBridgeWatchIdentifier(candidate.turnId) && candidate.turnId.length <= 512) {
+      addAlias(candidate.turnId, candidate, 'turn');
     }
   }
   const ranges = urlRanges(text);
-  const matched = new Set<string>();
+  const matched = new Map<string, { threadAlias: boolean }>();
   const occurrences: { start: number; end: number; id: string }[] = [];
-  for (const [alias, canonicalIds] of aliases) {
-    if (canonicalIds.size !== 1) continue;
+  for (const [alias, canonicalThreads] of aliases) {
+    if (canonicalThreads.size !== 1) continue;
     const aliasIsAscii = Array.from(alias).every((character) => (character.codePointAt(0) ?? 0) <= 0x7f);
     let offset = 0;
     while (offset < text.length) {
@@ -286,9 +332,10 @@ export function matchKnownBridgeRunningThreadIds(
       const end = start + alias.length;
       offset = start + 1;
       if (!isIndependentToken(text, start, end, aliasIsAscii, ranges)) continue;
-      const id = canonicalIds.values().next().value!;
-      matched.add(id);
-      occurrences.push({ start, end, id });
+      const entry = canonicalThreads.values().next().value!;
+      const prior = matched.get(entry.threadId);
+      matched.set(entry.threadId, { threadAlias: Boolean(prior?.threadAlias || entry.threadAlias) });
+      occurrences.push({ start, end, id: entry.threadId });
       if (matched.size > CODEX_BRIDGE_AUTO_WATCH_THREAD_IDS_LIMIT) {
         return { status: 'skipped', reason: 'too-many-matches' };
       }
@@ -303,7 +350,13 @@ export function matchKnownBridgeRunningThreadIds(
       if (occurrences[otherIndex]!.id !== current.id) return { status: 'skipped', reason: 'ambiguous-match' };
     }
   }
-  return { status: 'ok', threadIds: [...matched] };
+  const threadIds = [...matched.keys()];
+  const expectedTurns = threadIds.flatMap((threadId) => {
+    if (matched.get(threadId)!.threadAlias) return [];
+    const candidate = candidates.find((item) => item.threadId === threadId);
+    return candidate?.turnId ? [{ threadId, turnId: candidate.turnId }] : [];
+  });
+  return { status: 'ok', threadIds, expectedTurns };
 }
 
 function reportProgress(onProgress: ((progress: CodexBridgeAutoWatchCompletionProgress) => void) | undefined,
@@ -361,9 +414,11 @@ export async function matchCompletedAnswerAfterBridgeCandidates(
   if (!candidates.connectionId || !candidates.threadIds.length) return skip('no-running-candidates');
 
   const matched = matchCurrentCompletedAssistantMessage(getCurrentPage(), targetId, conversationId,
-    routePathname, event, candidates.threadIds);
+    routePathname, event, candidates.threads);
   if (matched.status === 'skipped') return skip(matched.reason);
   reportProgress(onProgress, { stage: 'match', status: 'ok', count: matched.threadIds.length });
   return { status: 'ready', connectionId: candidates.connectionId, threadIds: matched.threadIds,
-    candidateThreadIds: candidates.threadIds };
+    candidateThreadIds: candidates.threadIds,
+    ...(candidates.threads.some((candidate) => candidate.turnId !== null) ? { candidateThreads: candidates.threads } : {}),
+    ...(matched.expectedTurns?.length ? { expectedTurns: matched.expectedTurns } : {}) };
 }

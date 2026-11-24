@@ -15,6 +15,7 @@ import {
   CODEX_BRIDGE_WATCH_START,
   CODEX_BRIDGE_WATCH_STOP,
   isCodexBridgeAutoWatchIdentity,
+  isCodexBridgeAutoWatchExpectedTurns,
   isCodexBridgeWatchIdentifier,
   type CodexBridgeWatchListData,
   type CodexBridgeWatchMessage,
@@ -162,13 +163,15 @@ function isMessage(value: unknown): value is CodexBridgeWatchMessage | CodexBrid
     && (value.type === CODEX_BRIDGE_AUTO_WATCH_GET
       ? keys.length === 3 : keys.length === 4 && typeof value.enabled === 'boolean')) return true;
   if (value.type === CODEX_BRIDGE_AUTO_WATCH_COMPLETED) {
-    return keys.length === 7 && isCodexBridgeWatchIdentifier(value.targetId) && value.targetId.length <= 512
+    const hasExpectedTurns = Object.hasOwn(value, 'expectedTurns');
+    return keys.length === (hasExpectedTurns ? 8 : 7) && isCodexBridgeWatchIdentifier(value.targetId) && value.targetId.length <= 512
       && isCodexBridgeWatchIdentifier(value.candidateConnectionId) && value.candidateConnectionId.length <= 96
       && isConversationId(value.conversationId)
       && isCodexBridgeAutoWatchIdentity(value.turnKey) && isCodexBridgeAutoWatchIdentity(value.assistantMessageId)
       && Array.isArray(value.threadIds) && value.threadIds.length > 0 && value.threadIds.length <= 32
       && Array.from(value.threadIds).every((id) => isCodexBridgeWatchIdentifier(id) && id.length <= 512)
-      && new Set(value.threadIds).size === value.threadIds.length;
+      && new Set(value.threadIds).size === value.threadIds.length
+      && (!hasExpectedTurns || isCodexBridgeAutoWatchExpectedTurns(value.expectedTurns, value.threadIds as string[]));
   }
   if (value.type === CODEX_BRIDGE_AUTO_WATCH_GET_RUNNING_CANDIDATES) {
     return keys.length === 5 && isCodexBridgeWatchIdentifier(value.targetId) && value.targetId.length <= 512
@@ -236,7 +239,7 @@ export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridg
     | CodexBridgeWatchResponse<Readonly<{ removed: boolean }>>
     | CodexBridgeWatchResponse<CodexBridgeWatchListData>
     | CodexBridgeWatchResponse<CodexBridgeAutoWatchStatus>
-    | CodexBridgeWatchResponse<Readonly<{ connectionId: string | null; threadIds: readonly string[] }>>
+    | CodexBridgeWatchResponse<Readonly<{ connectionId: string | null; threads: readonly { threadId: string; turnId: string }[] }>>
     | CodexBridgeWatchResponse<Readonly<{ registeredCount: number; outcomes?: CodexBridgeAutoWatchRegistrationResult['outcomes'] }>>
     | CodexBridgeWatchResponse<CodexBridgeWatchSnapshot | null>
     | CodexBridgeWatchResponse<CodexBridgeWatchListData>
@@ -264,7 +267,7 @@ export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridg
         return result.ok ? { ok: true, data: result.status } : { ok: false, reason: result.reason };
       }
       if (message.type === CODEX_BRIDGE_AUTO_WATCH_GET_RUNNING_CANDIDATES) {
-        if (!options.autoRegistration) return { ok: true, data: { connectionId: null, threadIds: [] } };
+        if (!options.autoRegistration) return { ok: true, data: { connectionId: null, threads: [] } };
         return options.autoRegistration.getRunningCandidates(message.targetId, identity.tabId, identity.conversationId,
           message.turnKey, message.assistantMessageId);
       }
@@ -273,12 +276,12 @@ export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridg
         if (options.autoRegistration.registerCompletedAnswerWithDiagnostics) {
           const data = await options.autoRegistration.registerCompletedAnswerWithDiagnostics(message.targetId,
             message.candidateConnectionId, identity.tabId, identity.conversationId, message.turnKey,
-            message.assistantMessageId, message.threadIds);
+            message.assistantMessageId, message.threadIds, message.expectedTurns);
           return { ok: true, data };
         }
         const registeredCount = await options.autoRegistration.registerCompletedAnswer(message.targetId,
           message.candidateConnectionId, identity.tabId, identity.conversationId, message.turnKey,
-          message.assistantMessageId, message.threadIds);
+          message.assistantMessageId, message.threadIds, message.expectedTurns);
         return { ok: true, data: { registeredCount } };
       }
       if (message.type === CODEX_BRIDGE_WATCH_START) {

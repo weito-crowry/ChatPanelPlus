@@ -8,6 +8,7 @@ import type {
 import type { CodexBridgeMonitorAccess, CodexBridgeThreadMonitor } from './thread-monitor.ts';
 import type { AutoEntry, AutoState } from './thread-monitor-auto-registration-state.ts';
 import { currentExecution, failureFor, isLiveCandidate, statusFromThread, threadIdsMatch } from './thread-monitor-auto-registration-utils.ts';
+import type { CodexBridgeAutoWatchExpectedTurn } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import { readFreshRunningPage } from './thread-monitor-running-page.ts';
 import type { CodexBridgeOwnerIdentity } from './thread-monitor-owner-lease.ts';
 import type { OwnerMuteResult, RuntimeOwnerClaim } from './thread-monitor-auto-registration-owner.ts';
@@ -43,7 +44,8 @@ function watchedReason(ownerConversationId: string | undefined, ownerTabId: numb
 }
 
 export async function registerCompletedAnswerOnce(dependencies: Dependencies, targetId: string, candidateConnectionId: string,
-  ownerTabId: number, conversationId: string, candidateThreadIds: readonly string[]): Promise<CodexBridgeAutoWatchRegistrationResult> {
+  ownerTabId: number, conversationId: string, candidateThreadIds: readonly string[],
+  candidateExpectedTurns: readonly CodexBridgeAutoWatchExpectedTurn[] = []): Promise<CodexBridgeAutoWatchRegistrationResult> {
   const outcomes = new Map<CodexBridgeAutoWatchRegistrationReason, number>();
   const add = (reason: CodexBridgeAutoWatchRegistrationReason, count = 1) => outcomes.set(reason, (outcomes.get(reason) ?? 0) + count);
   const stop = async (reason: CodexBridgeAutoWatchRegistrationReason, failure?: CodexBridgeAutoWatchFailure) => {
@@ -122,6 +124,19 @@ export async function registerCompletedAnswerOnce(dependencies: Dependencies, ta
 
   const liveCandidates = threads.filter((thread) => isLiveCandidate(thread, targetId));
   const liveByThread = new Map(liveCandidates.map((thread) => [thread.id, currentExecution(thread)!.turnId]));
+  const expectedTurnByThread = new Map(candidateExpectedTurns.map((expected) => [expected.threadId, expected.turnId]));
+  const candidates: CodexBridgeThread[] = [];
+  let missingCount = 0;
+  for (const candidateId of candidateThreadIds) {
+    const matches = liveCandidates.filter((thread) => threadIdsMatch(targetId, candidateId, thread.id));
+    const expectedTurnId = expectedTurnByThread.get(candidateId);
+    if (matches.length !== 1 || (expectedTurnId !== undefined
+      && currentExecution(matches[0]!)?.turnId !== expectedTurnId)) {
+      missingCount += 1;
+      continue;
+    }
+    candidates.push(matches[0]!);
+  }
   const priorSkips = entry.skippedExecutions;
   const remainingSkips = priorSkips.flatMap((skip) => {
     const activeTurnId = liveByThread.get(skip.threadId);
@@ -142,9 +157,6 @@ export async function registerCompletedAnswerOnce(dependencies: Dependencies, ta
     if (saved === null) return stop('owner-state-unavailable', 'storage-error');
   }
 
-  const candidates = liveCandidates.filter((thread) => candidateThreadIds.some((candidateId) => threadIdsMatch(targetId, candidateId, thread.id)));
-  const missingCount = candidateThreadIds.filter((candidateId) => !liveCandidates.some((thread) =>
-    threadIdsMatch(targetId, candidateId, thread.id))).length;
   if (missingCount) add('candidate-no-longer-live', missingCount);
   const ownerMute = await (async () => {
     try { return await dependencies.loadOwnerMute(ownerTabId, conversationId); } catch { return { ok: false as const }; }

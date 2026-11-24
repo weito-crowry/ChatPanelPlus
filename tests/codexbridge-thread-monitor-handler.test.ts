@@ -96,11 +96,12 @@ function handlerFixture(connectionId = item.connectionId, sourceItems: readonly 
     async getRunningCandidates(targetId: string, tabId: number, conversationId: string, turnKey: string,
       assistantMessageId: string) {
       calls.push(`auto:candidates:${targetId}:${tabId}:${conversationId}:${turnKey}:${assistantMessageId}`);
-      return { ok: true as const, data: { connectionId, threadIds: ['thread-1'] } };
+      return { ok: true as const, data: { connectionId, threads: [{ threadId: 'thread-1', turnId: 'turn-1' }] } };
     },
     async registerCompletedAnswer(targetId: string, candidateConnectionId: string, tabId: number, conversationId: string, turnKey: string,
-      assistantMessageId: string, threadIds: readonly string[]) {
+      assistantMessageId: string, threadIds: readonly string[], expectedTurns?: readonly { threadId: string; turnId: string }[]) {
       calls.push(`auto:completed:${targetId}:${candidateConnectionId}:${tabId}:${conversationId}:${turnKey}:${assistantMessageId}:${threadIds.join(',')}`);
+      if (expectedTurns?.length) calls.push(`auto:expected-turns:${expectedTurns.map(({ threadId, turnId }) => `${threadId}=${turnId}`).join(',')}`);
       return threadIds.length;
     },
     ...(includeDetailedRegistration ? { async registerCompletedAnswerWithDiagnostics() {
@@ -211,7 +212,8 @@ test('candidate endpoint returns owner-verified Bridge IDs before the final regi
   const { handle, calls } = handlerFixture(item.connectionId, [item], [event], false, true);
   const response = await handle({ type: 'CODEX_BRIDGE_AUTO_WATCH_GET_RUNNING_CANDIDATES', targetId: 'target-1',
     conversationId: 'test', turnKey: 'completed-turn', assistantMessageId: 'assistant-message' }, trustedSender);
-  assert.deepEqual(response, { ok: true, data: { connectionId: item.connectionId, threadIds: ['thread-1'] } });
+  assert.deepEqual(response, { ok: true, data: { connectionId: item.connectionId,
+    threads: [{ threadId: 'thread-1', turnId: 'turn-1' }] } });
   assert.deepEqual(calls, ['auto:candidates:target-1:4:test:completed-turn:assistant-message']);
 });
 
@@ -357,7 +359,7 @@ test('自動登録のGET/SET/completionはtrusted current conversationだけに�
   const candidateRequest = { type: CODEX_BRIDGE_AUTO_WATCH_GET_RUNNING_CANDIDATES, targetId: 'target-1', conversationId: 'test',
     turnKey: 'turn-1', assistantMessageId: 'answer-1' };
   assert.deepEqual(await handle(candidateRequest, trustedSender), {
-    ok: true, data: { connectionId: item.connectionId, threadIds: ['thread-1'] },
+    ok: true, data: { connectionId: item.connectionId, threads: [{ threadId: 'thread-1', turnId: 'turn-1' }] },
   });
   const completed = {
     type: CODEX_BRIDGE_AUTO_WATCH_COMPLETED, targetId: 'target-1', candidateConnectionId: item.connectionId,
@@ -390,6 +392,31 @@ test('自動登録completionの余分なfieldと32件超過を拒否する', asy
     ok: false, reason: 'invalid-request',
   });
   assert.deepEqual(await handle({ ...base, threadIds: Array.from({ length: 33 }, () => '01a207cf-52ab-7900-a91d-3288982ab221') }, trustedSender), {
+    ok: false, reason: 'invalid-request',
+  });
+  assert.deepEqual(calls, []);
+});
+
+test('completion validatorはcanonical threadに結びついた期待turnを検証しhandlerから転送する', async () => {
+  const { handle, calls } = handlerFixture(item.connectionId, [item], [event], false, true);
+  const threadId = '01a207cf-52ab-7900-a91d-3288982ab221';
+  const turnId = '01a20fc8-e85f-7333-9501-cac4e67cd7dd';
+  const base = {
+    type: CODEX_BRIDGE_AUTO_WATCH_COMPLETED, targetId: 'target-1', candidateConnectionId: item.connectionId,
+    conversationId: 'test', turnKey: 'turn-1', assistantMessageId: 'answer-1', threadIds: [threadId],
+  };
+  assert.deepEqual(await handle({ ...base, expectedTurns: [{ threadId, turnId }] }, trustedSender), {
+    ok: true, data: { registeredCount: 1 },
+  });
+  assert.deepEqual(calls, [
+    `auto:completed:target-1:${item.connectionId}:4:test:turn-1:answer-1:${threadId}`,
+    `auto:expected-turns:${threadId}=${turnId}`,
+  ]);
+  calls.length = 0;
+  assert.deepEqual(await handle({ ...base, expectedTurns: [{ threadId: 'unmatched-thread', turnId }] }, trustedSender), {
+    ok: false, reason: 'invalid-request',
+  });
+  assert.deepEqual(await handle({ ...base, expectedTurns: [{ threadId, turnId }, { threadId, turnId }] }, trustedSender), {
     ok: false, reason: 'invalid-request',
   });
   assert.deepEqual(calls, []);

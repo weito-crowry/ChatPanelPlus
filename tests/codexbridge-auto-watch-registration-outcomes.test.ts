@@ -120,6 +120,22 @@ test('登録結果は候補のlive消失と既存watch ownerを件数だけで�
   }
 });
 
+test('Turn ID由来の候補は同じthreadでも登録前にturnが変われば拒否し、thread指定は現行意味を保つ', async () => {
+  const expectedTurnId = turnOneId;
+  const changed = harness(turnTwoId);
+  await changed.auto.setEnabled(target.id, ownerTabId, conversationId, true);
+  assert.deepEqual(await changed.auto.registerCompletedAnswerWithDiagnostics(target.id, 'connection-A', ownerTabId,
+    conversationId, 'answer-changed-turn', 'assistant-changed-turn', [threadId], [{ threadId, turnId: expectedTurnId }]), {
+    registeredCount: 0, outcomes: [{ reason: 'candidate-no-longer-live', count: 1 }],
+  });
+  assert.deepEqual(await changed.monitor.list(), []);
+
+  const explicitThread = harness(turnTwoId);
+  await explicitThread.auto.setEnabled(target.id, ownerTabId, conversationId, true);
+  assert.equal(await explicitThread.auto.registerCompletedAnswer(target.id, 'connection-A', ownerTabId,
+    conversationId, 'answer-explicit-thread', 'assistant-explicit-thread', [threadId]), 1);
+});
+
 test('owner claimと接続generationの早期終了を区別する', async () => {
   const claimed = harness(turnOneId, true);
   await claimed.auto.setEnabled(target.id, ownerTabId, conversationId, true);

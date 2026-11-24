@@ -54,7 +54,7 @@ test('auto candidateは2秒以内のfresh snapshotだけを要求する', async 
     identity.turnKey, identity.assistantMessageId);
   assert.equal(result.ok, true);
   assert.deepEqual(h.optionsSeen[0], { maxAgeMs: 2_000, priority: 'candidate' });
-  if (result.ok) assert.deepEqual(result.data.threadIds, ['thread-live']);
+  if (result.ok) assert.deepEqual(result.data.threads, [{ threadId: 'thread-live', turnId: 'turn-live' }]);
 });
 
 test('登録確定はmanual forceでfresh snapshotを取りstale cacheのIDを登録しない', async () => {
