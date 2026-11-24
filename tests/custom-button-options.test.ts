@@ -142,11 +142,16 @@ test('resetとlegacy importはcustom tab依存を保ち、明示置換の削除�
   assert.equal(reset.customButtons?.[CUSTOM_BUTTON_IDS[0]! as `custom-${string}`]?.groupId, CUSTOM_TAB_ID);
   assert.equal(reset.buttonOrder?.[CUSTOM_TAB_ID]?.length, 7);
   assert.ok(reset.tabOrder?.includes(CUSTOM_TAB_ID));
+  assert.equal(resetSettingsPreservingCustomButtons({ ...settings, codexBridgeTerminalAnswerTemplate: '固定 ##Codex最終回答##' })
+    .codexBridgeTerminalAnswerTemplate, '##Codex最終回答##');
 
-  const legacyImport = { schemaVersion: 1 as const, answerCompletionSoundEnabled: true };
-  const merged = mergeImportedSettings(legacyImport, settings);
+  const legacyImport = parseSettingsJson('{"schemaVersion":1,"answerCompletionSoundEnabled":true}');
+  assert.equal(legacyImport.ok, true);
+  if (!legacyImport.ok) return;
+  const merged = mergeImportedSettings(legacyImport.settings, settings);
   assert.deepEqual(merged.customTabs, settings.customTabs);
   assert.deepEqual(merged.customButtons, settings.customButtons);
+  assert.equal(merged.codexBridgeTerminalAnswerTemplate, '##Codex最終回答##');
   assert.equal(serializeSettings(merged).includes('custom-tab-'), true);
 
   const explicitRemoval = { schemaVersion: 1 as const, customTabs: {}, customButtons: {} };

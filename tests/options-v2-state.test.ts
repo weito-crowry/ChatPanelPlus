@@ -5,6 +5,7 @@ import { getOptionsSectionFromHash, getEditorGroupFallback, type OptionsSectionI
 test('Options V2 resolves supported hash sections and falls back to panel', () => {
   const sections: OptionsSectionId[] = ['panel', 'connection', 'projects', 'audio', 'data'];
   for (const section of sections) assert.equal(getOptionsSectionFromHash(`#${section}`), section);
+  assert.equal(getOptionsSectionFromHash('#auto-reflect'), 'auto-reflect');
   assert.equal(getOptionsSectionFromHash('#unknown'), 'panel');
   assert.equal(getOptionsSectionFromHash(''), 'panel');
 });

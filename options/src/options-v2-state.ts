@@ -1,5 +1,5 @@
-export type OptionsSectionId = 'panel' | 'connection' | 'projects' | 'audio' | 'data';
-const SECTIONS: readonly OptionsSectionId[] = ['panel', 'connection', 'projects', 'audio', 'data'];
+export type OptionsSectionId = 'panel' | 'connection' | 'projects' | 'audio' | 'auto-reflect' | 'data';
+const SECTIONS: readonly OptionsSectionId[] = ['panel', 'connection', 'projects', 'audio', 'auto-reflect', 'data'];
 
 export function getOptionsSectionFromHash(hash: string): OptionsSectionId {
   const candidate = hash.replace(/^#/u, '') as OptionsSectionId;

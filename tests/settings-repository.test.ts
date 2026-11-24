@@ -52,6 +52,33 @@ test('初回はschema 1既定値を返し、設定とview stateを別keyで保�
   assert.deepEqual(await repository.loadViewState(), { ok: true, viewState: { selectedTabId: 'wall', minimized: true } });
 });
 
+test('最終回答templateを設定fieldとして保存し、変更競合を検出する', async () => {
+  const base = DEFAULT_SETTINGS;
+  const next = { ...base, codexBridgeTerminalAnswerTemplate: '開始\n##Codex最終回答##\n終了' };
+  const fake = storage();
+  const saved = await new SettingsRepository(fake.area).saveSettings(base, next);
+  assert.equal(saved.ok, true);
+  assert.equal((fake.data[CONFIG_STORAGE_KEY] as ExtensionSettings).codexBridgeTerminalAnswerTemplate, next.codexBridgeTerminalAnswerTemplate);
+
+  const external = { ...base, codexBridgeTerminalAnswerTemplate: '別の固定文 ##Codex最終回答##' };
+  const conflictFake = storage({ [CONFIG_STORAGE_KEY]: external });
+  const conflict = await new SettingsRepository(conflictFake.area).saveSettings(base, next);
+  assert.equal(conflict.ok, false);
+  if (!conflict.ok) assert.deepEqual(conflict.fields, ['codexBridgeTerminalAnswerTemplate']);
+  assert.equal(conflictFake.writes, 0);
+});
+
+test('placeholderなしtemplateの設定保存は明示拒否し、保存値を変更しない', async () => {
+  const fake = storage({ [CONFIG_STORAGE_KEY]: DEFAULT_SETTINGS });
+  const repository = new SettingsRepository(fake.area);
+  const result = await repository.saveSettings(DEFAULT_SETTINGS, {
+    ...DEFAULT_SETTINGS, codexBridgeTerminalAnswerTemplate: '固定文だけ',
+  });
+  assert.deepEqual(result, { ok: false, reason: 'invalid-draft' });
+  assert.deepEqual(fake.data[CONFIG_STORAGE_KEY], DEFAULT_SETTINGS);
+  assert.equal(fake.writes, 0);
+});
+
 test('保存済みschema 1設定の二つのcaretボタンと順序を変更せず読み込む', async () => {
   const firstId = 'custom-123e4567-e89b-42d3-a456-426614174020';
   const secondId = 'custom-123e4567-e89b-42d3-a456-426614174021';
@@ -161,8 +188,7 @@ test('同時の別Options設定はWeb Lockで直列化され、異なるfield変
   ]);
   assert.equal(results.every(({ ok }) => ok), true);
   assert.deepEqual(fake.data[CONFIG_STORAGE_KEY], {
-    schemaVersion: 1,
-    answerCompletionSoundVolumePercent: 60,
+    ...DEFAULT_SETTINGS,
     buttonOverrides: { 'full-btn': { label: '左', color: '#123456' } },
   });
   assert.deepEqual(locks.names, ['chatPanelPlus.config.write', 'chatPanelPlus.config.write']);
@@ -247,8 +273,7 @@ test('Web Locksが使えない場合も逐次保存は最新値へfield単位で
   assert.equal((await repository.saveSettings(DEFAULT_SETTINGS, first)).ok, true);
   assert.equal((await repository.saveSettings(DEFAULT_SETTINGS, second)).ok, true);
   assert.deepEqual(fake.data[CONFIG_STORAGE_KEY], {
-    schemaVersion: 1,
-    answerCompletionSoundVolumePercent: 60,
+    ...DEFAULT_SETTINGS,
     buttonOverrides: { 'full-btn': { label: '左', color: '#123456' } },
   });
 });
@@ -449,7 +474,11 @@ test('ローカルconfig変更だけを通知し、不正値はパネル更新�
   for (const handler of handlers) handler({ [VIEW_STATE_STORAGE_KEY]: { newValue: { selectedTabId: 'wall', minimized: true } } }, 'local');
   assert.equal(received.length, 1);
   assert.deepEqual(receivedView, [{ selectedTabId: 'wall', minimized: true }]);
-  assert.deepEqual(received[0], { schemaVersion: 1, tabOrder: ['wall', 'directive', 'control', 'binary', 'quad'] });
+  assert.deepEqual(received[0], {
+    schemaVersion: 1,
+    tabOrder: ['wall', 'directive', 'control', 'binary', 'quad'],
+    codexBridgeTerminalAnswerTemplate: '##Codex最終回答##',
+  });
   unsubscribe();
   unsubscribeView();
   assert.equal(handlers.length, 0);

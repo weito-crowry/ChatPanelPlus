@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { conversationIdFromPath } from '../shared/conversation-route.ts';
 import { createChromeConversationPanelStateRepository, type ConversationPanelStateRepository } from '../shared/conversation-panel-state-repository.ts';
+import { createChromeSettingsRepository, type SettingsRepository } from '../shared/settings-repository.ts';
 import {
   CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER,
   isCodexBridgeTerminalEventSavedMessage,
@@ -28,6 +29,7 @@ function resultLabel(result: CodexBridgeAutoReflectResult): string {
     'ime-composing': '入力欄がIME変換中のため未反映です。C欄から手動取得できます。',
     'complex-content': '入力欄に添付等があるため未反映です。C欄から手動取得できます。',
     'insertion-failed': '入力欄へ反映できません。C欄から手動取得できます。',
+    'template-unavailable': '最終回答テンプレートを読み込めないか不正なため未反映です。Optionsの設定を確認してください。',
   };
   return labels[result.reason];
 }
@@ -35,6 +37,8 @@ function resultLabel(result: CodexBridgeAutoReflectResult): string {
 export function CodexBridgeTerminalAnswerAutoReflectControl({ conversationId }: Readonly<{ conversationId: string | null }>) {
   const repository = useRef<ConversationPanelStateRepository | null>(null);
   if (!repository.current) repository.current = createChromeConversationPanelStateRepository();
+  const settingsRepository = useRef<SettingsRepository | null>(null);
+  if (!settingsRepository.current) settingsRepository.current = createChromeSettingsRepository();
   const [enabled, setEnabled] = useState(false);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -91,6 +95,10 @@ export function CodexBridgeTerminalAnswerAutoReflectControl({ conversationId }: 
       readFinalAnswer: (eventId) => chrome.runtime.sendMessage({
         type: CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER, eventId,
       }),
+      async readTemplate() {
+        const result = await settingsRepository.current!.loadSettings();
+        return result.ok ? result.settings.codexBridgeTerminalAnswerTemplate : null;
+      },
       appendAnswer(text) { return appendTextAtEnd(text, getBrowserEditorEnvironment()); },
       wait: (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds)),
       onResult(_eventId, result) { setStatus(resultLabel(result)); },

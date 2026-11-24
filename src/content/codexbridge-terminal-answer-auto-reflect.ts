@@ -2,6 +2,10 @@ import {
   isCodexBridgeTerminalEventSavedMessage,
   type CodexBridgeTerminalEventSavedMessage,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
+import {
+  isValidCodexBridgeTerminalAnswerTemplate,
+  renderCodexBridgeTerminalAnswerTemplate,
+} from '../shared/codexbridge-terminal-answer-template.ts';
 import { parseCodexBridgeFinalAnswer } from './codexbridge-watch-response.ts';
 import type { EditResult } from './editor/adapter.ts';
 
@@ -9,12 +13,13 @@ export type CodexBridgeAutoReflectResult = Readonly<{ status: 'reflected' }> | R
   status: 'not-reflected';
   reason: 'disabled' | 'route-or-setting-changed' | 'pending' | 'no-final-answer' | 'unconfirmed'
     | 'incomplete' | 'retrieval-failed' | 'empty-answer' | 'editor-not-found' | 'ime-composing'
-    | 'complex-content' | 'insertion-failed';
+    | 'complex-content' | 'insertion-failed' | 'template-unavailable';
 }>;
 
 export type CodexBridgeAutoReflectDependencies = Readonly<{
   isEligible: (event: CodexBridgeTerminalEventSavedMessage) => boolean;
   readFinalAnswer: (eventId: string) => Promise<unknown>;
+  readTemplate: () => Promise<unknown>;
   appendAnswer: (text: string) => EditResult;
   wait: (milliseconds: number) => Promise<void>;
   onResult: (eventId: string, result: CodexBridgeAutoReflectResult) => void;
@@ -63,8 +68,16 @@ export function createCodexBridgeTerminalAnswerAutoReflector(dependencies: Codex
       if (answer.completeness !== 'confirmed') { report({ status: 'not-reflected', reason: 'unconfirmed' }); return; }
       if (!answer.text) { report({ status: 'not-reflected', reason: 'empty-answer' }); return; }
       if (!dependencies.isEligible(event)) { report({ status: 'not-reflected', reason: 'route-or-setting-changed' }); return; }
+      let template: unknown;
+      try { template = await dependencies.readTemplate(); }
+      catch { report({ status: 'not-reflected', reason: 'template-unavailable' }); return; }
+      if (!isValidCodexBridgeTerminalAnswerTemplate(template)) {
+        report({ status: 'not-reflected', reason: 'template-unavailable' }); return;
+      }
+      if (!dependencies.isEligible(event)) { report({ status: 'not-reflected', reason: 'route-or-setting-changed' }); return; }
+      const rendered = renderCodexBridgeTerminalAnswerTemplate(template, answer.text);
       let insertion: EditResult;
-      try { insertion = dependencies.appendAnswer(answer.text); }
+      try { insertion = dependencies.appendAnswer(rendered); }
       catch { report({ status: 'not-reflected', reason: 'insertion-failed' }); return; }
       if (insertion.ok) { report({ status: 'reflected' }); return; }
       if (insertion.reason === 'editor-not-found' || insertion.reason === 'editor-hidden' || insertion.reason === 'editor-disabled') {

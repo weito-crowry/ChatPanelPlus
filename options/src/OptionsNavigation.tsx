@@ -3,7 +3,7 @@ import type { OptionsSectionId } from './options-v2-state.ts';
 const ITEMS: readonly Readonly<{ id: OptionsSectionId; label: string }>[] = [
   { id: 'panel', label: 'パネル編集' }, { id: 'connection', label: '接続設定' },
   { id: 'projects', label: 'プロジェクト' }, { id: 'audio', label: '通知・音声' },
-  { id: 'data', label: 'データ管理' },
+  { id: 'auto-reflect', label: '自動反映' }, { id: 'data', label: 'データ管理' },
 ];
 
 type Props = Readonly<{ active: OptionsSectionId; onNavigate: (id: OptionsSectionId) => void }>;

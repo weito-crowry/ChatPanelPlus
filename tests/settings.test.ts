@@ -11,7 +11,11 @@ import { DEFAULT_BUTTONS } from '../src/shared/default-ui.ts';
 import { CUSTOM_BUTTON_IDS, CUSTOM_TAB_ID, customTabSettings } from './fixtures/custom-tabs.ts';
 
 test('the default settings use the current schema version', () => {
-  assert.deepEqual(DEFAULT_SETTINGS, { schemaVersion: 1, answerCompletionSoundVolumePercent: 60 });
+  assert.deepEqual(DEFAULT_SETTINGS, {
+    schemaVersion: 1,
+    answerCompletionSoundVolumePercent: 60,
+    codexBridgeTerminalAnswerTemplate: '##Codex最終回答##',
+  });
   assert.equal(isExtensionSettings(DEFAULT_SETTINGS), true);
 });
 
@@ -47,9 +51,37 @@ test('JSON import/exportは設定だけ往復し、不正JSONと未知schemaを�
   const settings = { schemaVersion: 1, buttonOverrides: { 'wall-task-btn': { text: 'A\n\n B ' } } };
   const parsed = parseSettingsJson(serializeSettings(settings));
   assert.equal(parsed.ok, true);
-  if (parsed.ok) assert.deepEqual(parsed.settings, settings);
+  if (parsed.ok) assert.deepEqual(parsed.settings, { ...settings, codexBridgeTerminalAnswerTemplate: '##Codex最終回答##' });
   assert.equal(parseSettingsJson('{').ok, false);
   assert.equal(parseSettingsJson('{"schemaVersion":2}').ok, false);
+});
+
+test('旧schema 1設定は最終回答token単独へ正規化し、JSON exportにも含める', () => {
+  const oldSettings = validateExtensionSettings({ schemaVersion: 1 });
+  assert.equal(oldSettings.ok, true);
+  if (!oldSettings.ok) return;
+  assert.equal(oldSettings.settings.codexBridgeTerminalAnswerTemplate, '##Codex最終回答##');
+  const exported = JSON.parse(serializeSettings({ schemaVersion: 1 })) as Record<string, unknown>;
+  assert.equal(exported.codexBridgeTerminalAnswerTemplate, '##Codex最終回答##');
+  const imported = parseSettingsJson('{"schemaVersion":1}');
+  assert.equal(imported.ok, true);
+  if (imported.ok) assert.equal(imported.settings.codexBridgeTerminalAnswerTemplate, '##Codex最終回答##');
+});
+
+test('templateはplaceholderなし・不正型・8192 UTF-16 code units超過を拒否する', () => {
+  const token = '##Codex最終回答##';
+  const atLimit = `${token}${'x'.repeat(8_192 - token.length)}`;
+  assert.equal(atLimit.length, 8_192);
+  assert.equal(validateExtensionSettings({ schemaVersion: 1, codexBridgeTerminalAnswerTemplate: atLimit }).ok, true);
+  for (const value of ['固定文だけ', 42, null, `##Codex最終回答##${'x'.repeat(8192)}`]) {
+    assert.equal(validateExtensionSettings({ schemaVersion: 1, codexBridgeTerminalAnswerTemplate: value }).ok, false);
+  }
+  const emojiOverLimit = `${token}${'😀'.repeat(Math.ceil((8_192 - token.length) / 2))}`;
+  assert.equal(emojiOverLimit.length > 8_192, true);
+  assert.equal(validateExtensionSettings({ schemaVersion: 1, codexBridgeTerminalAnswerTemplate: emojiOverLimit }).ok, false);
+  const invalidImport = parseSettingsJson('{"schemaVersion":1,"codexBridgeTerminalAnswerTemplate":"固定文だけ"}');
+  assert.equal(invalidImport.ok, false);
+  if (!invalidImport.ok) assert.equal(invalidImport.reason, 'invalid-terminal-answer-template');
 });
 
 test('回答完了音はschema 1の旧設定でOFFとなり、boolean値だけをJSON往復する', () => {

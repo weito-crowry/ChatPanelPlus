@@ -37,7 +37,8 @@ test('Optionsの既存JSON import/exportとカスタムボタン設定契約は�
     read('../options/src/OptionsPage.tsx'),
     read('../options/src/OptionsPanelEditor.tsx'),
   ]);
-  assert.match(page, /serializeSettings\(draft\)/);
+  assert.match(page, /validateExtensionSettings\(draft\)/);
+  assert.match(page, /serializeSettings\(validated\.settings\)/);
   assert.match(page, /parseSettingsJson\(json\)/);
   assert.match(editor, /CustomButtonCreator/);
 });

@@ -72,6 +72,19 @@ test('Options V2 keeps section contents mounted and provides accessible hash nav
   assert.ok(stylesheet.includes('.options-section[hidden]') && stylesheet.includes('max-width: 720px'));
 });
 
+test('最終回答テンプレートを専用Options sectionで通常保存し、placeholder不備を説明する', async () => {
+  const [page, navigation] = await Promise.all([
+    readFile(pagePath, 'utf8'),
+    readFile(resolve(fileURLToPath(new URL('../options/src/OptionsNavigation.tsx', import.meta.url))), 'utf8'),
+  ]);
+  assert.ok(page.includes('id="auto-reflect"'));
+  assert.ok(page.includes('TerminalAnswerTemplateSettings'));
+  assert.ok(page.includes('invalid-terminal-answer-template'));
+  assert.ok(page.includes('CODEX_BRIDGE_TERMINAL_ANSWER_TOKEN'));
+  assert.match(page, /function exportSettings\(\)[\s\S]*?validateExtensionSettings\(draft\)/);
+  assert.ok(navigation.includes("id: 'auto-reflect'"));
+});
+
 test('saved-data manager only requests known keys and never renders session token or audio payload', async () => {
   const [manager, model, refreshState] = await Promise.all([
     readFile(resolve(fileURLToPath(new URL('../options/src/OptionsDataManager.tsx', import.meta.url))), 'utf8'),

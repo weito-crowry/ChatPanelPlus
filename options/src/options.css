@@ -297,6 +297,20 @@ h1 {
   line-height: 1.5;
 }
 
+.terminal-answer-template-preview {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid #d2d3d6;
+  border-radius: 8px;
+}
+
+.terminal-answer-template-preview pre {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+
 .field-label.color-field {
   grid-template-columns: 90px 56px minmax(100px, 180px);
   align-items: center;

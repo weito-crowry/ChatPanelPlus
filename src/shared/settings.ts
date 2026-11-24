@@ -15,6 +15,7 @@ import {
   MAX_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT,
   MIN_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT,
 } from './answer-completion-sound-volume.ts';
+import { DEFAULT_CODEX_BRIDGE_TERMINAL_ANSWER_TEMPLATE, isValidCodexBridgeTerminalAnswerTemplate } from './codexbridge-terminal-answer-template.ts';
 
 export const SETTINGS_SCHEMA_VERSION = 1 as const;
 
@@ -35,13 +36,14 @@ export type ExtensionSettings = Readonly<{
   answerCompletionSoundEnabled?: boolean;
   answerCompletionSoundId?: string;
   answerCompletionSoundVolumePercent?: number;
+  codexBridgeTerminalAnswerTemplate?: string;
   codexBridgeMcpUrl?: string;
   customButtons?: Readonly<Record<CustomButtonId, CustomButtonDefinition>>;
   customTabs?: Readonly<Record<CustomTabId, CustomTabDefinition>>;
   [key: string]: unknown;
 }>;
 
-export type SettingsValidationError = 'malformed' | 'unsupported-schema' | 'invalid-settings';
+export type SettingsValidationError = 'malformed' | 'unsupported-schema' | 'invalid-settings' | 'invalid-terminal-answer-template';
 export type SettingsValidationResult =
   | { readonly ok: true; readonly settings: ExtensionSettings }
   | { readonly ok: false; readonly reason: SettingsValidationError };
@@ -49,6 +51,7 @@ export type SettingsValidationResult =
 export const DEFAULT_SETTINGS: ExtensionSettings = Object.freeze({
   schemaVersion: SETTINGS_SCHEMA_VERSION,
   answerCompletionSoundVolumePercent: DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT,
+  codexBridgeTerminalAnswerTemplate: DEFAULT_CODEX_BRIDGE_TERMINAL_ANSWER_TEMPLATE,
 });
 
 const BUTTON_IDS = new Set<string>(DEFAULT_BUTTONS.map(({ id }) => id));
@@ -228,11 +231,17 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
   if (value.codexBridgeMcpUrl !== undefined && typeof value.codexBridgeMcpUrl !== 'string') {
     return settingsError('invalid-settings');
   }
+  if (value.codexBridgeTerminalAnswerTemplate !== undefined
+    && !isValidCodexBridgeTerminalAnswerTemplate(value.codexBridgeTerminalAnswerTemplate)) {
+    return settingsError('invalid-terminal-answer-template');
+  }
   return {
     ok: true,
     settings: {
       ...value,
       schemaVersion: SETTINGS_SCHEMA_VERSION,
+      codexBridgeTerminalAnswerTemplate: value.codexBridgeTerminalAnswerTemplate === undefined
+        ? DEFAULT_CODEX_BRIDGE_TERMINAL_ANSWER_TEMPLATE : value.codexBridgeTerminalAnswerTemplate as string,
       ...(value.buttonOverrides === undefined ? {} : { buttonOverrides }),
       ...(value.tabOverrides === undefined ? {} : { tabOverrides }),
       ...(value.customButtons === undefined ? {} : { customButtons }),

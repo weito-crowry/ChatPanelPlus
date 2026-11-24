@@ -5,7 +5,7 @@
 - Chrome実ロード元はユーザー確認済みのrepo直下`dist/`。C46文書更新はcommit `99defc201541b160b9feb267fd8b18618ac11296`で完了。追加C47の実装commitは`12d1e6d861349663706bfe7f9a1e886740cd21c8`。terminal event保存後のowner限定identity通知、C37確定回答取得、選択範囲を使わない末尾追記、会話別既定OFF設定を実装した。実装時の`pnpm test` 784/784、typecheck/lint/size/build/diff check PASS。2026-11-24、ユーザー報告によるrepo直下`dist/` reload/F5後のC47主要正常系は部分PASS。詳細は下記。未受入項目は専用手順と最終チェックリストに記録する。
 - 2026-11-24のC46ユーザー実機観測：10:00:42 JSTに回答完了検出、Bridge候補2件、コード装飾付き対象IDの本文照合1件、明示対象1件だけの監視登録。対照候補は未登録。対象終了後はA実行中0、B監視0、設定内監視0、C通知1。これはC46基本正常経路のPASSで、C46全項目やC38/C45全体のPASSではない。
 - C38はC46前後でA件数2→0を表示した部分観測。Aの独立手動更新有無、live schema、mode・target・失敗時の表示等は未確認。C45は対象watchの終了後にB/設定が0、C通知1となった部分観測。技術情報内のnotification identityは直接照合しておらず、厳密poll周期、音声、異常系、worker復旧等は未確認。2026-11-23に記録したC45のFAILと修正経路は履歴として保持し、今回の限定観測を専用C45再受入へ拡張しない。
-- **現時点で追加の機能修正を始める根拠はない。** C47主要正常系は部分PASSだが、OFF/過去event、watch起点、選択範囲、近接/同時完了、owner/SPA、音声/mute、IME/添付、取得失敗などは未受入。現状を「メインパネルv2全体受入済み」やmerge-readyとは扱わない。残項目は`docs/panel-main-v2-final-acceptance-checklist.md`を参照する。
+- C47主要正常系は部分PASSだが、OFF/過去event、watch起点、選択範囲、近接/同時完了、owner/SPA、音声/mute、IME/添付、取得失敗などは未受入。Issue #22/C50で最終回答templateを実装し、Chrome受入は別途NOT_RUNで記録する。現状を「メインパネルv2全体受入済み」やmerge-readyとは扱わず、残項目は`docs/panel-main-v2-final-acceptance-checklist.md`を参照する。
 
 ### 残工程の推奨順
 
@@ -139,6 +139,15 @@
 - watch所有権は既存の`CodexBridgeThreadMonitorStorage.mutate` read-modify-write直列化と`allowOwnerTransfer: false`でconnection/target/canonical thread単位に保つ。異なる会話が同一threadへ同時要求しても一人だけが作成し、競合failureはその会話に記録して別候補は続行する。同一会話の完了登録とstop/skipを同じentry lockに揃え、登録中のstop競合でwatchが残る回帰も修正した。
 - 受入手順は`docs/c49-parallel-auto-watch-acceptance.md`、最終項目は本書C49行。自動検証は`pnpm test` 814/814、`pnpm typecheck` PASS、`pnpm lint` PASS（check:size 289 files、最大500行/32768 bytes）、`pnpm build` PASS、`git diff --check` PASS。実装時点のsource/build検証とChrome実機受入は区別する。後続の限定的な実機観測は下記に記録し、C48は従来の801/801 automated PASS・Chrome NOT_RUNを維持する。
 - 2026-11-24ユーザー報告：異なる2つのChatGPT会話で自動監視をONにできた、片方をOFFにしてももう片方に影響しなかった、F5後も会話ごとの設定が維持された、の3項目をPASSとして記録。PASS範囲はこの3観測に限定し、OFF後のwatch/event等やF5後のwatch/event復元・owner帰属へ拡張しない。別threadの自動登録、監視対象の非混在、終了通知の会話owner帰属、C47最終回答自動反映、同一thread競合、skip/mute/failure、接続変更、別tab、SPA等の未報告項目はNOT_RUN。C49全体は部分PASSで、実機受入完了扱いにしない。C48のNOT_RUN記録は変更しない。
+
+## C50 最終回答自動反映テンプレート（2026-11-24）
+
+- Issue #22のテンプレート編集・共通設定保存/import/export/reset・C47挿入を実装する。schema version 1を維持し、template未設定の旧設定は正式token単独へ正規化する。templateは8,192 UTF-16 code units以内で、`##Codex最終回答##`を1個以上必須とする。C37回答取得上限256 Ki UTF-16 code unitsは既存どおり。
+- Optionsの「自動反映」に複数行欄、token説明、例文preview、token単独へ戻すdraft操作を追加する。保存・JSON importはtoken欠落/型不正/上限超過を明示拒否し、旧JSONのfield欠落はdefaultを使う。
+- C47は`retrieved + confirmed`の回答取得後・append直前に設定repositoryから一度だけ正規化済み設定を読み、全tokenを文字列として一度に置換して既存の末尾appendへ渡す。最終回答本文中のtoken、`$&`等、空白・改行・Markdownを再処理しない。route/owner eligibilityをtemplate読込後に再確認し、失敗時は可視の未反映とする。
+- event受信時ではなくappend直前snapshotを使うため、queue待ち・回答取得中に保存されたtemplate変更は、そのeventの挿入時に読み込まれた値へ反映する。空/未確定/取得失敗の回答は従来どおり挿入せず、通知・手動copy/insert・既存draft保護を維持する。送信/Enter/送信ボタン/自動承認は追加しない。
+- Chrome手順は`docs/c50-terminal-answer-template-acceptance.md`に追記し、実機確認はユーザーが行うため全項目NOT_RUN。C48の自動801/801 PASS・Chrome NOT_RUN、およびC49の限定3項目PASSと残NOT_RUNを変更しない。
+- 自動検証：`pnpm test` 823/823 PASS、`pnpm typecheck` PASS、`pnpm lint` PASS（check:size 291 files、最大500行/32768 bytes）、`pnpm build` PASS、`git diff --check` PASS。これはsource/build確認で、C50 Chrome実機受入はNOT_RUN。
 
 ## C46 semantic guard correction（2026-11-24）
 

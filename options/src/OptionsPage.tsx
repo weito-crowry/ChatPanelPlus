@@ -4,6 +4,10 @@ import { createChromeSettingsRepository } from '../../src/shared/settings-reposi
 import { DEFAULT_COMPLETION_SOUND_ID } from '../../src/shared/answer-completion-sound-definitions.ts';
 import { DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT } from '../../src/shared/answer-completion-sound-volume.ts';
 import { CODEX_BRIDGE_MCP_DEFAULT_URL } from '../../src/shared/codexbridge-mcp-protocol.ts';
+import {
+  CODEX_BRIDGE_TERMINAL_ANSWER_TOKEN,
+  DEFAULT_CODEX_BRIDGE_TERMINAL_ANSWER_TEMPLATE,
+} from '../../src/shared/codexbridge-terminal-answer-template.ts';
 import { prepareSoundAssetDeletion } from './answer-completion-sound-actions.ts';
 import { AnswerCompletionSoundSettings } from './AnswerCompletionSoundSettings';
 import { McpConnectionSettings } from './McpConnectionSettings';
@@ -11,6 +15,7 @@ import { OptionsDataManager } from './OptionsDataManager';
 import { OptionsNavigation } from './OptionsNavigation';
 import { OptionsPanelEditor } from './OptionsPanelEditor';
 import { ProjectFolderPatternsSettings } from './ProjectFolderPatternsSettings';
+import { TerminalAnswerTemplateSettings } from './TerminalAnswerTemplateSettings';
 import {
   getCustomButtonImportDeletions, getCustomTabImportDeletions, mergeImportedSettings,
   resetSettingsPreservingCustomButtons,
@@ -81,7 +86,12 @@ export function OptionsPage() {
   async function save() {
     if (!ready || saving) return;
     const validated = validateExtensionSettings(draft);
-    if (!validated.ok) { setStatus('設定に不正な値があります。色は #RGB または #RRGGBB で入力してください。'); return; }
+    if (!validated.ok) {
+      setStatus(validated.reason === 'invalid-terminal-answer-template'
+        ? `最終回答テンプレートに「${CODEX_BRIDGE_TERMINAL_ANSWER_TOKEN}」を含め、8,192 UTF-16文字以内で入力してください。`
+        : '設定に不正な値があります。色は #RGB または #RRGGBB で入力してください。');
+      return;
+    }
     setSaving(true);
     const tabs = resolveDefaultUI(validated.settings).tabs.filter(({ visible }) => visible);
     const result = await repository.saveSettings(base, validated.settings, {
@@ -100,7 +110,14 @@ export function OptionsPage() {
     setReplaceKnownFieldsOnSave(false); setStatus('設定を保存しました。');
   }
   function exportSettings() {
-    const blob = new Blob([serializeSettings(draft)], { type: 'application/json' });
+    const validated = validateExtensionSettings(draft);
+    if (!validated.ok) {
+      setStatus(validated.reason === 'invalid-terminal-answer-template'
+        ? `最終回答テンプレートに「${CODEX_BRIDGE_TERMINAL_ANSWER_TOKEN}」を含め、8,192 UTF-16文字以内で入力してください。`
+        : '設定に不正な値があります。保存値を確認してください。');
+      return;
+    }
+    const blob = new Blob([serializeSettings(validated.settings)], { type: 'application/json' });
     const url = URL.createObjectURL(blob); const link = document.createElement('a');
     link.href = url; link.download = 'chatpanelplus-settings.json'; link.click(); URL.revokeObjectURL(url);
   }
@@ -110,8 +127,10 @@ export function OptionsPage() {
     try { json = await file.text(); } catch { setStatus('ファイルを読み込めませんでした。保存済み設定は変更されていません。'); return; }
     const parsed = parseSettingsJson(json);
     if (!parsed.ok) {
-      setStatus(parsed.reason === 'unsupported-schema' ? '未対応の設定schemaです。保存済み設定は変更されていません。'
-        : 'JSONまたは設定値が不正です。保存済み設定は変更されていません。'); return;
+      setStatus(parsed.reason === 'invalid-terminal-answer-template'
+        ? `JSONの最終回答テンプレートに「${CODEX_BRIDGE_TERMINAL_ANSWER_TOKEN}」を含め、8,192 UTF-16文字以内で入力してください。`
+        : parsed.reason === 'unsupported-schema' ? '未対応の設定schemaです。保存済み設定は変更されていません。'
+          : 'JSONまたは設定値が不正です。保存済み設定は変更されていません。'); return;
     }
     const legacy = !Object.hasOwn(parsed.settings, 'customButtons') && !Object.hasOwn(parsed.settings, 'customTabs');
     const imported = mergeImportedSettings(parsed.settings, base);
@@ -165,6 +184,13 @@ export function OptionsPage() {
             onToggleEnabled={(value) => updateSetting('answerCompletionSoundEnabled', value)}
             onVolumeChange={updateAnswerCompletionSoundVolume}
             onBeforeDelete={prepareAnswerCompletionSoundDeletion} /></fieldset>
+        </section>
+        <section className="options-section" id="auto-reflect" aria-labelledby="auto-reflect-title" hidden={section !== 'auto-reflect'}>
+          <h2 id="auto-reflect-title">自動反映</h2>
+          <p className="scope-note">監視終了時の最終回答を、会話別にONにした入力欄へ未送信の下書きとして反映します。</p>
+          <TerminalAnswerTemplateSettings value={draft.codexBridgeTerminalAnswerTemplate ?? DEFAULT_CODEX_BRIDGE_TERMINAL_ANSWER_TEMPLATE}
+            disabled={!ready || saving}
+            onChange={(value) => updateSetting('codexBridgeTerminalAnswerTemplate', value)} />
         </section>
         <section className="options-section" id="data" aria-labelledby="data-title" hidden={section !== 'data'}>
           <h2 id="data-title">データ管理</h2><OptionsDataManager active={section === 'data'} />
