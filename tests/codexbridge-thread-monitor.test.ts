@@ -71,6 +71,8 @@ function harness(options: {
   connectionId?: string;
   status?: (targetId: string, threadId: string) => Promise<CodexBridgeThreadStatus>;
   maxPollsPerCycle?: number;
+  onTerminalEventSaved?: (event: import('../src/shared/codexbridge-thread-monitor-protocol.ts').CodexBridgeTerminalEvent) => Promise<void>;
+  notification?: import('../src/background/thread-monitor.ts').CodexBridgeNotificationHandler;
 } = {}) {
   const storage = new FakeStorage();
   const alarms = new FakeAlarms();
@@ -89,6 +91,8 @@ function harness(options: {
     now: () => now,
     createWatchId: () => `watch-${++sequence}`,
     maxPollsPerCycle: options.maxPollsPerCycle,
+    onTerminalEventSaved: options.onTerminalEventSaved,
+    notification: options.notification,
   });
   return {
     monitor,
@@ -295,6 +299,48 @@ test('a baseline turn completing later creates one event and removes its one-sho
   assert.deepEqual(await h.monitor.list(), []);
   assert.equal((await h.monitor.listEvents())[0]?.status, 'completed');
   assert.equal(h.alarms.active, false);
+});
+
+test('新しい保存済みterminal eventだけowner identity callbackへ渡し、通知muteやworker restoreから独立する', async () => {
+  let status = makeStatus('target-1', 'thread-1', 'turn-1', 'in_progress');
+  const dispatches: string[] = [];
+  const h = harness({
+    status: async () => status,
+    onTerminalEventSaved: async (event) => {
+      assert.equal((await h.monitor.readEvent(event.eventId, 'conversation-A'))?.eventId, event.eventId);
+      dispatches.push(event.eventId);
+    },
+    notification: { async prepare() { return { state: 'skipped', reason: 'muted' }; } },
+  });
+  const started = await h.monitor.startWatch('target-1', 'thread-1', {
+    ownerTabId: 7, ownerConversationId: 'conversation-A', ownerMuted: true, ownerMuteRevision: 3,
+  });
+  assert.equal(started.ok, true);
+  status = makeStatus('target-1', 'thread-1', 'turn-1', 'completed');
+  h.advance(30_000);
+  await h.monitor.refreshAlarm();
+  assert.equal(dispatches.length, 1);
+  assert.equal((await h.monitor.listEvents())[0]?.ownerTabId, 7);
+  assert.equal((await h.monitor.listEvents())[0]?.notificationReason, 'muted');
+  const restored = new CodexBridgeThreadMonitor(h.storage, h.alarms, async () => ({ connectionId: 'connection-A' }), {
+    onTerminalEventSaved: async (event) => { dispatches.push(event.eventId); },
+  });
+  await restored.restore();
+  assert.equal(dispatches.length, 1);
+});
+
+test('通知音の利用不可状態でも保存後のauto-reflect dispatchは独立する', async () => {
+  let status = makeStatus('target-1', 'thread-1', 'turn-1', 'in_progress');
+  let dispatches = 0;
+  const h = harness({ status: async () => status, onTerminalEventSaved: async () => { dispatches += 1; } });
+  await h.monitor.startWatch('target-1', 'thread-1', {
+    ownerTabId: 8, ownerConversationId: 'conversation-A', ownerMuted: false, ownerMuteRevision: 0,
+  });
+  status = makeStatus('target-1', 'thread-1', 'turn-1', 'completed');
+  h.advance(30_000);
+  await h.monitor.refreshAlarm();
+  assert.equal(dispatches, 1);
+  assert.equal((await h.monitor.listEvents())[0]?.notificationReason, 'settings-unavailable');
 });
 
 test('authentication and network failures preserve observations and never classify unknown access as terminal', async () => {

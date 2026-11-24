@@ -20,7 +20,8 @@ test('panel state deletion is CAS guarded and preserves other conversations', as
   const other = { schemaVersion: 1 as const, selectedTabId: 'control' as const, minimized: true, bridgeExpanded: false };
   const storage = new FakeStorage({ [CONVERSATION_PANEL_STATE_STORAGE_KEY]: { schemaVersion: 1, conversations: { a: first, b: other } } });
   const repo = new ConversationPanelStateRepository(storage);
-  const expected = { ...first, bridgeWatchSelection: null, bridgeEventSelection: null } as const;
+  const expected = { ...first, bridgeWatchSelection: null, bridgeEventSelection: null,
+    autoReflectTerminalAnswer: false, autoReflectTerminalAnswerEnabledAt: null } as const;
   assert.deepEqual(await repo.deleteConversationState('a', { ...expected, minimized: true }), { ok: false, reason: 'conflict' });
   assert.deepEqual(await repo.deleteConversationState('a', expected), { ok: true });
   assert.deepEqual((storage.data[CONVERSATION_PANEL_STATE_STORAGE_KEY] as { conversations: unknown }).conversations, { b: other });
@@ -70,7 +71,7 @@ test('deletion operations reuse each repository write lock and corrupted records
   const names: string[] = [];
   const locks = { async request<T>(name: string, callback: () => Promise<T>) { names.push(name); return callback(); } };
   const panel = { schemaVersion: 1 as const, selectedTabId: null, minimized: false, bridgeExpanded: false,
-    bridgeWatchSelection: null, bridgeEventSelection: null };
+    bridgeWatchSelection: null, bridgeEventSelection: null, autoReflectTerminalAnswer: false, autoReflectTerminalAnswerEnabledAt: null };
   const stats = { turnOrder: ['turn-1'], turns: { 'turn-1': { inputChars: 1 } } };
   const storage = new FakeStorage({
     [CONVERSATION_PANEL_STATE_STORAGE_KEY]: { schemaVersion: 1, conversations: { a: panel } },

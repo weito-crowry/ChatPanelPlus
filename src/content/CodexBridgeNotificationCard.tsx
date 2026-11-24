@@ -1,7 +1,9 @@
 import type { CodexBridgeTerminalEvent, CodexBridgeFinalAnswerResult } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import { eventKindLabel, eventStatusLabel, finalAnswerLabel } from './codexbridge-watch-presentation.ts';
+import { CodexBridgeTerminalAnswerAutoReflectControl } from './CodexBridgeTerminalAnswerAutoReflectControl.tsx';
 
 type Props = Readonly<{
+  conversationId: string | null;
   events: readonly CodexBridgeTerminalEvent[];
   selectedEvent: CodexBridgeTerminalEvent | null;
   selectedEventId: string | null;
@@ -27,7 +29,7 @@ function dateLabel(value: string | null): string {
 }
 
 export function CodexBridgeNotificationCard({
-  events, selectedEvent, selectedEventId, currentConnectionId, busyKey, answerBusy, answerMessage,
+  conversationId, events, selectedEvent, selectedEventId, currentConnectionId, busyKey, answerBusy, answerMessage,
   operationMessage, displayedAnswer, threadLabel, onAcknowledge, onClear, onSelectEvent, onFetchAnswer, onCopyAnswer, onInsertAnswer,
 }: Props) {
   return (
@@ -43,6 +45,7 @@ export function CodexBridgeNotificationCard({
           {busyKey === 'clear' ? '削除中…' : '通知をクリア'}
         </button>
       </div>
+      <CodexBridgeTerminalAnswerAutoReflectControl conversationId={conversationId} />
       {operationMessage && <p className="codex-bridge-note" role="status">{operationMessage}</p>}
       {events.length === 0 && <p className="codex-bridge-empty">通知イベントはありません。</p>}
       {events.length > 0 && <ul className="codex-bridge-event-list" aria-label="監視終了イベント一覧">

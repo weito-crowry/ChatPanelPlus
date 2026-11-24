@@ -364,6 +364,12 @@ function insertText(
   }
 }
 
+export function insertTextAtRange(text: string, environment: EditorEnvironment, editor: HTMLElement, range: Range): EditResult {
+  if (!text) return { ok: true };
+  if (findActiveEditor(environment) !== editor || !rangeBelongsTo(range, editor)) return failed('composer-changed');
+  return insertText(environment, editor, range, text);
+}
+
 function boundaryNeedsNewline(editor: HTMLElement, text: string, environment: EditorEnvironment): boolean {
   if (!text || text.endsWith('\n')) return false;
   const walker = environment.document.createTreeWalker(editor, 4);

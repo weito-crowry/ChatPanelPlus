@@ -106,7 +106,7 @@ export function fixture(firstCharacter = 'o', options: { hasForm?: boolean; nest
         if (inputIndex >= 0) inputListeners.splice(inputIndex, 1);
       }
     },
-    querySelector: () => null,
+    querySelector: (selector: string) => selector.includes('attachment') ? attachmentNodes[0] ?? null : null,
     closest: (selector: string) => selector === 'form' && options.hasForm !== false ? form : null,
     getClientRects: () => [{}],
     checkVisibility: () => true,

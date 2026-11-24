@@ -60,6 +60,7 @@
 | C44 B監視一覧のtimeout・再試行・route競合 | 監視一覧を遅延または無応答にし、5秒foreground更新・storage更新・明示再試行を重ねる。timeout後に再試行し、真の空一覧、storage/sender応答失敗、SPA会話切替も確認する。 | 初回/明示要求のloadingは低優先更新で永久化しない。25秒以内にtimeout等の理由と再試行が表示され、自動要求は積み上がらない。古いrouteのwatch/eventは出ず、失敗/未取得は`—`、成功した空一覧のみ0件。不正/欠落配列も成功0件にしない。WATCH_STARTはBの明示クリックだけで実行される。 | NOT_RUN（異常系）、正常系PASS（部分観測） | 自動検証636/636・focused 38/38、typecheck/lint/size PASS。C44 source commit `39a38f5cd423576294fbd744b41b595a7a0a0578`を登録済みrepo直下`dist/`へ`pnpm build` exit 0で配備。backup 11/11、postbuild manifestもdist現物11/11 hash照合。bundle変更`content.js`のみ。静的検証11 files・Manifest V3/0.1.5・必須6/6・HTML refs 5/5・C44/C37 marker PASS。配備当時はChrome実機未確認。2026-11-23ユーザー報告：再読み込み後にB監視一覧を表示でき、監視が実際に機能した（正常系の部分観測、表示までの時間は未報告）。25秒timeout/再試行/route race/保存失敗の試験は未実施。 |
 | C45 5秒foreground監視・終端後の自動解除 | 前面ChatGPTタブの監視周期を確認する。専用threadで`completed`、`failed`、`interrupted`を一件ずつ発生させ、event・通知・watch一覧・alarmを確認する。他watch併存、baselineが既終端、gap/unknown/inferred、event保存失敗も確認する。 | 前面pollは約5秒、Chrome alarmは30秒のまま。確実な新規終端遷移では一件のeventを保存して対象watchだけを解除し、別watchとevent ownerを保つ。音声の成功/失敗/muteにかかわらず解除し、保存失敗・不確実状態・初期baselineでは解除しない。最終watch解除時alarmを消し、他watchがあれば維持する。安全条件を満たさずwatchが残る終端状態は「通知判定保留」と理由を表示し、新規event成立と混同しない。 | PARTIAL（C46連続試験で終端後B0/C1を表示） | 2026-11-24の連続観測で対象終了後にB/設定内監視0、C通知1。通知検出10:05:09 JSTだが技術情報が折りたたまれidentityは直接照合していない。2026-11-23の実機FAILとその後の修正は履歴に保持。厳密poll周期、音声、failed/interrupted、保存失敗、alarm、他watch、worker復旧等の専用C45再受入は未実施。 |
 | C46 回答完了時のBridge ID先行照合・自動監視登録 | 専用会話/targetで明示ONにし、回答完了前は登録されないことを確認する。回答完了後にBridge `running_only=true`を取得し、応答時点と登録要求直前の現在DOMから対象turnを一意に再特定する。main/turn再描画・再配置、Bridge待ち中の非ID本文編集後でも、現在の同一会話・同assistant message ID・complete・現在可視本文内の候補ID一致を満たせば通す。2 live候補のうち本文に一つだけ含め、対象のみ登録されることを確認する。IDなし、過去turnだけ、ID部分一致/URL埋込、assistant ID不一致/不明/未完了、duplicate turn、別route/owner/target/connection、候補外ID、Bridge失敗/未対応、SPA race、音声状態、manual解除、worker restore、watch上限、C45通知/自動解除も確認する。 | (1)現在会話route/owner/target/connectionが一致。(2)現在DOMでevent turnが一意、assistant message ID一致、state=`complete`。(3)現在の可視本文にBridge live候補IDの完全一致token。候補照会は完了イベント後だけ。開始時HTMLElement同一性、時点間本文snapshot、安定化wait/本文同一性比較は登録ゲートにしない。既存token境界、URL/embedded ID拒否、同target alias、2候補中1候補のみ照合、最大32件の一致IDのみcontentから送信を維持する。本文/DOMはbackgroundへ渡さず、backgroundはsender/owner/target/connection/latest liveを再検証する。明示ON、重複event抑止、周期的な全件探索禁止、短命thread見逃し許容、manual watch、C45通知/自動解除、watch/event保持は維持する。 | PARTIAL（基本正常経路PASS） | 2026-11-24 10:00:42 JST、回答完了検出、Bridge候補2件、コード装飾付き対象IDの本文照合1件、対象1件のみ監視登録。対照候補は非登録。登録前A実行中2/B監視1/設定内監視1/C通知0。Bridge実測は対照正常終了10:04:34.514、対象正常終了10:05:00.631、実行中0。10:07頃A/B/設定内監視0、C通知1、検出10:05:09。10:06:05の候補0/no-running-candidates診断は終了後として正常。通知identityは直接照合していない。音声、手動更新の有無、厳密poll周期、別会話、worker復旧、異常系等は未確認。 |
+| C47 監視終了時の最終回答自動下書き反映 | C欄で会話別の既定OFFを確認し、専用会話でONにする。手動watchとC46自動watchから新eventを発生させ、空欄・既存draft・選択範囲の各状態を確認する。OFF、ON前event/reload、owner tab別会話/同会話別tab、SPA切替、audio OFF/mute、IME/添付/editor不可、pending・取得失敗、複数同時完了も確認する。詳細は`docs/c47-terminal-answer-auto-reflect-acceptance.md`。 | 新規保存後、ON時刻より後のeventだけをowner会話の入力欄末尾へ一度だけ追記し、空欄には本文をそのまま入れる。既存draft・選択・添付を壊さない。C37で`retrieved`かつ`confirmed`の回答だけを使い、pendingは最大2回再試行。未反映時はC欄状態と手動取得を残す。送信/Enter/送信ボタン/clipboardは呼ばず、C46 auto-watch・音声・muteは独立する。 | AUTO_TEST_PASS / Chrome **NOT_RUN** | C37検証済みread-final-answer、ownerTabId限定identity-only通知、新規保存eventのみの経路、会話別ON時刻、末尾専用adapterを実装。`pnpm test` 784/784、typecheck/lint/size/build/diff check PASS。build先は登録済みrepo `dist/`。実Chrome reload/F5と手動受入はNOT_RUN。 |
 
 ## 残工程（重要度別、2026-11-24）
 
@@ -67,6 +68,7 @@
 
 ### P0 — 受入判定前に優先する
 
+- **C47のChrome正常系**：repo直下`dist/`をreloadし、ChatGPTをF5後、C47をONにした登録元会話で新しいterminal eventを発生させる。本文の末尾追記が一度だけで送信されないこと、draft/選択範囲を保つことを確認し、続けてOFF・owner・SPA・手動fallbackの主要条件を確認する。自動検証は全PASS、実機はNOT_RUN。
 - C45専用の終端確認：対象event identity、監視自動解除、前面poll周期を対応付けて確認する。2026-11-24 C46連続観測ではB/設定0・C通知1まで確認したが、技術情報内identityは未照合。failed/interrupted、通知保存失敗、alarm、他watch、worker復旧は未確認。
 - C38実機確認：A実行中件数/一覧の更新契機、running_only live schema、実行中/通常mode、未対応・取得失敗表示を確認する。件数2→0は観測済みだが、独立した手動更新の有無は未確認。
 - 修正後未確認の既知項目：C12/C29の実行中優先・mode、C30のスピーカー/mute操作、C31–C36のPhase 6表示、C44の監視一覧再試行/route競合を現行distで確認する。以前のFAIL表示は修正前の履歴として保持し、再受入までは項目ごとにPARTIAL/NOT_RUNとする。
@@ -143,6 +145,7 @@
 
 | 項目 | 現状 | 必要な判断／影響 |
 |---|---|---|
+| C47 Chrome受入 | C47機能と自動検証を実装。実Chrome reload/F5による正常系とfallbackは未確認。 | `docs/c47-terminal-answer-auto-reflect-acceptance.md`の優先項目を同一プロファイルで実施し、下書き追記・送信なし・owner tab・OFF/過去event・手動取得fallbackを確認する。 |
 | Bridge event総保持上限 | 未確認eventは削除せず、確認済み履歴は最新128件を保持。総件数に上限なし。 | 保存量上限と、上限到達時の確認前eventの扱いが未決定。Phase 4はこのためPARTIAL。 |
 | 通常回答完了音でconversation ID不明 | 既存経路を保ち、会話別mute仕様を確定していない。 | 未知会話での実効音声policyを決める。 |
 | Options「既定値に戻す」 | 新しい会話別panel stateへの適用範囲は未決定。既存reset挙動は変更していない。 | 新規stateをreset対象に含める範囲を決める。 |

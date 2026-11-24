@@ -36,9 +36,12 @@ const event: CodexBridgeTerminalEvent = {
   ownerTabId: 4, ownerConversationId: 'test', ownerMuted: false, ownerMuteRevision: 0,
 };
 
-function handlerFixture(connectionId = item.connectionId, sourceItems: readonly CodexBridgeWatchSnapshot[] = [item], sourceEvents: readonly CodexBridgeTerminalEvent[] = [event], startTransferred = false, includeAuto = false) {
+function handlerFixture(connectionId = item.connectionId, sourceItems: readonly CodexBridgeWatchSnapshot[] = [item],
+  sourceEvents: readonly CodexBridgeTerminalEvent[] = [event], startTransferred = false, includeAuto = false,
+  changeConnectionAfterRead = false, removeEventAfterRead = false) {
   const calls: string[] = [];
   const requestedOwners: CodexBridgeWatchOwnerMute[] = [];
+  let finalAnswerRead = false;
   const monitor = {
     async startWatch(targetId: string, threadId: string, owner: CodexBridgeWatchOwnerMute) {
       calls.push(`start:${targetId}:${threadId}`);
@@ -55,7 +58,10 @@ function handlerFixture(connectionId = item.connectionId, sourceItems: readonly 
       return sourceItems;
     },
     async listEvents() { return sourceEvents; },
-    async readEvent(eventId: string) { calls.push(`read-event:${eventId}`); return eventId === event.eventId ? event : null; },
+    async readEvent(eventId: string) {
+      calls.push(`read-event:${eventId}`);
+      return eventId === event.eventId && !(removeEventAfterRead && finalAnswerRead) ? event : null;
+    },
     async read(connectionId: string, targetId: string, threadId: string) {
       calls.push(`read:${connectionId}:${targetId}:${threadId}`);
       return item;
@@ -101,10 +107,11 @@ function handlerFixture(connectionId = item.connectionId, sourceItems: readonly 
     monitor,
     async resolveAccess() {
       return {
-        connectionId,
+        connectionId: changeConnectionAfterRead && finalAnswerRead ? 'sha256:changed' : connectionId,
         failure: 'permission-required' as const,
         async readFinalAnswer(targetId: string, threadId: string, turnId: string) {
           calls.push(`final:${targetId}:${threadId}:${turnId}`);
+          finalAnswerRead = true;
           return { status: 'retrieved', text: 'final', completeness: 'unconfirmed' };
         },
       };
@@ -212,6 +219,19 @@ test('final answer requests read only saved exact events and require the current
     ok: true, data: { status: 'failed', reason: 'connection-changed' },
   });
   assert.deepEqual(changed.calls, [`read-event:${event.eventId}`]);
+
+  const changedDuringRead = handlerFixture(item.connectionId, [item], [event], false, false, true);
+  assert.deepEqual(await changedDuringRead.handle({ type: CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER, eventId: event.eventId }, trustedSender), {
+    ok: true, data: { status: 'failed', reason: 'connection-changed' },
+  });
+  assert.deepEqual(changedDuringRead.calls, [
+    `read-event:${event.eventId}`, `final:${event.targetId}:${event.threadId}:${event.turnId}`, `read-event:${event.eventId}`,
+  ]);
+
+  const removedDuringRead = handlerFixture(item.connectionId, [item], [event], false, false, false, true);
+  assert.deepEqual(await removedDuringRead.handle({ type: CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER, eventId: event.eventId }, trustedSender), {
+    ok: true, data: { status: 'failed', reason: 'event-not-found' },
+  });
 
   const invalid = handlerFixture();
   assert.deepEqual(await invalid.handle({

@@ -42,6 +42,7 @@ import {
   CodexBridgeThreadMonitor,
   type CodexBridgeMonitorAccess,
   type CodexBridgeNotificationHandler,
+  type CodexBridgeTerminalEventSavedHandler,
 } from './thread-monitor.ts';
 
 type SessionStorageLike = Readonly<{ get(keys: string[]): Promise<Record<string, unknown>> }>;
@@ -362,6 +363,7 @@ export function createDefaultCodexBridgeThreadMonitor(
   extensionId: string,
   notification?: CodexBridgeNotificationHandler,
   loadOwnerMute: CodexBridgeThreadMonitorHandlerOptions['loadOwnerMute'] = async () => ({ ok: false }),
+  onTerminalEventSaved?: CodexBridgeTerminalEventSavedHandler,
 ) {
   const sessionStorage = chrome.storage.session as SessionStorageLike;
   const settings = createChromeSettingsRepository();
@@ -420,7 +422,8 @@ export function createDefaultCodexBridgeThreadMonitor(
     };
   };
 
-  const monitor = new CodexBridgeThreadMonitor(chrome.storage.local, chrome.alarms, resolveAccess, { notification });
+  const monitor = new CodexBridgeThreadMonitor(chrome.storage.local, chrome.alarms, resolveAccess,
+    { notification, onTerminalEventSaved });
   const autoRegistration = new CodexBridgeAutoThreadRegistration(
     chrome.storage.local, chrome.alarms, monitor, resolveAccess, loadOwnerMute,
     (tabId, conversationId) => ownerTabMatchesConversation(chrome.tabs, tabId, conversationId),

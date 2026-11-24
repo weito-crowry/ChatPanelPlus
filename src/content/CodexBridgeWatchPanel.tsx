@@ -487,8 +487,8 @@ export function CodexBridgeWatchPanel({
         selection={bridgeWatchSelection} threadCandidates={threadCandidates} busyKey={busyKey}
         onSelect={selectWatch} onStop={(item) => { void stopWatch(item); }} />}
     </section>
-    <CodexBridgeNotificationCard
-      events={currentEvents} selectedEvent={selectedEvent} selectedEventId={bridgeEventSelection}
+    <CodexBridgeNotificationCard conversationId={conversationId} events={currentEvents}
+      selectedEvent={selectedEvent} selectedEventId={bridgeEventSelection}
       currentConnectionId={currentConnectionId} busyKey={busyKey} answerBusy={answerBusy}
       answerMessage={answerMessage} operationMessage={eventOperationMessage} displayedAnswer={displayedAnswer}
       threadLabel={(targetId, threadId) => codexBridgeWatchThreadLabel(threadCandidates, targetId, threadId, false)}

@@ -40,6 +40,7 @@ import {
   CODEX_BRIDGE_WATCH_STOP,
 } from './shared/codexbridge-thread-monitor-protocol.ts';
 import { createDefaultCodexBridgeThreadMonitor, ownerTabMatchesConversation } from './background/codexbridge-thread-monitor.ts';
+import { dispatchCodexBridgeTerminalEventSaved } from './background/terminal-event-dispatch.ts';
 
 type OpenOptionsMessage = Readonly<{ type: 'OPEN_OPTIONS' }>;
 
@@ -151,7 +152,10 @@ const notification = createCodexBridgeNotificationHandler({
 const codexBridgeThreadMonitor = createDefaultCodexBridgeThreadMonitor(chrome.runtime.id, notification, async (tabId, conversationId) => {
   const mute = await conversationAudioMuteStore.load(tabId, conversationId);
   return mute.ok ? { ok: true, muted: mute.value.muted, revision: mute.value.revision } : { ok: false };
-});
+}, async (event) => { await dispatchCodexBridgeTerminalEventSaved(event, {
+  ownerMatches: (tabId, conversationId) => ownerTabMatchesConversation(chrome.tabs, tabId, conversationId),
+  send: (tabId, message) => chrome.tabs.sendMessage(tabId, message),
+}); });
 const handleConversationAudioMute = createConversationAudioMuteMessageHandler(
   conversationAudioMuteStore,
   chrome.runtime.id,

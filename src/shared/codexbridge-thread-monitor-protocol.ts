@@ -21,6 +21,7 @@ export const CODEX_BRIDGE_WATCH_LIST = 'CODEX_BRIDGE_WATCH_LIST' as const;
 export const CODEX_BRIDGE_WATCH_READ = 'CODEX_BRIDGE_WATCH_READ' as const;
 export const CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH = 'CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH' as const;
 export const CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER = 'CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER' as const;
+export const CODEX_BRIDGE_TERMINAL_EVENT_SAVED = 'CODEX_BRIDGE_TERMINAL_EVENT_SAVED' as const;
 export const CODEX_BRIDGE_WATCH_ACK_EVENTS = 'CODEX_BRIDGE_WATCH_ACK_EVENTS' as const;
 export const CODEX_BRIDGE_WATCH_CLEAR_EVENTS = 'CODEX_BRIDGE_WATCH_CLEAR_EVENTS' as const;
 export const CODEX_BRIDGE_AUTO_WATCH_GET = 'CODEX_BRIDGE_AUTO_WATCH_GET' as const;
@@ -154,6 +155,22 @@ export type CodexBridgeWatchMessage =
   | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER; eventId: string }>
   | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_ACK_EVENTS; conversationId: string; eventIds: readonly string[] }>
   | Readonly<{ type: typeof CODEX_BRIDGE_WATCH_CLEAR_EVENTS; conversationId: string; eventIds: readonly string[] }>;
+
+export type CodexBridgeTerminalEventSavedMessage = Readonly<{
+  type: typeof CODEX_BRIDGE_TERMINAL_EVENT_SAVED;
+  eventId: string;
+  ownerConversationId: string;
+  detectedAt: string;
+}>;
+
+export function isCodexBridgeTerminalEventSavedMessage(value: unknown): value is CodexBridgeTerminalEventSavedMessage {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const message = value as Record<string, unknown>;
+  return Object.keys(message).length === 4 && message.type === CODEX_BRIDGE_TERMINAL_EVENT_SAVED
+    && isCodexBridgeWatchIdentifier(message.eventId) && message.eventId.length <= 96
+    && isConversationId(message.ownerConversationId)
+    && typeof message.detectedAt === 'string' && message.detectedAt.length <= 40 && Number.isFinite(Date.parse(message.detectedAt));
+}
 
 export type CodexBridgeAutoWatchMessage =
   | Readonly<{ type: typeof CODEX_BRIDGE_AUTO_WATCH_GET; targetId: string; conversationId: string }>

@@ -42,7 +42,7 @@ test('会話別状態をversioned local keyへ保存し、旧共有view stateを
   assert.deepEqual(await repository.load('conversation-A'), {
     ok: true, state: {
       schemaVersion: 1, selectedTabId: 'control', minimized: true, bridgeExpanded: true,
-      bridgeWatchSelection: null, bridgeEventSelection: null,
+      bridgeWatchSelection: null, bridgeEventSelection: null, autoReflectTerminalAnswer: false, autoReflectTerminalAnswerEnabledAt: null,
     }, saved: true,
   });
   assert.ok(CONVERSATION_PANEL_STATE_STORAGE_KEY in fake.data);
@@ -53,7 +53,7 @@ test('同じ会話は保存状態を共有し、別会話は分離する', async
   const repository = new ConversationPanelStateRepository(fake.area);
   const state = {
     schemaVersion: 1 as const, selectedTabId: 'wall' as const, minimized: false, bridgeExpanded: true,
-    bridgeWatchSelection: null, bridgeEventSelection: null,
+    bridgeWatchSelection: null, bridgeEventSelection: null, autoReflectTerminalAnswer: false, autoReflectTerminalAnswerEnabledAt: null,
   };
   assert.deepEqual(await repository.save('conversation-A', state), { ok: true });
   const loaded = await repository.load('conversation-A');
@@ -62,9 +62,24 @@ test('同じ会話は保存状態を共有し、別会話は分離する', async
   assert.deepEqual(await repository.load('conversation-B'), {
     ok: true, state: {
       schemaVersion: 1, selectedTabId: null, minimized: false, bridgeExpanded: false,
-      bridgeWatchSelection: null, bridgeEventSelection: null,
+      bridgeWatchSelection: null, bridgeEventSelection: null, autoReflectTerminalAnswer: false, autoReflectTerminalAnswerEnabledAt: null,
     }, saved: false,
   });
+});
+
+test('監視終了時の回答自動反映は既定OFFで会話別に保存されreload後も維持する', async () => {
+  const fake = storage();
+  const repository = new ConversationPanelStateRepository(fake.area, fake.onChanged);
+  const initial = await repository.load('conversation-A');
+  assert.equal(initial.ok && initial.state.autoReflectTerminalAnswer, false);
+  assert.deepEqual(await repository.update('conversation-A', {
+    autoReflectTerminalAnswer: true, autoReflectTerminalAnswerEnabledAt: 1_795_515_600_000,
+  }), { ok: true });
+  const reloaded = await new ConversationPanelStateRepository(fake.area, fake.onChanged).load('conversation-A');
+  assert.equal(reloaded.ok && reloaded.state.autoReflectTerminalAnswer, true);
+  assert.equal(reloaded.ok && reloaded.state.autoReflectTerminalAnswerEnabledAt, 1_795_515_600_000);
+  const other = await repository.load('conversation-B');
+  assert.equal(other.ok && other.state.autoReflectTerminalAnswer, false);
 });
 
 test('同じ会話の複数タブが別項目を同時更新しても相互に保持する', async () => {
@@ -95,7 +110,7 @@ test('同じ会話の複数タブが別項目を同時更新しても相互に�
   if (loaded.ok) assert.deepEqual(loaded.state, {
     schemaVersion: 1, selectedTabId: 'wall', minimized: true, bridgeExpanded: false,
     bridgeWatchSelection: { connectionId: 'connection-A', targetId: 'target-A', threadId: 'thread-A' },
-    bridgeEventSelection: 'event-A',
+    bridgeEventSelection: 'event-A', autoReflectTerminalAnswer: false, autoReflectTerminalAnswerEnabledAt: null,
   });
 });
 
@@ -105,12 +120,12 @@ test('B watch identityとC event選択を同一会話で共有し、別会話と
   const stateA = {
     schemaVersion: 1 as const, selectedTabId: 'control' as const, minimized: false, bridgeExpanded: true,
     bridgeWatchSelection: { connectionId: 'connection-A', targetId: 'target-A', threadId: 'thread-A' },
-    bridgeEventSelection: 'event-A',
+    bridgeEventSelection: 'event-A', autoReflectTerminalAnswer: false, autoReflectTerminalAnswerEnabledAt: null,
   };
   const stateB = {
     schemaVersion: 1 as const, selectedTabId: 'wall' as const, minimized: false, bridgeExpanded: true,
     bridgeWatchSelection: { connectionId: 'connection-B', targetId: 'target-B', threadId: 'thread-B' },
-    bridgeEventSelection: 'event-B',
+    bridgeEventSelection: 'event-B', autoReflectTerminalAnswer: false, autoReflectTerminalAnswerEnabledAt: null,
   };
   assert.deepEqual(await repository.save('conversation-A', stateA), { ok: true });
   assert.deepEqual(await repository.save('conversation-B', stateB), { ok: true });
@@ -128,6 +143,7 @@ test('既存schemaVersion 1状態は選択フィールドを既定値に補完�
     ok: true,
     state: {
       ...legacyConversationState, bridgeWatchSelection: null, bridgeEventSelection: null,
+      autoReflectTerminalAnswer: false, autoReflectTerminalAnswerEnabledAt: null,
     },
     saved: true,
   });
@@ -148,6 +164,7 @@ test('壊れた新規選択値だけを既定値へ戻し、既存conversation�
     state: {
       schemaVersion: 1, selectedTabId: 'control', minimized: true, bridgeExpanded: true,
       bridgeWatchSelection: null, bridgeEventSelection: null,
+      autoReflectTerminalAnswer: false, autoReflectTerminalAnswerEnabledAt: null,
     },
     saved: true,
   });

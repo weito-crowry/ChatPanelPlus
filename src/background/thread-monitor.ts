@@ -42,6 +42,7 @@ export type CodexBridgeNotificationPreparation =
 export type CodexBridgeNotificationHandler = Readonly<{
   prepare: (event: CodexBridgeTerminalEvent) => Promise<CodexBridgeNotificationPreparation>;
 }>;
+export type CodexBridgeTerminalEventSavedHandler = (event: CodexBridgeTerminalEvent) => Promise<void> | void;
 
 type PollCadence = 'foreground' | 'background';
 type MonitorOptions = Readonly<{
@@ -52,6 +53,7 @@ type MonitorOptions = Readonly<{
   gapThresholdMs?: number;
   createEventId?: () => string;
   notification?: CodexBridgeNotificationHandler;
+  onTerminalEventSaved?: CodexBridgeTerminalEventSavedHandler;
 }>;
 
 const MAX_POLL_FAILURES = 8;
@@ -64,6 +66,7 @@ export class CodexBridgeThreadMonitor {
   private readonly maxPollsPerCycle: number;
   private readonly maxConcurrentRequests: number;
   private readonly gapThresholdMs: number;
+  private readonly onTerminalEventSaved?: CodexBridgeTerminalEventSavedHandler;
   private alarmTail: Promise<void> = Promise.resolve();
   private readonly pollFlights = new Map<string, Promise<void>>();
   private readonly targetTails = new Map<string, Promise<void>>();
@@ -90,6 +93,7 @@ export class CodexBridgeThreadMonitor {
       ?? `${this.now()}-${Math.random().toString(36).slice(2, 12)}`);
     this.createEventId = options.createEventId ?? this.createWatchId;
     this.notification = options.notification;
+    this.onTerminalEventSaved = options.onTerminalEventSaved;
     this.maxPollsPerCycle = options.maxPollsPerCycle ?? 12;
     this.maxConcurrentRequests = options.maxConcurrentRequests ?? 3;
     this.gapThresholdMs = options.gapThresholdMs ?? 90_000;
@@ -365,7 +369,11 @@ export class CodexBridgeThreadMonitor {
         // Keep notification delivery independent of alarm API errors.
       }
     }
-    if (result.event) await this.notifyForEvent(result.event);
+    if (result.event) {
+      const tasks = [this.notifyForEvent(result.event)];
+      if (this.onTerminalEventSaved) tasks.push(Promise.resolve().then(() => this.onTerminalEventSaved!(result.event!)));
+      await Promise.allSettled(tasks);
+    }
   }
 
   private async saveFailure(item: CodexBridgeWatchSnapshot, outcome: CodexBridgeWatchFetchOutcome, cadence: PollCadence): Promise<void> {
