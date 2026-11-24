@@ -146,7 +146,7 @@
 - Optionsの「自動反映」に複数行欄、token説明、例文preview、token単独へ戻すdraft操作を追加する。保存・JSON importはtoken欠落/型不正/上限超過を明示拒否し、旧JSONのfield欠落はdefaultを使う。
 - C47は`retrieved + confirmed`の回答取得後・append直前に設定repositoryから一度だけ正規化済み設定を読み、全tokenを文字列として一度に置換して既存の末尾appendへ渡す。最終回答本文中のtoken、`$&`等、空白・改行・Markdownを再処理しない。route/owner eligibilityをtemplate読込後に再確認し、失敗時は可視の未反映とする。
 - event受信時ではなくappend直前snapshotを使うため、queue待ち・回答取得中に保存されたtemplate変更は、そのeventの挿入時に読み込まれた値へ反映する。空/未確定/取得失敗の回答は従来どおり挿入せず、通知・手動copy/insert・既存draft保護を維持する。送信/Enter/送信ボタン/自動承認は追加しない。
-- Chrome手順は`docs/c50-terminal-answer-template-acceptance.md`に追記。2026-11-24のユーザー報告で設定欄、プレビュー、保存後保持、token欠落時の保存拒否、既存draft保持、既定値復元の6項目をPASSとし、主要8項目中6/8の部分PASSを記録。自動反映成功と自動送信なしはNOT_RUNで、選択範囲、添付、JSON入出力、複数token、競合、失敗経路等も未確認。C48の自動801/801 PASS・Chrome NOT_RUN、およびC49の既存3項目PASSと残NOT_RUNを維持する。
+- Chrome手順は`docs/c50-terminal-answer-template-acceptance.md`に追記。2026-11-24のユーザー報告で、設定欄、プレビュー、保存後保持、token欠落時の保存拒否、既存draft保持、既定値復元、および直前のC50記録更新後にCodex終了時のtemplate反映があった正常系をPASSとし、主要8項目中7/8の部分PASSへ更新。自動送信なしは明示報告がないためNOT_RUN。選択範囲、添付、JSON入出力、複数token、競合、失敗経路等も未確認。CPP側の反映成功はC49の両会話owner帰属を証明せず、C49の既存暫定観測と3項目PASSは変更しない。C48の自動801/801 PASS・Chrome NOT_RUNも維持する。
 - 自動検証：`pnpm test` 823/823 PASS、`pnpm typecheck` PASS、`pnpm lint` PASS（check:size 291 files、最大500行/32768 bytes）、`pnpm build` PASS、`git diff --check` PASS。これはsource/build確認で、C50 Chrome実機受入はNOT_RUN。
 
 ## C46 semantic guard correction（2026-11-24）
