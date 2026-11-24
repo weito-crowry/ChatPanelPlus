@@ -188,7 +188,7 @@ export function OptionsPage() {
           <ProjectFolderPatternsSettings />
         </section>
         <section className="options-section" id="audio" aria-labelledby="audio-title" hidden={section !== 'audio'}>
-          <h2 id="audio-title">通知・音声</h2><p className="scope-note">通知ごとに有効化・音源・音量を設定できます。音源ライブラリと出力先は共通、ミュートは会話別です。</p>
+          <h2 id="audio-title">通知・音声</h2><p className="scope-note">通知ごとに有効化・音源・音量を設定できます。音源ライブラリと複数出力先は共通、ミュートは会話別です。出力先は独立保存領域で、共通設定JSONには含まれません。</p>
           <fieldset disabled={!ready || saving || soundAssetOperation}>
             <AnswerCompletionSoundSettings
               idPrefix="answer-completion"

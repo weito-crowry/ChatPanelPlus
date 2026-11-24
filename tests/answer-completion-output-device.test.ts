@@ -14,7 +14,16 @@ import { playAnswerCompletionSoundOffscreen } from '../src/offscreen/answer-comp
 import { createOffscreenAudioTransport } from '../src/background/offscreen-audio-transport.ts';
 import { routeAnswerCompletionSound } from '../src/content/answer-completion-output-device-route.ts';
 import { DEFAULT_COMPLETION_SOUND_ID } from '../src/shared/answer-completion-sound-definitions.ts';
-import { ANSWER_COMPLETION_SOUND_PREVIEW, ANSWER_COMPLETION_SOUND_ROUTE } from '../src/shared/answer-completion-output-device-protocol.ts';
+import { ANSWER_COMPLETION_SOUND_PREVIEW, ANSWER_COMPLETION_SOUND_ROUTE, type OffscreenPlaybackResult } from '../src/shared/answer-completion-output-device-protocol.ts';
+
+const defaultSelection = { schemaVersion: 2 as const, devices: [] };
+function selection(...devices: Array<{ deviceId: string; label: string }>) { return { schemaVersion: 2 as const, devices }; }
+function successfulPlayback(outputCount = 1): OffscreenPlaybackResult {
+  return { ok: true, status: 'complete', outputCount, succeededCount: outputCount, failures: [] };
+}
+function failedPlayback(reason: 'device-unavailable' | 'permission-denied' | 'sink-failed' | 'playback-failed', outputCount = 1): OffscreenPlaybackResult {
+  return { ok: false, status: 'failed', outputCount, succeededCount: 0, failures: Array.from({ length: outputCount }, () => reason) };
+}
 
 test('列挙結果は出力だけに絞り、デバイスIDで重複を除く', () => {
   assert.deepEqual(normalizeAudioOutputDevices([
@@ -60,14 +69,17 @@ test('出力先を保存・再読込し、storage変更を購読できる', asyn
     addListener(listener) { listeners.push(listener); },
     removeListener(listener) { const index = listeners.indexOf(listener); if (index >= 0) listeners.splice(index, 1); },
   });
-  assert.deepEqual(await repository.load(), { ok: true, device: DEFAULT_ANSWER_COMPLETION_OUTPUT_DEVICE });
-  assert.deepEqual(await repository.save({ deviceId: 'usb-64', label: 'USB' }), { ok: true, device: { deviceId: 'usb-64', label: 'USB' } });
+  assert.deepEqual(await repository.load(), { ok: true, selection: defaultSelection });
+  assert.deepEqual(await repository.save(selection({ deviceId: 'usb-64', label: 'USB' })), {
+    ok: true, selection: selection({ deviceId: 'usb-64', label: 'USB' }),
+  });
   assert.equal(values[ANSWER_COMPLETION_OUTPUT_DEVICE_STORAGE_KEY] instanceof Object, true);
-  assert.deepEqual(await repository.load(), { ok: true, device: { deviceId: 'usb-64', label: 'USB' } });
+  assert.deepEqual(await repository.load(), { ok: true, selection: selection({ deviceId: 'usb-64', label: 'USB' }) });
   const updates: unknown[] = [];
   const unsubscribe = repository.subscribe((result) => updates.push(result));
-  for (const listener of listeners) listener({ [ANSWER_COMPLETION_OUTPUT_DEVICE_STORAGE_KEY]: { newValue: { deviceId: 'usb-2', label: '別のUSB' } } }, 'local');
-  assert.deepEqual(updates, [{ ok: true, device: { deviceId: 'usb-2', label: '別のUSB' } }]);
+  const updatedSelection = selection({ deviceId: 'usb-2', label: '別のUSB' });
+  for (const listener of listeners) listener({ [ANSWER_COMPLETION_OUTPUT_DEVICE_STORAGE_KEY]: { newValue: updatedSelection } }, 'local');
+  assert.deepEqual(updates, [{ ok: true, selection: updatedSelection }]);
   unsubscribe();
   assert.equal(listeners.length, 0);
 });
@@ -79,10 +91,10 @@ test('保存エラーと破損値は既存の出力先を上書きしない', as
     async get() { return { [ANSWER_COMPLETION_OUTPUT_DEVICE_STORAGE_KEY]: current }; },
     async set(items) { if (failSave) throw new Error('quota'); current = items[ANSWER_COMPLETION_OUTPUT_DEVICE_STORAGE_KEY]; },
   });
-  assert.deepEqual(await repository.save({ deviceId: 'invalid\n', label: '破損' }), { ok: false, reason: 'invalid-selection' });
+  assert.deepEqual(await repository.save(selection({ deviceId: 'invalid\n', label: '破損' })), { ok: false, reason: 'invalid-selection' });
   failSave = true;
-  assert.deepEqual(await repository.save({ deviceId: 'usb-new', label: '新規' }), { ok: false, reason: 'storage-failed' });
-  assert.deepEqual(await repository.load(), { ok: true, device: { deviceId: 'usb-old', label: '既存' } });
+  assert.deepEqual(await repository.save(selection({ deviceId: 'usb-new', label: '新規' })), { ok: false, reason: 'storage-failed' });
+  assert.deepEqual(await repository.load(), { ok: true, selection: selection({ deviceId: 'usb-old', label: '既存' }) });
 });
 
 test('明示されたマイク権限操作は取得した全トラックを直ちに停止する', async () => {
@@ -105,9 +117,9 @@ test('明示されたマイク権限操作は取得した全トラックを直�
 test('既定出力は既存Content Script再生を選び、Offscreenを起動しない', async () => {
   let offscreenCalls = 0;
   const handler = createOutputDevicePlaybackMessageHandler({
-    loadOutputDevice: async () => ({ ok: true, device: DEFAULT_ANSWER_COMPLETION_OUTPUT_DEVICE }),
+    loadOutputDevice: async () => ({ ok: true, selection: defaultSelection }),
     loadAssets: async () => ({ ok: true, assets: [] }),
-    playOffscreen: async () => { offscreenCalls += 1; return { ok: true }; },
+    playOffscreen: async () => { offscreenCalls += 1; return successfulPlayback(); },
   });
   assert.deepEqual(await handler({ type: ANSWER_COMPLETION_SOUND_ROUTE, soundId: DEFAULT_COMPLETION_SOUND_ID, volumePercent: 50 }, {
     id: 'extension-id', tab: { url: 'https://chatgpt.com/c/abc' },
@@ -119,10 +131,10 @@ test('会話別mute済みの回答完了音は既定・Offscreenどちらの経�
   let offscreenCalls = 0;
   let deviceLoads = 0;
   const handler = createOutputDevicePlaybackMessageHandler({
-    loadOutputDevice: async () => { deviceLoads += 1; return { ok: true, device: DEFAULT_ANSWER_COMPLETION_OUTPUT_DEVICE }; },
+    loadOutputDevice: async () => { deviceLoads += 1; return { ok: true, selection: defaultSelection }; },
     loadAssets: async () => ({ ok: true, assets: [] }),
     loadConversationMute: async (_sender, conversationId) => ({ ok: true, muted: conversationId === 'conversation-A' }),
-    playOffscreen: async () => { offscreenCalls += 1; return { ok: true }; },
+    playOffscreen: async () => { offscreenCalls += 1; return successfulPlayback(); },
   });
   assert.deepEqual(await handler({
     type: ANSWER_COMPLETION_SOUND_ROUTE, conversationId: 'conversation-A', soundId: DEFAULT_COMPLETION_SOUND_ID, volumePercent: 50,
@@ -140,10 +152,10 @@ test('Offscreenの遅延assetロード中にmuteがONになれば再生直前に
   let muteReads = 0;
   let offscreenCalls = 0;
   const handler = createOutputDevicePlaybackMessageHandler({
-    loadOutputDevice: async () => ({ ok: true, device: { deviceId: 'usb-headset-64', label: 'USB' } }),
+    loadOutputDevice: async () => ({ ok: true, selection: selection({ deviceId: 'usb-headset-64', label: 'USB' }) }),
     loadAssets: () => assets,
     loadConversationMute: async () => ({ ok: true, muted: ++muteReads > 1 }),
-    playOffscreen: async () => { offscreenCalls += 1; return { ok: true }; },
+    playOffscreen: async () => { offscreenCalls += 1; return successfulPlayback(); },
   });
   const request = handler({
     type: ANSWER_COMPLETION_SOUND_ROUTE, conversationId: 'conversation-A',
@@ -163,7 +175,7 @@ test('Offscreen直前のbackground mute guardがmute設定更新と直列化さ�
   let offscreenCalls = 0;
   let guardCalls = 0;
   const handler = createOutputDevicePlaybackMessageHandler({
-    loadOutputDevice: async () => ({ ok: true, device: { deviceId: 'usb-headset-64', label: 'USB' } }),
+    loadOutputDevice: async () => ({ ok: true, selection: selection({ deviceId: 'usb-headset-64', label: 'USB' }) }),
     loadAssets: async () => ({ ok: true, assets: [] }),
     loadConversationMute: async () => ({ ok: true, muted: false }),
     playOffscreenWithMuteGuard: async (_sender, conversationId) => {
@@ -171,7 +183,7 @@ test('Offscreen直前のbackground mute guardがmute設定更新と直列化さ�
       assert.equal(conversationId, 'conversation-A');
       return { ok: false, reason: 'muted' };
     },
-    playOffscreen: async () => { offscreenCalls += 1; return { ok: true }; },
+    playOffscreen: async () => { offscreenCalls += 1; return successfulPlayback(); },
   });
   assert.deepEqual(await handler({
     type: ANSWER_COMPLETION_SOUND_ROUTE, conversationId: 'conversation-A', soundId: DEFAULT_COMPLETION_SOUND_ID, volumePercent: 50,
@@ -191,18 +203,18 @@ test('指定出力の試聴と回答完了音は同じOffscreen経路を使う',
   };
   const sent: unknown[] = [];
   const handler = createOutputDevicePlaybackMessageHandler({
-    loadOutputDevice: async () => ({ ok: true, device: storedDevice }),
+    loadOutputDevice: async () => ({ ok: true, selection: selection(storedDevice) }),
     loadAssets: async () => ({ ok: true, assets: [storedAsset] }),
-    playOffscreen: async (request) => { sent.push(request); return { ok: true }; },
+    playOffscreen: async (request) => { sent.push(request); return successfulPlayback(request.deviceIds.length); },
   });
   for (const type of [ANSWER_COMPLETION_SOUND_ROUTE, ANSWER_COMPLETION_SOUND_PREVIEW]) {
     assert.deepEqual(await handler({ type, soundId: storedAsset.id, volumePercent: 73 }, {
       id: 'extension-id', url: 'chrome-extension://extension-id/index.html', tab: { url: 'https://chatgpt.com/' },
-    }, 'extension-id'), { ok: true, route: 'device' });
+    }, 'extension-id'), { ok: true, route: 'device', playback: successfulPlayback(1) });
   }
   assert.equal(sent.length, 2);
   assert.deepEqual(sent[0], {
-    type: 'CPP_OFFSCREEN_PLAY_ANSWER_COMPLETION_SOUND', deviceId: storedDevice.deviceId,
+    type: 'CPP_OFFSCREEN_PLAY_ANSWER_COMPLETION_SOUND', deviceIds: [storedDevice.deviceId],
     soundId: storedAsset.id, volumePercent: 73, asset: storedAsset,
   });
   assert.deepEqual(sent[1], sent[0]);
@@ -211,22 +223,22 @@ test('指定出力の試聴と回答完了音は同じOffscreen経路を使う',
 test('指定先でのsetSinkId失敗はエラーとして返し、既定出力へ送らない', async () => {
   let offscreenCalls = 0;
   const handler = createOutputDevicePlaybackMessageHandler({
-    loadOutputDevice: async () => ({ ok: true, device: { deviceId: 'removed-device-64', label: '切断済み' } }),
+    loadOutputDevice: async () => ({ ok: true, selection: selection({ deviceId: 'removed-device-64', label: '切断済み' }) }),
     loadAssets: async () => ({ ok: true, assets: [] }),
-    playOffscreen: async () => { offscreenCalls += 1; return { ok: false, reason: 'device-unavailable' }; },
+    playOffscreen: async () => { offscreenCalls += 1; return failedPlayback('device-unavailable'); },
   });
   assert.deepEqual(await handler({ type: ANSWER_COMPLETION_SOUND_ROUTE, soundId: DEFAULT_COMPLETION_SOUND_ID, volumePercent: 50 }, {
     id: 'extension-id', tab: { url: 'https://chatgpt.com/c/abc' },
-  }, 'extension-id'), { ok: false, reason: 'device-unavailable' });
+  }, 'extension-id'), { ok: false, reason: 'device-unavailable', playback: failedPlayback('device-unavailable') });
   assert.equal(offscreenCalls, 1);
 });
 
 test('外部ページや不正な再生指定は処理しない', async () => {
   let offscreenCalls = 0;
   const handler = createOutputDevicePlaybackMessageHandler({
-    loadOutputDevice: async () => ({ ok: true, device: { deviceId: 'usb-64', label: 'USB' } }),
+    loadOutputDevice: async () => ({ ok: true, selection: selection({ deviceId: 'usb-64', label: 'USB' }) }),
     loadAssets: async () => ({ ok: true, assets: [] }),
-    playOffscreen: async () => { offscreenCalls += 1; return { ok: true }; },
+    playOffscreen: async () => { offscreenCalls += 1; return successfulPlayback(); },
   });
   assert.equal(await handler({ type: ANSWER_COMPLETION_SOUND_ROUTE, soundId: DEFAULT_COMPLETION_SOUND_ID, volumePercent: 50 }, {
     id: 'other-extension', tab: { url: 'https://chatgpt.com/' },
@@ -256,10 +268,10 @@ test('Offscreenは再生前に指定先を確定し、AudioContext.setSinkId失�
     createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {} }; },
   };
   const result = await playAnswerCompletionSoundOffscreen({
-    type: 'CPP_OFFSCREEN_PLAY_ANSWER_COMPLETION_SOUND', deviceId: 'usb-headset-64',
+    type: 'CPP_OFFSCREEN_PLAY_ANSWER_COMPLETION_SOUND', deviceIds: ['usb-headset-64'],
     soundId: DEFAULT_COMPLETION_SOUND_ID, volumePercent: 50,
   }, () => context as unknown as AudioContext);
-  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(result, successfulPlayback());
   assert.deepEqual(events, ['sink:usb-headset-64', 'resume', 'start']);
 
   events.length = 0;
@@ -279,18 +291,18 @@ test('Offscreenは再生前に指定先を確定し、AudioContext.setSinkId失�
   };
   state = 'suspended';
   assert.deepEqual(await playAnswerCompletionSoundOffscreen({
-    type: 'CPP_OFFSCREEN_PLAY_ANSWER_COMPLETION_SOUND', deviceId: 'usb-headset-64',
+    type: 'CPP_OFFSCREEN_PLAY_ANSWER_COMPLETION_SOUND', deviceIds: ['usb-headset-64'],
     soundId: assetId, volumePercent: 50,
     asset: { id: assetId, name: 'ding.wav', mimeType: 'audio/wav', data: 'YWJj', sizeBytes: 3, durationSeconds: 0.2 },
-  }, () => assetContext as unknown as AudioContext), { ok: true });
+  }, () => assetContext as unknown as AudioContext), successfulPlayback());
   assert.deepEqual(events, ['sink:usb-headset-64', 'resume', 'decode', 'asset-start']);
 
   state = 'suspended';
   const missing = await playAnswerCompletionSoundOffscreen({
-    type: 'CPP_OFFSCREEN_PLAY_ANSWER_COMPLETION_SOUND', deviceId: 'removed-device-64',
+    type: 'CPP_OFFSCREEN_PLAY_ANSWER_COMPLETION_SOUND', deviceIds: ['removed-device-64'],
     soundId: DEFAULT_COMPLETION_SOUND_ID, volumePercent: 50,
   }, () => ({ ...context, async setSinkId() { throw new DOMException('', 'NotFoundError'); } } as unknown as AudioContext));
-  assert.deepEqual(missing, { ok: false, reason: 'device-unavailable' });
+  assert.deepEqual(missing, failedPlayback('device-unavailable'));
 });
 
 test('同時要求でOffscreenを二重生成せず、終了後の次要求で再作成する', async () => {
@@ -305,17 +317,17 @@ test('同時要求でOffscreenを二重生成せず、終了後の次要求で�
     },
   }, {
     async getContexts() { return open ? [{}] : []; },
-    async sendMessage() { sends += 1; return { ok: true }; },
+    async sendMessage(request) { sends += 1; return successfulPlayback((request as { deviceIds: string[] }).deviceIds.length); },
   }, 'chrome-extension://extension-id/offscreen.html');
   const request = {
     type: 'CPP_OFFSCREEN_PLAY_ANSWER_COMPLETION_SOUND' as const,
-    deviceId: 'usb-64', soundId: DEFAULT_COMPLETION_SOUND_ID, volumePercent: 40,
+    deviceIds: ['usb-64'], soundId: DEFAULT_COMPLETION_SOUND_ID, volumePercent: 40,
   };
-  assert.deepEqual(await Promise.all([transport.play(request), transport.play(request)]), [{ ok: true }, { ok: true }]);
+  assert.deepEqual(await Promise.all([transport.play(request), transport.play(request)]), [successfulPlayback(), successfulPlayback()]);
   assert.equal(creates, 1);
   assert.equal(sends, 2);
   open = false;
-  assert.deepEqual(await transport.play(request), { ok: true });
+  assert.deepEqual(await transport.play(request), successfulPlayback());
   assert.equal(creates, 2);
   assert.equal(sends, 3);
 });
@@ -334,7 +346,7 @@ test('Content Scriptは指定先成功時と失敗時に既定経路へ重複再
   let localStarts = 0;
   const errors: string[] = [];
   const message = { soundId: DEFAULT_COMPLETION_SOUND_ID, volumePercent: 60 };
-  await routeAnswerCompletionSound({ async sendMessage() { return { ok: true, route: 'device' }; } }, message,
+  await routeAnswerCompletionSound({ async sendMessage() { return { ok: true, route: 'device', playback: successfulPlayback() }; } }, message,
     () => { localStarts += 1; }, (reason) => errors.push(reason));
   await routeAnswerCompletionSound({ async sendMessage() { return { ok: false, reason: 'device-unavailable' }; } }, message,
     () => { localStarts += 1; }, (reason) => errors.push(reason));

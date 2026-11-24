@@ -20,6 +20,24 @@ test('saved data inventory reads a fixed allowlist and omits token and binary pa
   assert.equal(snapshot.categories.find((entry) => entry.key.endsWith('SoundAssets'))?.lastUpdated, '不明');
 });
 
+test('saved data inventory recognizes the versioned independent output-device selection without exposing IDs', () => {
+  const snapshot = createSavedDataSnapshot({
+    'chatPanelPlus.answerCompletionOutputDevice': {
+      schemaVersion: 2,
+      devices: [
+        { deviceId: 'usb-private-1234', label: 'Desk speaker' },
+        { deviceId: 'usb-private-5678', label: 'Headphones' },
+      ],
+    },
+  }, { tokenPresent: false });
+  const output = snapshot.categories.find((item) => item.key === 'chatPanelPlus.answerCompletionOutputDevice')!;
+  assert.equal(output.status, '利用可能');
+  assert.equal(output.deletable, false);
+  assert.equal(JSON.stringify(output.records).includes('usb-private'), false);
+  assert.equal(JSON.stringify(output.records).includes('Desk speaker'), false);
+  assert.match(output.records[0]!.summary, /2台/u);
+});
+
 test('monitor details omit owner and connection identifiers while showing useful thread/event metadata', () => {
   const snapshot = createSavedDataSnapshot({ 'chatPanelPlus.codexBridgeThreadMonitor.v1': {
     version: 2,

@@ -12,7 +12,8 @@
 1. **C47の未受入項目**：OFF・ON前event/reload、watch起点（手動/C46自動）、選択範囲、近接/同時完了、owner tab・別会話・SPA切替、音声OFF/mute、IME/添付/editor不可、pending/取得失敗と手動fallbackを専用手順どおり確認する。主要正常系の部分PASSと未確認項目は`docs/c47-terminal-answer-auto-reflect-acceptance.md`に記録。
 2. **C45/C38の未完了受入**：C45はterminal event identity・自動解除・前面約5秒監視を専用ケースで確認。C38はA一覧/件数更新、live schema、実行中/通常mode、Bridge未対応・取得失敗を確認する。今回の限定表示を全体PASSへ広げない。
 3. **その他の手動受入**：修正後未確認のC12/C29/C30、C31–C36、C44、C46の残ケース、C04、C06–C11、C13–C28、C39–C43をチェックリストの優先度に沿って実施。実測した個別ケースだけ更新し、未実施は`NOT_RUN`のままにする。
-4. **merge準備**：行別実機結果と残制約をレビューし、既知FAILの修正後受入とPhase 4 event総保持上限等の判断を整理してmerge可否を決める。C47のChrome受入前は全体merge-readyとしない。この依頼ではmergeしない。
+4. **C52複数出力実機受入**：実装・自動検証は完了したがChrome手動項目は未実施。`docs/c52-multiple-output-devices-acceptance.md`の手順に沿って確認する。
+5. **merge準備**：行別実機結果と残制約をレビューし、既知FAILの修正後受入とPhase 4 event総保持上限等の判断を整理してmerge可否を決める。C47/C52のChrome受入前は全体merge-readyとしない。この依頼ではmergeしない。
 
 ## 完了記録
 
@@ -166,3 +167,10 @@
 - 修正後はsemantic本文一致とroute/root/unique turn/assistant ID/complete状態の再検証で判定する。Bridge候補2件、回答本文の完全一致1件なら対象1件だけ登録しcontrol候補は登録しない。本文/DOMはbackgroundへ送らず、診断は既存の安全な理由コード・件数だけを使う。
 - 自動検証：`pnpm test` 756/756、C46 bridge-first 16件と登録連携20件を含む。`pnpm typecheck`、`pnpm lint`、`pnpm check:size`（269 files）、`pnpm build`、`git diff --check`もPASS。
 - この記録時点ではsource修正後のChrome受入は未実施だった。その後ユーザーがrepo直下`dist/`をreloadしChatGPTをF5し、10:00:42 JSTのC46基本正常経路を確認した。限定的なPASSと未確認項目は本書冒頭に記録する。
+
+## C52 通知音の複数出力先（2026-11-24）
+
+- Issue #20と追加コメントに基づき、Options共通出力先を最大8件のcheckbox選択へ変更する。空選択は既定出力。`chatPanelPlus.answerCompletionOutputDevice`の旧単一`{deviceId,label}`はschema 2配列へ読み替え、ユーザー操作前の自動書き換えはしない。破損値は保存操作で上書きしない。共通設定JSON対象は拡張せず、UIに対象外と示す。
+- 同一出力要求は出力ごとに独立AudioContextを作り、複数物理出力へ並行再生する。部分成功・全失敗を区別し、切断/権限/sink/context/playback失敗を他出力へ波及させず、成功先の再生を重複しない。部分失敗時の全体retryや既定出力fallbackを行わない。空選択時のChatGPT/試聴ローカル経路とCodex Offscreen既定経路、C51の通知別音源・音量・enabled、既存mute/owner/dedupe意味を維持する。
+- Chrome受入手順は`docs/c52-multiple-output-devices-acceptance.md`。今回の実機結果は未報告のため全項目`NOT_RUN`。C48/C49/C50既存観測を変更せず、C51実機受入も全項目`NOT_RUN`を維持する。
+- 詳細計画は`docs/superpowers/plans/2026-11-24-issue-20-multi-output-devices.md`。最終自動検証は`pnpm test` 851/851、`pnpm typecheck` PASS、`pnpm lint` PASS（check:size 295 files、500行/32768 bytes以下）、`pnpm build` PASS、`git diff --check` PASS。実機のChrome reload、ChatGPT F5、デバイス切断/再接続、複数実音再生は行っていないためC52はNOT_RUNのまま。

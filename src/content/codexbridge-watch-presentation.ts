@@ -131,7 +131,8 @@ export function countCurrentOwnerTargetWatches(input: Readonly<{
 export function eventStatusLabel(event: CodexBridgeTerminalEvent): string {
   const state: Record<CodexBridgeTerminalEvent['notificationState'], string> = {
     pending: '音声通知結果不明（再試行なし）', requested: '音声要求済み（再生結果不明、再試行なし）',
-    played: '音声再生成功', skipped: event.notificationReason === 'disabled' ? '音声通知無効' : '音声通知スキップ',
+    played: event.notificationReason === 'partial-output' ? '一部の出力先で音声再生成功' : '音声再生成功',
+    skipped: event.notificationReason === 'disabled' ? '音声通知無効' : '音声通知スキップ',
     failed: '音声再生失敗',
   };
   return state[event.notificationState];

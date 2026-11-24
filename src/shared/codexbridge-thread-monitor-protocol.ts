@@ -33,7 +33,7 @@ export type CodexBridgeTerminalStatus = 'completed' | 'failed' | 'interrupted';
 export type CodexBridgeNotificationState = 'pending' | 'requested' | 'played' | 'skipped' | 'failed';
 export type CodexBridgeNotificationReason = 'disabled' | 'volume-zero' | 'settings-unavailable'
   | 'output-device-unavailable' | 'device-unavailable' | 'permission-denied' | 'sink-failed' | 'playback-failed'
-  | 'muted' | 'owner-unavailable';
+  | 'muted' | 'owner-unavailable' | 'partial-output';
 
 export type CodexBridgeWatchOwnerMute = Readonly<{
   ownerTabId: number;
@@ -245,7 +245,7 @@ export function isCodexBridgeTerminalEvent(value: unknown): value is CodexBridge
     && typeof event.detectedAt === 'string' && event.detectedAt.length <= 40
     && ['pending', 'requested', 'played', 'skipped', 'failed'].includes(String(event.notificationState))
     && (event.notificationReason === null || ['disabled', 'volume-zero', 'settings-unavailable',
-      'output-device-unavailable', 'device-unavailable', 'permission-denied', 'sink-failed', 'playback-failed', 'muted', 'owner-unavailable']
+      'output-device-unavailable', 'device-unavailable', 'permission-denied', 'sink-failed', 'playback-failed', 'muted', 'owner-unavailable', 'partial-output']
       .includes(String(event.notificationReason)));
 }
 

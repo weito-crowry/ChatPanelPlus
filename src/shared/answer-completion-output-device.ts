@@ -1,12 +1,24 @@
 export const ANSWER_COMPLETION_OUTPUT_DEVICE_STORAGE_KEY = 'chatPanelPlus.answerCompletionOutputDevice';
+export const ANSWER_COMPLETION_OUTPUT_DEVICE_SELECTION_SCHEMA_VERSION = 2 as const;
+export const MAX_ANSWER_COMPLETION_OUTPUT_DEVICES = 8;
+export const ANSWER_COMPLETION_OUTPUT_DEVICE_WRITE_LOCK = `${ANSWER_COMPLETION_OUTPUT_DEVICE_STORAGE_KEY}.write`;
 export const DEFAULT_ANSWER_COMPLETION_OUTPUT_DEVICE = Object.freeze({
   deviceId: 'default',
   label: 'システムの既定',
+});
+export const DEFAULT_ANSWER_COMPLETION_OUTPUT_DEVICE_SELECTION = Object.freeze({
+  schemaVersion: ANSWER_COMPLETION_OUTPUT_DEVICE_SELECTION_SCHEMA_VERSION,
+  devices: Object.freeze([]) as readonly AnswerCompletionOutputDevice[],
 });
 
 export interface AnswerCompletionOutputDevice {
   readonly deviceId: string;
   readonly label: string;
+}
+
+export interface AnswerCompletionOutputDeviceSelection {
+  readonly schemaVersion: typeof ANSWER_COMPLETION_OUTPUT_DEVICE_SELECTION_SCHEMA_VERSION;
+  readonly devices: readonly AnswerCompletionOutputDevice[];
 }
 
 export interface AudioOutputDeviceOption {
@@ -24,12 +36,16 @@ export interface OutputDeviceStorageChangesLike {
   removeListener(listener: (changes: Record<string, { newValue?: unknown }>, areaName: string) => void): void;
 }
 
+export interface OutputDeviceLockManagerLike {
+  request<T>(name: string, callback: () => Promise<T>): Promise<T>;
+}
+
 export type OutputDeviceLoadResult =
-  | { readonly ok: true; readonly device: AnswerCompletionOutputDevice }
+  | { readonly ok: true; readonly selection: AnswerCompletionOutputDeviceSelection }
   | { readonly ok: false; readonly reason: 'corrupt-selection' | 'storage-failed' };
 export type OutputDeviceSaveResult =
-  | { readonly ok: true; readonly device: AnswerCompletionOutputDevice }
-  | { readonly ok: false; readonly reason: 'invalid-selection' | 'storage-failed' };
+  | { readonly ok: true; readonly selection: AnswerCompletionOutputDeviceSelection }
+  | { readonly ok: false; readonly reason: 'invalid-selection' | 'selection-limit' | 'corrupt-selection' | 'storage-failed' };
 export type EnumerateOutputDevicesResult =
   | { readonly ok: true; readonly devices: readonly AudioOutputDeviceOption[] }
   | { readonly ok: false; readonly reason: 'unsupported' | 'permission-denied' | 'enumeration-failed' };
@@ -60,6 +76,41 @@ export function validateAnswerCompletionOutputDevice(value: unknown): AnswerComp
   if (value.deviceId === 'default') return DEFAULT_ANSWER_COMPLETION_OUTPUT_DEVICE;
   if (value.label.length === 0) return null;
   return { deviceId: value.deviceId, label: value.label };
+}
+
+export function normalizeAnswerCompletionOutputDeviceSelection(value: unknown): AnswerCompletionOutputDeviceSelection | null {
+  if (!isRecord(value)) return null;
+  if (!Object.hasOwn(value, 'schemaVersion')) {
+    const legacy = validateAnswerCompletionOutputDevice(value);
+    if (!legacy) return null;
+    return legacy.deviceId === 'default'
+      ? DEFAULT_ANSWER_COMPLETION_OUTPUT_DEVICE_SELECTION
+      : { schemaVersion: ANSWER_COMPLETION_OUTPUT_DEVICE_SELECTION_SCHEMA_VERSION, devices: [legacy] };
+  }
+  if (value.schemaVersion !== ANSWER_COMPLETION_OUTPUT_DEVICE_SELECTION_SCHEMA_VERSION
+    || Object.keys(value).some((key) => key !== 'schemaVersion' && key !== 'devices')
+    || !Array.isArray(value.devices)) return null;
+
+  const validatedDevices: AnswerCompletionOutputDevice[] = [];
+  for (const rawDevice of value.devices) {
+    const device = validateAnswerCompletionOutputDevice(rawDevice);
+    if (!device) return null;
+    validatedDevices.push(device);
+  }
+  const hasDefault = validatedDevices.some(({ deviceId }) => deviceId === 'default');
+  const hasPhysical = validatedDevices.some(({ deviceId }) => deviceId !== 'default');
+  if (hasDefault && hasPhysical) return null;
+  if (hasDefault) return DEFAULT_ANSWER_COMPLETION_OUTPUT_DEVICE_SELECTION;
+
+  const seen = new Set<string>();
+  const devices: AnswerCompletionOutputDevice[] = [];
+  for (const device of validatedDevices) {
+    if (seen.has(device.deviceId)) continue;
+    seen.add(device.deviceId);
+    devices.push(device);
+    if (devices.length > MAX_ANSWER_COMPLETION_OUTPUT_DEVICES) return null;
+  }
+  return { schemaVersion: ANSWER_COMPLETION_OUTPUT_DEVICE_SELECTION_SCHEMA_VERSION, devices };
 }
 
 export function normalizeAudioOutputDevices(devices: readonly Pick<MediaDeviceInfo, 'kind' | 'deviceId' | 'label'>[]): AudioOutputDeviceOption[] {
@@ -123,30 +174,63 @@ export async function requestAudioOutputPermission(mediaDevices: MediaDeviceAcce
 export class AnswerCompletionOutputDeviceRepository {
   private readonly area: OutputDeviceStorageAreaLike;
   private readonly changes?: OutputDeviceStorageChangesLike;
+  private readonly locks?: OutputDeviceLockManagerLike;
 
-  constructor(area: OutputDeviceStorageAreaLike, changes?: OutputDeviceStorageChangesLike) {
+  constructor(area: OutputDeviceStorageAreaLike, changes?: OutputDeviceStorageChangesLike, locks?: OutputDeviceLockManagerLike) {
     this.area = area;
     this.changes = changes;
+    this.locks = locks;
   }
 
   async load(): Promise<OutputDeviceLoadResult> {
     try {
       const stored = await this.area.get([ANSWER_COMPLETION_OUTPUT_DEVICE_STORAGE_KEY]);
       const value = stored[ANSWER_COMPLETION_OUTPUT_DEVICE_STORAGE_KEY];
-      if (value === undefined) return { ok: true, device: DEFAULT_ANSWER_COMPLETION_OUTPUT_DEVICE };
-      const device = validateAnswerCompletionOutputDevice(value);
-      return device ? { ok: true, device } : { ok: false, reason: 'corrupt-selection' };
+      if (value === undefined) return { ok: true, selection: DEFAULT_ANSWER_COMPLETION_OUTPUT_DEVICE_SELECTION };
+      const selection = normalizeAnswerCompletionOutputDeviceSelection(value);
+      return selection ? { ok: true, selection } : { ok: false, reason: 'corrupt-selection' };
     } catch {
       return { ok: false, reason: 'storage-failed' };
     }
   }
 
   async save(value: unknown): Promise<OutputDeviceSaveResult> {
-    const device = validateAnswerCompletionOutputDevice(value);
-    if (!device) return { ok: false, reason: 'invalid-selection' };
+    const selection = normalizeAnswerCompletionOutputDeviceSelection(value);
+    if (!selection) return { ok: false, reason: 'invalid-selection' };
+    return this.withWriteLock(async () => this.writeSelection(selection));
+  }
+
+  async setDeviceSelected(deviceValue: unknown, selected: boolean): Promise<OutputDeviceSaveResult> {
+    const device = validateAnswerCompletionOutputDevice(deviceValue);
+    if (!device || device.deviceId === 'default') return { ok: false, reason: 'invalid-selection' };
+    return this.withWriteLock(async () => {
+      const loaded = await this.load();
+      if (!loaded.ok) return loaded;
+      const current = loaded.selection.devices;
+      const exists = current.some(({ deviceId }) => deviceId === device.deviceId);
+      if (exists === selected) return { ok: true, selection: loaded.selection };
+      if (selected && current.length >= MAX_ANSWER_COMPLETION_OUTPUT_DEVICES) return { ok: false, reason: 'selection-limit' };
+      const devices = selected ? [...current, device] : current.filter(({ deviceId }) => deviceId !== device.deviceId);
+      return this.writeSelection({ schemaVersion: ANSWER_COMPLETION_OUTPUT_DEVICE_SELECTION_SCHEMA_VERSION, devices });
+    });
+  }
+
+  async resetToDefault(): Promise<OutputDeviceSaveResult> {
+    return this.withWriteLock(async () => this.writeSelection(DEFAULT_ANSWER_COMPLETION_OUTPUT_DEVICE_SELECTION));
+  }
+
+  private async writeSelection(selection: AnswerCompletionOutputDeviceSelection): Promise<OutputDeviceSaveResult> {
     try {
-      await this.area.set({ [ANSWER_COMPLETION_OUTPUT_DEVICE_STORAGE_KEY]: device });
-      return { ok: true, device };
+      await this.area.set({ [ANSWER_COMPLETION_OUTPUT_DEVICE_STORAGE_KEY]: selection });
+      return { ok: true, selection };
+    } catch {
+      return { ok: false, reason: 'storage-failed' };
+    }
+  }
+
+  private async withWriteLock(operation: () => Promise<OutputDeviceSaveResult>): Promise<OutputDeviceSaveResult> {
+    try {
+      return this.locks ? await this.locks.request(ANSWER_COMPLETION_OUTPUT_DEVICE_WRITE_LOCK, operation) : await operation();
     } catch {
       return { ok: false, reason: 'storage-failed' };
     }
@@ -157,8 +241,9 @@ export class AnswerCompletionOutputDeviceRepository {
     const onChanged = (changes: Record<string, { newValue?: unknown }>, areaName: string) => {
       if (areaName !== 'local' || !(ANSWER_COMPLETION_OUTPUT_DEVICE_STORAGE_KEY in changes)) return;
       const value = changes[ANSWER_COMPLETION_OUTPUT_DEVICE_STORAGE_KEY]?.newValue;
-      const device = value === undefined ? DEFAULT_ANSWER_COMPLETION_OUTPUT_DEVICE : validateAnswerCompletionOutputDevice(value);
-      listener(device ? { ok: true, device } : { ok: false, reason: 'corrupt-selection' });
+      const selection = value === undefined ? DEFAULT_ANSWER_COMPLETION_OUTPUT_DEVICE_SELECTION
+        : normalizeAnswerCompletionOutputDeviceSelection(value);
+      listener(selection ? { ok: true, selection } : { ok: false, reason: 'corrupt-selection' });
     };
     this.changes.addListener(onChanged);
     return () => this.changes?.removeListener(onChanged);
@@ -166,5 +251,8 @@ export class AnswerCompletionOutputDeviceRepository {
 }
 
 export function createChromeAnswerCompletionOutputDeviceRepository(): AnswerCompletionOutputDeviceRepository {
-  return new AnswerCompletionOutputDeviceRepository(chrome.storage.local, chrome.storage.onChanged);
+  const locks = typeof navigator !== 'undefined' && navigator.locks
+    ? { request: <T,>(name: string, callback: () => Promise<T>) => navigator.locks.request(name, callback) }
+    : undefined;
+  return new AnswerCompletionOutputDeviceRepository(chrome.storage.local, chrome.storage.onChanged, locks);
 }

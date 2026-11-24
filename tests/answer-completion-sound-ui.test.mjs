@@ -69,12 +69,15 @@ test('Optionsで通知音と出力先を試聴・選択し、音源管理と上�
   assert.match(component, /512 KiB/);
   assert.match(component, /合計2 MiB/);
   assert.doesNotMatch(component, /dangerouslySetInnerHTML/);
-  for (const text of ['再生デバイス', 'システムの既定', '回答完了音の出力デバイス', 'デバイス一覧を更新',
+  for (const text of ['再生デバイス', 'システムの既定', '音を再生する出力先', 'デバイス一覧を更新',
     'マイク権限を確認して出力先を表示', 'requestAudioOutputPermission', '接続中', '未接続または利用不可',
     '録音・保存・送信はしていません']) {
     assert.ok(outputDevice.includes(text), `出力先UIに ${text} がありません`);
   }
   assert.ok(component.includes('ANSWER_COMPLETION_SOUND_PREVIEW'));
+  assert.match(component, /一部の出力先で試聴しました/);
+  assert.match(component, /response\.playback\.succeededCount/);
+  assert.match(component, /response\.playback\.outputCount/);
   assert.equal((component.match(/<AnswerCompletionOutputDeviceSettings/g) ?? []).length, 1);
   assert.ok(component.includes('includeSharedLibrary'));
 });
@@ -100,6 +103,23 @@ test('Optionsの音量rangeは値を表示し、previewにdraft値を渡し、0%
   assert.ok(options.includes('answerCompletionSoundVolumePercent: volumePercent'));
   assert.ok(panel.includes('answerCompletionSoundVolumePercent={answerCompletionSoundVolumePercent}'));
   assert.ok(controller.includes('answerCompletionSoundVolumePercent: settings.answerCompletionSoundVolumePercent ?? DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT'));
+});
+
+test('出力先UIは複数checkbox・選択数・未接続選択保持・既定出力を示し、共通JSON範囲を変えない', async () => {
+  const [output, options, dataManager] = await Promise.all([
+    read('../options/src/AnswerCompletionOutputDeviceSettings.tsx'),
+    read('../options/src/OptionsPage.tsx'),
+    read('../options/src/saved-data-manager.ts'),
+  ]);
+  assert.match(output, /type="checkbox"/);
+  assert.match(output, /選択中/);
+  assert.match(output, /MAX_ANSWER_COMPLETION_OUTPUT_DEVICES/);
+  assert.match(output, /未接続または利用不可/);
+  assert.match(output, /setDeviceSelected/);
+  assert.match(output, /システムの既定出力を使用/);
+  assert.doesNotMatch(output, /<select/);
+  assert.match(options, /共通設定JSONには含まれません/);
+  assert.match(dataManager, /normalizeAnswerCompletionOutputDeviceSelection/);
 });
 
 test('音声プレイヤー・完了Tracker・タブ表示通知は統計UIの再マウント時に破棄され、二重登録しない', async () => {

@@ -15,7 +15,10 @@ import {
 import { BUILTIN_COMPLETION_SOUNDS } from '../../src/shared/answer-completion-sound-definitions.ts';
 import { decodeSoundData, previewCompletionSound } from '../../src/shared/answer-completion-sound-playback.ts';
 import { AnswerCompletionOutputDeviceSettings } from './AnswerCompletionOutputDeviceSettings.tsx';
-import { ANSWER_COMPLETION_SOUND_PREVIEW } from '../../src/shared/answer-completion-output-device-protocol.ts';
+import {
+  ANSWER_COMPLETION_SOUND_PREVIEW,
+  isAnswerCompletionSoundRouteResult,
+} from '../../src/shared/answer-completion-output-device-protocol.ts';
 
 interface AnswerCompletionSoundSettingsProps {
   readonly idPrefix: string;
@@ -165,19 +168,25 @@ export function AnswerCompletionSoundSettings({
     setMessage('');
     let played = false;
     let failureMessage = '';
+    let successMessage = '';
     try {
       const response: unknown = await chrome.runtime.sendMessage({
         type: ANSWER_COMPLETION_SOUND_PREVIEW,
         soundId,
         volumePercent,
       });
-      if (typeof response !== 'object' || response === null || !('ok' in response)) {
+      if (!isAnswerCompletionSoundRouteResult(response)) {
         failureMessage = outputPlaybackError('offscreen-failed');
-      } else if (response.ok === false && 'reason' in response && typeof response.reason === 'string') {
+      } else if (!response.ok) {
         failureMessage = outputPlaybackError(response.reason);
-      } else if (response.ok === true && 'route' in response && response.route === 'device') {
+        if (response.playback) failureMessage += `（${response.playback.succeededCount}/${response.playback.outputCount}台で再生）`;
+      } else if (response.route === 'device') {
         played = true;
-      } else if (response.ok === true && 'route' in response && response.route === 'default') {
+        successMessage = `選択した${response.playback.succeededCount}台で試聴しました。`;
+      } else if (response.route === 'partial-device') {
+        played = true;
+        successMessage = `一部の出力先で試聴しました（${response.playback.succeededCount}/${response.playback.outputCount}台）。`;
+      } else if (response.route === 'default') {
         played = await previewCompletionSound(document, soundId, asset, () => audioContextFactory(), volumePercent);
       } else {
         failureMessage = outputPlaybackError('offscreen-failed');
@@ -186,7 +195,7 @@ export function AnswerCompletionSoundSettings({
       failureMessage = outputPlaybackError('offscreen-failed');
     }
     setPreviewingId('');
-    if (played) setMessage('試聴を開始しました。');
+    if (played) setMessage(successMessage || '試聴を開始しました。');
     else setError(failureMessage || '試聴を開始できませんでした。ページ上の再生制限を確認してください。');
   }
 

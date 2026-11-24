@@ -36,9 +36,13 @@ export type CodexBridgeMonitorAccess = Readonly<{
   failure?: CodexBridgeWatchFetchOutcome;
 }>;
 
+export type CodexBridgeNotificationPlayResult =
+  | Readonly<{ ok: true; reason?: CodexBridgeNotificationReason }>
+  | Readonly<{ ok: false; reason: CodexBridgeNotificationReason }>;
+
 export type CodexBridgeNotificationPreparation =
   | Readonly<{ state: 'skipped' | 'failed'; reason: CodexBridgeNotificationReason }>
-  | Readonly<{ state: 'ready'; play: () => Promise<Readonly<{ ok: true } | { ok: false; reason: CodexBridgeNotificationReason }>> }>;
+  | Readonly<{ state: 'ready'; play: () => Promise<CodexBridgeNotificationPlayResult> }>;
 export type CodexBridgeNotificationHandler = Readonly<{
   prepare: (event: CodexBridgeTerminalEvent) => Promise<CodexBridgeNotificationPreparation>;
 }>;
@@ -416,7 +420,7 @@ export class CodexBridgeThreadMonitor {
       const result = await preparation.play();
       const suppressed = !result.ok && (result.reason === 'muted' || result.reason === 'owner-unavailable');
       await this.updateNotification(event.eventId, result.ok ? 'played' : suppressed ? 'skipped' : 'failed',
-        result.ok ? null : result.reason);
+        result.ok ? result.reason ?? null : result.reason);
     } catch {
       await this.updateNotification(event.eventId, 'failed', 'playback-failed');
     }

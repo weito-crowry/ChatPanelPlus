@@ -12,6 +12,7 @@ import { DEFAULT_COMPLETION_SOUND_ID } from '../shared/answer-completion-sound-d
 import { DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT } from '../shared/answer-completion-sound-volume.ts';
 import { routeAnswerCompletionSound } from './answer-completion-output-device-route.ts';
 import { dispatchAnswerCompletionNotifications } from './answer-completion-notifications.ts';
+import type { OffscreenPlaybackResult } from '../shared/answer-completion-output-device-protocol.ts';
 import {
   publishCodexBridgeAutoWatchCompletion,
   publishCodexBridgeAutoWatchCompletionCheck,
@@ -48,6 +49,7 @@ function syncCodexUnreadTitle(indicator: TabCompletionIndicator, summaryConversa
 }
 
 function soundOutputErrorMessage(reason: string): string {
+  if (reason === 'partial-output') return '一部の選択先だけで回答完了音を再生しました。';
   if (reason === 'mute-unavailable') return '会話別ミュート状態を確認できません。確認できるまで回答完了音を再生しません。';
   if (reason === 'device-unavailable') return '選択した出力デバイスが見つかりません。Optionsで接続状態を確認してください。既定の出力へは切り替えていません。';
   if (reason === 'permission-denied') return '選択した出力デバイスの利用が拒否されました。Optionsでデバイスを再選択してください。';
@@ -178,7 +180,10 @@ export function ConversationStatistics({
                 || latestMuteSnapshot.muted || latestMuteSnapshot.revision !== muteRevisionAtRequest)) return;
               setPlaybackError('');
               player.play();
-            }, (reason) => setPlaybackError(soundOutputErrorMessage(reason)));
+            }, (reason, playback?: OffscreenPlaybackResult) => {
+              const message = soundOutputErrorMessage(reason);
+              setPlaybackError(playback ? `${message}（${playback.succeededCount}/${playback.outputCount}台で再生）` : message);
+            });
           },
         });
       },

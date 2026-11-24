@@ -1,6 +1,11 @@
 import { DEFAULT_COMPLETION_SOUND_ID, findBuiltinCompletionSound } from '../shared/answer-completion-sound-definitions.ts';
 import { MAX_SOUND_ASSET_DURATION_SECONDS, type SoundAsset } from '../shared/answer-completion-sound-assets.ts';
-import { isOffscreenAnswerCompletionSoundRequest, type OffscreenPlaybackResult } from '../shared/answer-completion-output-device-protocol.ts';
+import {
+  isOffscreenAnswerCompletionSoundRequest,
+  type OffscreenAnswerCompletionSoundRequest,
+  type OffscreenPlaybackFailureReason,
+  type OffscreenPlaybackResult,
+} from '../shared/answer-completion-output-device-protocol.ts';
 import { answerCompletionSoundGain, SILENT_RAMP_GAIN } from '../shared/answer-completion-sound-volume.ts';
 
 export type OffscreenAudioContextFactory = () => AudioContext | undefined;
@@ -76,29 +81,30 @@ async function playAsset(context: AudioContext, asset: SoundAsset, gainValue: nu
   }
 }
 
-function sinkFailure(error: unknown): OffscreenPlaybackResult {
-  if (error instanceof DOMException && error.name === 'NotFoundError') return { ok: false, reason: 'device-unavailable' };
+function sinkFailure(error: unknown): OffscreenPlaybackFailureReason {
+  if (error instanceof DOMException && error.name === 'NotFoundError') return 'device-unavailable';
   if (error instanceof DOMException && (error.name === 'NotAllowedError' || error.name === 'SecurityError')) {
-    return { ok: false, reason: 'permission-denied' };
+    return 'permission-denied';
   }
-  return { ok: false, reason: 'sink-failed' };
+  return 'sink-failed';
 }
 
-export async function playAnswerCompletionSoundOffscreen(
-  request: unknown,
+async function playOnDevice(
+  request: OffscreenAnswerCompletionSoundRequest,
+  deviceId: string,
   contextFactory: OffscreenAudioContextFactory = () => typeof AudioContext === 'undefined' ? undefined : new AudioContext(),
-): Promise<OffscreenPlaybackResult> {
-  if (!isOffscreenAnswerCompletionSoundRequest(request)) return { ok: false, reason: 'playback-failed' };
+): Promise<OffscreenPlaybackFailureReason | null> {
   const volume = answerCompletionSoundGain(request.volumePercent);
-  if (volume === 0) return { ok: false, reason: 'playback-failed' };
-  const context = contextFactory() as SinkAudioContext | undefined;
-  if (!context) return { ok: false, reason: 'playback-failed' };
+  if (volume === 0) return 'playback-failed';
+  let context: SinkAudioContext | undefined;
+  try { context = contextFactory() as SinkAudioContext | undefined; } catch { return 'playback-failed'; }
+  if (!context) return 'playback-failed';
   if (typeof context.setSinkId !== 'function') {
     closeContext(context);
-    return { ok: false, reason: 'sink-failed' };
+    return 'sink-failed';
   }
   try {
-    await context.setSinkId(request.deviceId);
+    await context.setSinkId(deviceId);
   } catch (error) {
     closeContext(context);
     return sinkFailure(error);
@@ -107,21 +113,40 @@ export async function playAnswerCompletionSoundOffscreen(
     if (context.state === 'suspended') await context.resume();
     if (context.state !== 'running') {
       closeContext(context);
-      return { ok: false, reason: 'playback-failed' };
+      return 'playback-failed';
     }
     const asset = request.asset?.id === request.soundId ? request.asset : undefined;
     const duration = asset ? await playAsset(context, asset, volume) : null;
-    if (duration !== null) return { ok: true };
+    if (duration !== null) return null;
     const builtinDuration = playBuiltin(context, asset ? DEFAULT_COMPLETION_SOUND_ID : request.soundId, volume);
     if (builtinDuration === null) {
       closeContext(context);
-      return { ok: false, reason: 'playback-failed' };
+      return 'playback-failed';
     }
-    return { ok: true };
+    return null;
   } catch {
     closeContext(context);
-    return { ok: false, reason: 'playback-failed' };
+    return 'playback-failed';
   }
+}
+
+function failedResult(outputCount: number, failures: readonly OffscreenPlaybackFailureReason[]): OffscreenPlaybackResult {
+  return { ok: false, status: 'failed', outputCount, succeededCount: 0, failures };
+}
+
+export async function playAnswerCompletionSoundOffscreen(
+  request: unknown,
+  contextFactory: OffscreenAudioContextFactory = () => typeof AudioContext === 'undefined' ? undefined : new AudioContext(),
+): Promise<OffscreenPlaybackResult> {
+  if (!isOffscreenAnswerCompletionSoundRequest(request)) return failedResult(1, ['playback-failed']);
+  const outputs = await Promise.allSettled(request.deviceIds.map((deviceId) => playOnDevice(request, deviceId, contextFactory)));
+  const failures = outputs.map((output) => output.status === 'fulfilled' ? output.value : 'playback-failed')
+    .filter((reason): reason is OffscreenPlaybackFailureReason => reason !== null);
+  const succeededCount = outputs.length - failures.length;
+  const status = succeededCount === outputs.length ? 'complete' : succeededCount === 0 ? 'failed' : 'partial';
+  return {
+    ok: status !== 'failed', status, outputCount: outputs.length, succeededCount, failures,
+  };
 }
 
 export function isTrustedOffscreenSender(sender: { readonly id?: string; readonly url?: string }, extensionId: string): boolean {

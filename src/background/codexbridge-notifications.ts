@@ -1,5 +1,5 @@
-import type { CodexBridgeNotificationHandler, CodexBridgeNotificationPreparation } from './thread-monitor.ts';
-import type { CodexBridgeTerminalEvent, CodexBridgeNotificationReason } from '../shared/codexbridge-thread-monitor-protocol.ts';
+import type { CodexBridgeNotificationHandler, CodexBridgeNotificationPlayResult, CodexBridgeNotificationPreparation } from './thread-monitor.ts';
+import type { CodexBridgeTerminalEvent } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import type { SettingsRepository } from '../shared/settings-repository.ts';
 import type { AnswerCompletionOutputDeviceRepository } from '../shared/answer-completion-output-device.ts';
 import type { SoundAsset, SoundAssetRepository } from '../shared/answer-completion-sound-assets.ts';
@@ -17,8 +17,8 @@ export function createCodexBridgeNotificationHandler(dependencies: Readonly<{
   assets: Pick<SoundAssetRepository, 'loadAssets'>;
   audio: OffscreenAudioTransport | null;
   loadOwnerMute: (event: CodexBridgeTerminalEvent) => Promise<{ readonly ok: true; readonly muted: boolean | null } | { readonly ok: false }>;
-  playWithOwnerMuteGuard: (event: CodexBridgeTerminalEvent, action: () => Promise<Readonly<{ ok: true } | { ok: false; reason: CodexBridgeNotificationReason }>>) =>
-    Promise<Readonly<{ ok: true } | { ok: false; reason: CodexBridgeNotificationReason }>>;
+  playWithOwnerMuteGuard: (event: CodexBridgeTerminalEvent, action: () => Promise<CodexBridgeNotificationPlayResult>) =>
+    Promise<CodexBridgeNotificationPlayResult>;
 }>): CodexBridgeNotificationHandler {
   return {
     async prepare(event): Promise<CodexBridgeNotificationPreparation> {
@@ -37,6 +37,8 @@ export function createCodexBridgeNotificationHandler(dependencies: Readonly<{
 
       const output = await dependencies.outputDevice.load();
       if (!output.ok) return { state: 'failed', reason: 'output-device-unavailable' };
+      const deviceIds = output.selection.devices.length > 0
+        ? output.selection.devices.map(({ deviceId }) => deviceId) : ['default'];
       const selectedSoundId = loaded.settings.codexBridgeTerminalSoundId ?? DEFAULT_CODEX_BRIDGE_TERMINAL_SOUND_ID;
       let asset: SoundAsset | undefined;
       if (isUserCompletionSoundId(selectedSoundId)) {
@@ -49,10 +51,12 @@ export function createCodexBridgeNotificationHandler(dependencies: Readonly<{
         play: async () => dependencies.playWithOwnerMuteGuard(event, async () => {
           if (!dependencies.audio) return { ok: false, reason: 'playback-failed' };
           const result = await dependencies.audio.play({
-            type: OFFSCREEN_PLAY_ANSWER_COMPLETION_SOUND, deviceId: output.device.deviceId,
+            type: OFFSCREEN_PLAY_ANSWER_COMPLETION_SOUND, deviceIds,
             soundId, volumePercent, ...(asset && soundId === selectedSoundId ? { asset } : {}),
           });
-          return result.ok ? { ok: true } : { ok: false, reason: result.reason ?? 'playback-failed' };
+          if (result.status === 'partial') return { ok: true, reason: 'partial-output' };
+          if (result.ok) return { ok: true };
+          return { ok: false, reason: result.failures[0] ?? 'playback-failed' };
         }),
       };
     },

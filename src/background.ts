@@ -121,7 +121,10 @@ const handleOutputDevicePlayback = createOutputDevicePlaybackMessageHandler({
   },
   playOffscreen: (request) => offscreenTransport
     ? offscreenTransport.play(request)
-    : Promise.resolve({ ok: false, reason: 'playback-failed' }),
+    : Promise.resolve({
+      ok: false, status: 'failed', outputCount: request.deviceIds.length, succeededCount: 0,
+      failures: request.deviceIds.map(() => 'playback-failed' as const),
+    }),
 });
 const notification = createCodexBridgeNotificationHandler({
   settings: createChromeSettingsRepository(),

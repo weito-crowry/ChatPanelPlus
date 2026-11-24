@@ -37,6 +37,7 @@ test('会話別表示はowner一致項目だけ返し、未確認Turn数はwatch
 test('移動した通知・回答・挿入ラベルを維持する', () => {
   assert.equal(eventKindLabel('completed'), '完了');
   assert.equal(eventStatusLabel({ notificationState: 'skipped', notificationReason: 'disabled' } as CodexBridgeTerminalEvent), '音声通知無効');
+  assert.equal(eventStatusLabel({ notificationState: 'played', notificationReason: 'partial-output' } as CodexBridgeTerminalEvent), '一部の出力先で音声再生成功');
   assert.match(finalAnswerLabel({ status: 'no-final-answer', completeness: 'unconfirmed' }), /完全性は未確認です/);
   assert.equal(editorInsertionFailureLabel('ime-composing'), 'IME変換中のため挿入しませんでした。');
   assert.equal(editorInsertionFailureLabel('unknown'), '入力欄へ挿入できませんでした。');

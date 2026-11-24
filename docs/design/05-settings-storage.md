@@ -49,6 +49,7 @@
   - minimized: boolean
 - StorageEnvelope: config と viewState を別のキーで保存する。頻繁なタブ選択更新による設定全体の上書き事故を避ける。
 - 会話統計は設定の StorageEnvelope に含めず、`chatPanelPlus.statistics` 専用キーへ保存する。スキーマと分岐処理は `12-conversation-statistics.md` を参照。
+- 回答完了音・Codex監視終了音の出力先はconfigに含めず、`chatPanelPlus.answerCompletionOutputDevice`専用`chrome.storage.local`キーのschema 2 `{ schemaVersion: 2, devices: [...] }`へ保存する。最大8件の物理出力を持ち、空配列はシステム既定出力を表す。旧`{ deviceId, label }`をschema 2へ読み替える。Chromeプロファイルと拡張機能originに束縛されるため、共通設定JSONのimport/exportではバックアップ・復元しない。詳細は`13-answer-completion-sound.md`を参照。
 
 order は同一表示領域内での並び替えを表す。ユーザー作成ボタンは既存6グループのいずれかに作成できるが、作成後のグループ間移動は対象外。詳細は `15-custom-buttons.md` を参照。
 

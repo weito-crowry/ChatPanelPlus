@@ -13,14 +13,16 @@
 - 音量は `chatPanelPlus.config` の任意整数 `answerCompletionSoundVolumePercent` とし、0〜100を検証する。未設定は60%として扱い、0.30を上限とする共有gain変換で60%=0.18、100%=0.30へ線形対応させる。schemaVersionは1のままとする。
 - Optionsの音量rangeはドラフトを更新し、「保存」後に通知音へ反映する。明示した試聴クリックは現在のドラフト音量を使う。0%では試聴・完了通知を再生しないことを表示するが、有効/無効スピーカーボタンの意味は変えない。
 - Optionsでは内蔵短音3種類を選択・試聴できる。ユーザー音源は選択・試聴・確認付き削除に対応する。
-- Optionsに再生デバイス欄を設ける。初期値は「システムの既定」。出力一覧更新、接続状態表示、現在の通知音の試聴を提供する。選択値はChromeプロファイル内のChatGPTタブで共有する。
+- Optionsに共通の再生デバイスcheckbox一覧を設け、選択件数・接続状態・保存済み未接続deviceの保持・一覧更新・明示的な権限取得・試聴を提供する。設定はChromeプロファイル内でChatGPT通知、Codex通知、試聴に共有する。選択ゼロはシステム既定出力を表す。
 - デバイス一覧が既定出力だけの場合に限り、Optionsの明示ボタンからマイク権限を要求できる。許可後は全トラックを直ちに停止し、録音・保存・送信しない。権限は拡張機能オリジンに対してChromeが保持する。
-- 出力先は `chatPanelPlus.answerCompletionOutputDevice` 専用の `chrome.storage.local` キーへ `{ deviceId, label }` として保存する。デバイスIDは拡張機能オリジンに束縛されるため、設定JSONのimport/exportに含めず、任意サイトへ送信しない。設定破損・保存失敗では既存値を上書きしない。
+- 出力先は `chatPanelPlus.answerCompletionOutputDevice` 専用の `chrome.storage.local` キーへ`{ schemaVersion: 2, devices: [{ deviceId, label }] }`として保存する。`devices`は最大8件の物理出力で、明示選択が0件ならシステム既定を使う。schema 1相当の旧`{ deviceId, label }`は読み込み時にschema 2配列へ正規化し、自動書き換えはせず、次のユーザー変更時に新形式で保存する。新形式内の`default`だけは空選択へ正規化し、`default`と物理出力の混在、未知schema、その他の破損値は拒否し、既存値を暗黙に上書きしない。同一device IDは重複排除するが、同じ表示labelの別IDは別出力として維持する。
+- デバイスIDは拡張機能オリジンに束縛されるため、共通設定JSONのimport/exportには含めず、任意サイトへ送信しない。`default`の実体と物理出力の別名を識別できないChrome環境では重複を完全に判別できない。異なるIDの物理出力はlabelが同じでも同一視しない。
 - ユーザー音源は `chatPanelPlus.answerCompletionSoundAssets` 専用の `chrome.storage.local` キーへ保存する。形式はWAV、MP3、OGG、1ファイル512 KiB以下・10秒以内・最大5件・Base64化後の合計2 MiBまでとする。拡張子とMIMEタイプに加えてシグネチャ、AudioContextデコード、長さを検証する。
 - Codex監視終了音は`codexBridgeTerminalSoundEnabled`、`codexBridgeTerminalSoundId`、`codexBridgeTerminalSoundVolumePercent`で独立管理する。schema 1を維持し、新規既定はOFF・`two-tone`・60%。Codex fieldを含まない旧設定は対応するChatGPT回答完了音fieldの旧正規値を項目ごとに引き継ぎ、保存/export後は独立する。Optionsでは両通知に選択音試聴を設けるが、ユーザー音源管理と出力先設定は共有の1組とする。
 - 選択IDが参照する音源が見つからない、または再生用デコードに失敗した場合は各通知の既定音へフォールバックする。ChatGPT回答完了音は660 Hz音、Codex監視終了音は2音を使う。Optionsは欠落状態を表示する。選択音源の削除前に両通知の保存済み参照を必要な分だけ各既定音へ保存し、ファイルデータを削除する。
 - Manifestには特定デバイス再生用に `offscreen` 権限だけを追加する。Offscreen Documentは `AUDIO_PLAYBACK` 理由で必要時に作り、音のない状態が30秒続いた後の自動終了と次回再作成を前提にする。
-- システムの既定出力は従来どおりContent ScriptのWeb Audio経路で再生する。特定デバイスはBackgroundが保存済み出力先を読み、同じ拡張機能オリジンのOffscreen Documentで `AudioContext.setSinkId()` を確定してから再生する。通知と試聴は同じ出力選択・再生処理を使い、最大gainは0.30とする。
+- 明示出力が0件のChatGPT通知と試聴は従来どおりContent Script/OptionsのWeb Audio経路でシステム既定へ1回再生する。Codex通知は既定のみの場合も既存どおりOffscreenを使う。1件以上の物理出力が選択されている場合はBackgroundが一つの通知要求を送り、同じ拡張機能オリジンのOffscreen Documentで出力ごとに独立AudioContextと`AudioContext.setSinkId()`を用いて同じ音源・音量を並行再生する。最大gainは0.30とする。
+- 出力ごとのsink/permission/context/playback失敗は独立して集計し、全成功・部分成功・全失敗を区別する。一部出力の失敗は他出力へ波及させず、残り出力のみを再試行したり既定出力へ重複fallbackしたりしない。試聴は成功台数と部分失敗を表示し、Codex通知はeventを一つだけ維持して部分成功理由を記録する。ChatGPT通知のmute guardもfanout全体を一つの論理通知として囲む。
 - BackgroundはContent Scriptから音声バイト列やURLを受け取らない。通知要求は音源IDと0〜100%の音量だけとし、ユーザー音源データはローカル保存値から検証済みのものを読み込む。指定先が見つからない、権限が拒否された、またはsink切替・再生に失敗した場合は既定出力へフォールバックせず、エラーを表示する。
 
 ## 2. 完了イベントの判定
@@ -56,8 +58,8 @@
 - 基準化後に観測した `in_progress` → `complete` は1回鳴る。同一Turn Keyで次の `in_progress` → `complete` を観測できた再生成はもう1回鳴る。
 - 有効な完了イベントを設定OFF時に受けても再生せず、UI、Composer、送信処理へイベントを伝播・抑止しない。
 - `pnpm typecheck`、`pnpm lint`、`pnpm test`、`pnpm build`、`pnpm check:size`を実行する。Chrome実機の自動再生制約と実音は手動確認事項として別に報告する。
-- 出力一覧の未対応・空・重複、ID検証、保存・再読込・別タブ反映、明示権限要求と即時停止、既定経路、試聴・通知の指定経路、無効ID・切断・権限・sink失敗、Offscreen同時生成・終了後の再作成を自動テストする。
-- Chrome実機では、既定と別デバイスの短音・追加音源を聞き分け、指定していない出力先から音が出ないことを手動確認する。Chrome再起動・拡張再読込後の復元と、切断・再接続時の状態も確認する。
+- 出力一覧の未対応・空・重複、旧単一形式読込、新schema検証、同時Options toggle、破損値保護、保存・再読込・別tab反映、明示権限要求と即時停止、既定経路、複数出力fanout、無効ID・切断・個別権限・sink・AudioContext失敗、全成功・部分成功・全失敗、Offscreen同時生成・終了後の再作成を自動テストする。
+- Chrome実機では、既定と複数物理デバイスの短音・追加音源を聞き分け、ChatGPT通知、Codex通知、試聴の音源・音量・出力を確認する。Chrome再起動・拡張再読込後の復元と、切断・再接続、片側出力の失敗中に残り出力だけ鳴ることも確認する。ラベルだけで異なるdevice IDを同一出力と判定しない。
 
 ## 5. 実装上の制約
 

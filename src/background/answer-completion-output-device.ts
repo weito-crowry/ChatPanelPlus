@@ -53,11 +53,11 @@ function selectedAsset(assets: SoundAssetsLoadResult, soundId: string): SoundAss
   return assets.assets.find((asset) => asset.id === soundId);
 }
 
-function playbackFailure(result: OffscreenPlaybackResult): AnswerCompletionSoundRouteResult {
-  if (result.reason === 'device-unavailable') return { ok: false, reason: 'device-unavailable' };
-  if (result.reason === 'permission-denied') return { ok: false, reason: 'permission-denied' };
-  if (result.reason === 'sink-failed') return { ok: false, reason: 'sink-failed' };
-  return { ok: false, reason: 'offscreen-failed' };
+function playbackResult(result: OffscreenPlaybackResult): AnswerCompletionSoundRouteResult {
+  if (result.status === 'complete') return { ok: true, route: 'device', playback: result };
+  if (result.status === 'partial') return { ok: true, route: 'partial-device', playback: result };
+  const firstFailure = result.failures[0] ?? 'playback-failed';
+  return { ok: false, reason: firstFailure === 'playback-failed' ? 'offscreen-failed' : firstFailure, playback: result };
 }
 
 export function createOutputDevicePlaybackMessageHandler(dependencies: OutputDevicePlaybackDependencies) {
@@ -76,7 +76,7 @@ export function createOutputDevicePlaybackMessageHandler(dependencies: OutputDev
     if (firstMuteState !== 'allowed') return { ok: true, route: 'skipped', reason: firstMuteState === 'muted' ? 'muted' : 'mute-unavailable' };
     const selected = await dependencies.loadOutputDevice();
     if (!selected.ok) return { ok: false, reason: selected.reason };
-    if (selected.device.deviceId === 'default') {
+    if (selected.selection.devices.length === 0) {
       const latestMuteState = await muteState();
       return latestMuteState === 'allowed'
         ? { ok: true, route: 'default' }
@@ -89,7 +89,7 @@ export function createOutputDevicePlaybackMessageHandler(dependencies: OutputDev
     const resolvedSoundId = customSoundId && !asset ? DEFAULT_COMPLETION_SOUND_ID : message.soundId;
     const offscreenRequest: OffscreenAnswerCompletionSoundRequest = {
       type: OFFSCREEN_PLAY_ANSWER_COMPLETION_SOUND,
-      deviceId: selected.device.deviceId,
+      deviceIds: selected.selection.devices.map(({ deviceId }) => deviceId),
       soundId: resolvedSoundId,
       volumePercent: message.volumePercent,
       ...(asset ? { asset } : {}),
@@ -97,12 +97,11 @@ export function createOutputDevicePlaybackMessageHandler(dependencies: OutputDev
     if (message.type === ANSWER_COMPLETION_SOUND_ROUTE && message.conversationId !== undefined && dependencies.playOffscreenWithMuteGuard) {
       const guarded = await dependencies.playOffscreenWithMuteGuard(sender, message.conversationId, offscreenRequest);
       if (!guarded.ok) return { ok: true, route: 'skipped', reason: guarded.reason };
-      const result = guarded.result;
-      return result.ok ? { ok: true, route: 'device' } : playbackFailure(result);
+      return playbackResult(guarded.result);
     }
     const latestMuteState = await muteState();
     if (latestMuteState !== 'allowed') return { ok: true, route: 'skipped', reason: latestMuteState === 'muted' ? 'muted' : 'mute-unavailable' };
     const result = await dependencies.playOffscreen(offscreenRequest);
-    return result.ok ? { ok: true, route: 'device' } : playbackFailure(result);
+    return playbackResult(result);
   };
 }

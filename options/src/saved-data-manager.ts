@@ -7,7 +7,7 @@ import { CODEX_BRIDGE_MCP_TOKEN_SESSION_KEY } from '../../src/shared/codexbridge
 import { CODEX_BRIDGE_THREAD_MONITOR_STORAGE_KEY } from '../../src/shared/codexbridge-thread-monitor-protocol.ts';
 import { isCodexBridgeWatchIdentifier, isCodexBridgeWatchFetchOutcome } from '../../src/shared/codexbridge-thread-monitor-protocol.ts';
 import { SOUND_ASSETS_STORAGE_KEY, validateSoundAssetMetadata } from '../../src/shared/answer-completion-sound-assets.ts';
-import { ANSWER_COMPLETION_OUTPUT_DEVICE_STORAGE_KEY, validateAnswerCompletionOutputDevice } from '../../src/shared/answer-completion-output-device.ts';
+import { ANSWER_COMPLETION_OUTPUT_DEVICE_STORAGE_KEY, normalizeAnswerCompletionOutputDeviceSelection } from '../../src/shared/answer-completion-output-device.ts';
 import { validateExtensionSettings } from '../../src/shared/settings.ts';
 import { isConversationId } from '../../src/shared/conversation-route.ts';
 import { normalizeCachedProjectId } from '../../src/shared/project-route.ts';
@@ -119,9 +119,11 @@ function metadataFor(key: string, value: unknown): SavedDataCategory {
     return records(safe, key, key, value, false, '不明', encodedBytes + (safeJsonSize(safe) ?? 0));
   }
   if (key === ANSWER_COMPLETION_OUTPUT_DEVICE_STORAGE_KEY) {
-    const device = validateAnswerCompletionOutputDevice(value);
-    return device ? records([row('output-device', device.deviceId !== 'default' ? maskIdentifier(device.deviceId) : '既定の出力先',
-      { deviceConfigured: device.deviceId !== 'default' })], key, key, value) : corrupt(key);
+    const selection = normalizeAnswerCompletionOutputDeviceSelection(value);
+    if (!selection) return corrupt(key);
+    const count = selection.devices.length;
+    return records([row('output-device', count > 0 ? `${count}台の出力先を選択中` : 'システムの既定出力を使用',
+      { schemaVersion: selection.schemaVersion, selectedDeviceCount: count, customOutputSelected: count > 0 })], key, key, value);
   }
   return records([], key, key, value);
 }

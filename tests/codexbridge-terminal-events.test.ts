@@ -346,6 +346,13 @@ test('disabled sound keeps the event visible and records that audio was skipped'
   assert.deepEqual(await h.monitor.list(), []);
 });
 
+test('部分成功したCodex音声はイベントをplayedとして一度だけ記録し、理由を残す', async () => {
+  let playCalls = 0; const h = harness(status('turn-a', 'in_progress'), { async prepare() { return { state: 'ready', async play() { playCalls += 1; return { ok: true, reason: 'partial-output' }; } }; } });
+  await h.monitor.startWatch('target-1', 'thread-1'); h.setStatus(status('turn-a', 'completed')); h.advance(30_000); await h.monitor.refreshAlarm();
+  const event = (await h.monitor.listEvents())[0]; assert.equal(event?.notificationState, 'played');
+  assert.equal(event?.notificationReason, 'partial-output'); assert.equal(playCalls, 1);
+});
+
 test('a persisted audio request survives worker interruption without automatic replay', async () => {
   let releasePlay: ((result: { ok: false; reason: 'playback-failed' }) => void) | undefined;
   let playStarted: (() => void) | undefined;
