@@ -263,7 +263,7 @@ test('複数IDと重複IDは一度ずつ登録し、同じ完了messageの再送
   assert.deepEqual((await h.monitor.list()).map((item) => item.threadId).sort(), [threadOneId, threadTwoId].sort());
 });
 
-test('登録処理の例外後も同じ完了messageの再送は抑止する', async () => {
+test('watch登録例外は件数APIでは0件になり、同じ完了messageの再送も抑止する', async () => {
   const h = harness([liveThread(threadOneId, turnOneId)]);
   await enable(h);
   const originalStartWatch = h.monitor.startWatch.bind(h.monitor);
@@ -272,7 +272,7 @@ test('登録処理の例外後も同じ完了messageの再送は抑止する', a
     return originalStartWatch(...args);
   }) as typeof h.monitor.startWatch;
   const completion = { turnKey: 'exception-turn', assistantMessageId: 'exception-message' };
-  await assert.rejects(register(h, [threadOneId], completion), /injected watch failure/);
+  assert.equal(await register(h, [threadOneId], completion), 0);
   assert.equal(await register(h, [threadOneId], completion), 0);
   assert.equal(h.runningOnlyCalls, 1);
 });

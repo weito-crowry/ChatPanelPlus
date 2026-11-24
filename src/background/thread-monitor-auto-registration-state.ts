@@ -29,7 +29,8 @@ const FAILURE_REASONS: readonly CodexBridgeAutoWatchFailure[] = [
   'ok', '401', '403', 'authentication-required', 'forbidden', 'timeout', 'disconnected', 'unknown', 'permission-required', 'settings-unavailable',
   'endpoint-not-found', 'session-expired', 'http-error', 'protocol-error', 'protocol-version-unsupported',
   'readonly-tool-unavailable', 'readonly-probe-failed', 'running-only-unsupported', 'connection-changed',
-  'target-unavailable', 'owner-conflict', 'ownerless-watch', 'watch-limit', 'owner-tab-unavailable', 'storage-error',
+  'connection-unavailable', 'target-unavailable', 'owner-conflict', 'ownerless-watch', 'watch-limit',
+  'owner-tab-unavailable', 'auto-owner-conflict', 'owner-recovering', 'storage-error',
   'invalid-endpoint', 'read-queue-full', 'response-too-large', 'unknown-error',
 ];
 

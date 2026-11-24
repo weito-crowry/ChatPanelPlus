@@ -118,6 +118,27 @@ export type CodexBridgeAutoWatchStatus = Readonly<{
   watchingThreadCount: number;
 }>;
 
+export const CODEX_BRIDGE_AUTO_WATCH_REGISTRATION_REASONS = [
+  'registered', 'invalid-request', 'completion-already-processed', 'completion-in-progress',
+  'owner-claim-other-tab', 'owner-claim-recovering', 'owner-claim-storage-error',
+  'owner-state-unavailable', 'auto-watch-disabled', 'connection-unavailable', 'connection-changed',
+  'generation-changed', 'owner-tab-unavailable', 'bridge-read-failed', 'candidate-no-longer-live',
+  'explicit-skip', 'already-watching-same-owner', 'already-watching-different-owner',
+  'already-watching-ownerless', 'watch-limit', 'start-watch-connection-unavailable',
+  'start-watch-connection-changed', 'start-watch-owner-unavailable', 'start-watch-owner-conflict',
+  'start-watch-watch-limit', 'start-watch-failed',
+] as const;
+
+export type CodexBridgeAutoWatchRegistrationReason = typeof CODEX_BRIDGE_AUTO_WATCH_REGISTRATION_REASONS[number];
+export type CodexBridgeAutoWatchRegistrationOutcome = Readonly<{
+  reason: CodexBridgeAutoWatchRegistrationReason;
+  count: number;
+}>;
+export type CodexBridgeAutoWatchRegistrationResult = Readonly<{
+  registeredCount: number;
+  outcomes: readonly CodexBridgeAutoWatchRegistrationOutcome[];
+}>;
+
 export type CodexBridgeWatchTurnChange = 'baseline' | 'same' | 'advanced' | 'gap' | 'unknown';
 export type CodexBridgeWatchBaselineKind = 'turn' | 'none' | 'unknown';
 export type CodexBridgeTerminalHoldReason = 'previous-fetch-failed' | 'observation-gap' | 'thread-still-active'

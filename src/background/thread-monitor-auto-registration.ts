@@ -5,19 +5,18 @@ import {
   CODEX_BRIDGE_AUTO_WATCH_STORAGE_KEY,
   isCodexBridgeWatchIdentifier,
   type CodexBridgeAutoWatchFailure,
+  type CodexBridgeAutoWatchRegistrationReason,
+  type CodexBridgeAutoWatchRegistrationResult,
   type CodexBridgeAutoWatchStatus,
-  type CodexBridgeWatchOwnerMute,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
-import type { CodexBridgeThread } from '../shared/codexbridge-mcp-protocol.ts';
 import { isConversationId } from '../shared/conversation-route.ts';
 import type { LocalStorageLike } from './thread-monitor-storage.ts';
 import { MAX_ENTRIES, MAX_SKIPS_PER_ENTRY, readAutoWatchState,
   type AutoEntry, type AutoState } from './thread-monitor-auto-registration-state.ts';
 import { CodexBridgeAutoWatchCandidates, type CodexBridgeAutoWatchCandidateLookupResult }
   from './thread-monitor-auto-registration-candidates.ts';
-import { readFreshRunningPage } from './thread-monitor-running-page.ts';
-import { currentExecution, failureFor, isLiveCandidate, isRecord, statusFromThread, threadIdsMatch }
-  from './thread-monitor-auto-registration-utils.ts';
+import { failureFor } from './thread-monitor-auto-registration-utils.ts';
+import { registerCompletedAnswerOnce } from './thread-monitor-auto-registration-completion.ts';
 import { CodexBridgeAutoRegistrationQueue } from './thread-monitor-auto-registration-queue.ts';
 import type { CodexBridgeOwnerIdentity } from './thread-monitor-owner-lease.ts';
 import type { CodexBridgeSessionOwnerLeases } from './thread-monitor-owner-lease.ts';
@@ -33,8 +32,11 @@ type Result = Readonly<{ ok: true; status: CodexBridgeAutoWatchStatus }>
   | Readonly<{ ok: false; reason: CodexBridgeAutoWatchFailure | 'connection-unavailable' | 'auto-owner-conflict' }>;
 
 const MAX_COMPLETION_DEDUPLICATION = 256;
-const MAX_RUNNING_THREADS = 1_000;
 const MAX_THREAD_ID_LENGTH = 512;
+
+function completionOutcome(reason: CodexBridgeAutoWatchRegistrationReason): CodexBridgeAutoWatchRegistrationResult {
+  return { registeredCount: 0, outcomes: [{ reason, count: 1 }] };
+}
 
 export class CodexBridgeAutoThreadRegistration {
   private readonly storage: LocalStorageLike;
@@ -231,20 +233,45 @@ export class CodexBridgeAutoThreadRegistration {
     assistantMessageId: string,
     candidateThreadIds: readonly string[],
   ): Promise<number> {
+    return (await this.registerCompletedAnswerWithDiagnostics(targetId, candidateConnectionId, ownerTabId, conversationId,
+      turnKey, assistantMessageId, candidateThreadIds)).registeredCount;
+  }
+
+  async registerCompletedAnswerWithDiagnostics(
+    targetId: string,
+    candidateConnectionId: string,
+    ownerTabId: number,
+    conversationId: string,
+    turnKey: string,
+    assistantMessageId: string,
+    candidateThreadIds: readonly string[],
+  ): Promise<CodexBridgeAutoWatchRegistrationResult> {
     if (!isCodexBridgeWatchIdentifier(targetId) || targetId.length > MAX_THREAD_ID_LENGTH
       || !isCodexBridgeWatchIdentifier(candidateConnectionId) || candidateConnectionId.length > 96
       || !Number.isSafeInteger(ownerTabId) || ownerTabId < 0 || !isConversationId(conversationId)
       || !isCodexBridgeAutoWatchIdentity(turnKey) || !isCodexBridgeAutoWatchIdentity(assistantMessageId)
       || !Array.isArray(candidateThreadIds) || !candidateThreadIds.length
       || candidateThreadIds.length > CODEX_BRIDGE_AUTO_WATCH_THREAD_IDS_LIMIT
-      || Array.from(candidateThreadIds).some((id) => !isCodexBridgeWatchIdentifier(id) || id.length > MAX_THREAD_ID_LENGTH)) return 0;
+      || Array.from(candidateThreadIds).some((id) => !isCodexBridgeWatchIdentifier(id) || id.length > MAX_THREAD_ID_LENGTH)) {
+      return completionOutcome('invalid-request');
+    }
     const threadIds = [...new Set(candidateThreadIds)];
     const dedupeKey = `${candidateConnectionId}\u0000${targetId}\u0000${ownerTabId}\u0000${conversationId}\u0000${turnKey}\u0000${assistantMessageId}`;
-    if (this.recentCompletions.has(dedupeKey) || this.completionFlights.has(dedupeKey)) return 0;
+    if (this.recentCompletions.has(dedupeKey)) return completionOutcome('completion-already-processed');
+    if (this.completionFlights.has(dedupeKey)) return completionOutcome('completion-in-progress');
     this.completionFlights.add(dedupeKey);
     try {
       return await this.queues.withTarget(this.entryKey(candidateConnectionId, targetId, conversationId),
-        () => this.registerCompletedAnswerOnce(targetId, candidateConnectionId, ownerTabId, conversationId, threadIds));
+        () => registerCompletedAnswerOnce({
+          monitor: this.monitor, resolveAccess: this.resolveAccess, loadOwnerMute: this.loadOwnerMute,
+          ownerLeasesEnabled: Boolean(this.ownerLeases),
+          claimRuntimeOwner: (identity, tabId) => this.claimRuntimeOwner(identity, tabId),
+          readState: () => this.readState(), mutate: <T>(operation: (state: AutoState) => AutoState | { state: AutoState; value: T }) => this.mutate(operation),
+          ownerTabMatches: this.ownerTabMatches,
+          recordFailureForOwner: (connectionId, targetId, tabId, ownerConversationId, failure) =>
+            this.recordFailureForOwner(connectionId, targetId, tabId, ownerConversationId, failure),
+          recordFailureForEntry: (entry, failure) => this.recordFailureForEntry(entry, failure),
+        }, targetId, candidateConnectionId, ownerTabId, conversationId, threadIds));
     } finally {
       this.rememberCompletion(dedupeKey);
       this.completionFlights.delete(dedupeKey);
@@ -292,147 +319,6 @@ export class CodexBridgeAutoThreadRegistration {
       && entry.ownerConversationId === ownerConversationId ? { ...entry, ownerMuted,
         ...(revision === undefined ? {} : { ownerMuteRevision: revision }) } : entry) }));
     await this.monitor.updateOwnerMute(ownerTabId, ownerConversationId, ownerMuted, revision);
-  }
-
-  private async registerCompletedAnswerOnce(
-    targetId: string,
-    candidateConnectionId: string,
-    ownerTabId: number,
-    conversationId: string,
-    candidateThreadIds: readonly string[],
-  ): Promise<number> {
-    if (this.ownerLeases) {
-      const claim = await this.claimRuntimeOwner({ connectionId: candidateConnectionId, targetId, conversationId }, ownerTabId);
-      if (claim !== 'current') return 0;
-    }
-    const state = await this.readState();
-    if (!state) return 0;
-    const hasEnabledOwner = state.entries.some((entry) => entry.enabled && entry.connectionId === candidateConnectionId
-      && entry.targetId === targetId
-      && entry.ownerTabId === ownerTabId && entry.ownerConversationId === conversationId);
-    if (!hasEnabledOwner) return 0;
-
-    let access: CodexBridgeMonitorAccess;
-    try { access = await this.resolveAccess(); } catch (error) {
-      await this.recordFailureForOwner(candidateConnectionId, targetId, ownerTabId, conversationId, failureFor(error));
-      return 0;
-    }
-    if (!access.connectionId) {
-      await this.recordFailureForOwner(candidateConnectionId, targetId, ownerTabId, conversationId,
-        access.failure ?? 'connection-unavailable');
-      return 0;
-    }
-    if (access.connectionId !== candidateConnectionId) {
-      await this.recordFailureForOwner(candidateConnectionId, targetId, ownerTabId, conversationId, 'connection-changed');
-      return 0;
-    }
-    let entry = state.entries.find((candidate) => candidate.enabled && candidate.connectionId === access.connectionId
-      && candidate.targetId === targetId && candidate.ownerTabId === ownerTabId
-      && candidate.ownerConversationId === conversationId);
-    if (!entry) return 0;
-    if (!this.ownerLeases && !await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false)) {
-      await this.recordFailureForEntry(entry, 'owner-tab-unavailable');
-      return 0;
-    }
-    if (!access.readTargets || (!access.readRunningThreads && !access.readRunningSnapshot)) {
-      await this.recordFailureForEntry(entry, access.failure ?? 'readonly-tool-unavailable');
-      return 0;
-    }
-
-    let threads: readonly CodexBridgeThread[];
-    try {
-      const page = await readFreshRunningPage(access, this.monitor, targetId,
-        { priority: 'manual', maxAgeMs: 0, force: true });
-      if (!page || page.nextCursor !== null || !Array.isArray(page.threads) || page.threads.length > MAX_RUNNING_THREADS
-        || Array.from(page.threads).some((thread) => !isRecord(thread))) {
-        throw Object.assign(new Error('invalid running_only response'), { code: 'protocol-error' });
-      }
-      threads = page.threads;
-    } catch (error) {
-      await this.recordFailureForEntry(entry, failureFor(error));
-      return 0;
-    }
-
-    const latestState = await this.readState();
-    if (!latestState) return 0;
-    entry = latestState.entries.find((candidate) => candidate.enabled && candidate.connectionId === access.connectionId
-      && candidate.targetId === targetId && candidate.ownerTabId === ownerTabId
-      && candidate.ownerConversationId === conversationId);
-    if (!entry) return 0;
-    if (!this.ownerLeases && !await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false)) {
-      await this.recordFailureForEntry(entry, 'owner-tab-unavailable');
-      return 0;
-    }
-    let latestAccess: CodexBridgeMonitorAccess;
-    try { latestAccess = await this.resolveAccess(); } catch (error) {
-      await this.recordFailureForEntry(entry, failureFor(error));
-      return 0;
-    }
-    if (latestAccess.connectionId !== entry.connectionId || latestAccess.connectionId !== candidateConnectionId
-      || (access.generation !== undefined && latestAccess.generation !== access.generation)) {
-      await this.recordFailureForEntry(entry, 'connection-changed');
-      return 0;
-    }
-    const liveCandidates = threads.filter((thread) => isLiveCandidate(thread, targetId));
-    const liveByThread = new Map(liveCandidates.map((thread) => [thread.id, currentExecution(thread)!.turnId]));
-    const remainingSkips = entry.skippedExecutions.filter((skip) => {
-      const activeTurnId = liveByThread.get(skip.threadId);
-      return activeTurnId !== undefined && (skip.turnId === null || skip.turnId === activeTurnId);
-    });
-    if (remainingSkips.length !== entry.skippedExecutions.length) {
-      await this.mutate((current) => ({ ...current, entries: current.entries.map((candidate) => candidate.connectionId === entry!.connectionId
-        && candidate.targetId === targetId && candidate.ownerTabId === ownerTabId
-        && candidate.ownerConversationId === conversationId ? { ...candidate, skippedExecutions: remainingSkips } : candidate) }));
-    }
-    const ownerMute = await readOwnerMute(this.loadOwnerMute, ownerTabId, conversationId);
-    if (ownerMute.muted !== entry.ownerMuted || ownerMute.revision !== entry.ownerMuteRevision) {
-      entry = { ...entry, ownerMuted: ownerMute.muted, ownerMuteRevision: ownerMute.revision };
-      await this.mutate((current) => ({ ...current, entries: current.entries.map((candidate) => candidate.connectionId === entry!.connectionId
-        && candidate.targetId === targetId && candidate.ownerTabId === ownerTabId
-        && candidate.ownerConversationId === conversationId ? entry! : candidate) }));
-      await this.monitor.updateOwnerMute(ownerTabId, conversationId, ownerMute.muted, ownerMute.revision);
-    }
-
-    const candidates = liveCandidates.filter((thread) => candidateThreadIds.some((candidateId) =>
-      threadIdsMatch(targetId, candidateId, thread.id)));
-    let registeredCount = 0;
-    let failure: CodexBridgeAutoWatchFailure | null = null;
-    const owner: CodexBridgeWatchOwnerMute = {
-      ownerTabId, ownerConversationId: conversationId, ownerMuted: entry.ownerMuted, ownerMuteRevision: entry.ownerMuteRevision,
-    };
-    for (const thread of candidates) {
-      const turnId = liveByThread.get(thread.id) ?? null;
-      if (remainingSkips.some((skip) => skip.threadId === thread.id
-        && (skip.turnId === null || skip.turnId === turnId))) continue;
-      if (!this.ownerLeases && !await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false)) {
-        failure = 'owner-tab-unavailable';
-        break;
-      }
-      const current = await this.monitor.read(entry.connectionId, targetId, thread.id);
-      if (current) {
-        if (current.ownerConversationId && current.ownerConversationId !== conversationId) failure = 'owner-conflict';
-        else if (!current.ownerConversationId) failure = 'ownerless-watch';
-        continue;
-      }
-      if (!this.ownerLeases && !await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false)) {
-        failure = 'owner-tab-unavailable';
-        break;
-      }
-      const result = await this.monitor.startWatch(targetId, thread.id, owner, {
-        allowOwnerTransfer: false, expectedConnectionId: entry.connectionId, expectedGeneration: access.generation,
-        initialStatus: statusFromThread(thread),
-      });
-      if (result.ok) {
-        if (result.created) registeredCount += 1;
-        continue;
-      }
-      if (result.reason === 'watch-limit') { failure = 'watch-limit'; break; }
-      if (result.reason === 'owner-unavailable') failure = 'owner-tab-unavailable';
-      else if (result.reason === 'owner-conflict') failure = 'owner-conflict';
-      else if (result.reason === 'connection-changed') { failure = 'connection-changed'; break; }
-    }
-    await this.recordFailureForEntry(entry, failure);
-    return registeredCount;
   }
 
   private rememberCompletion(key: string): void {

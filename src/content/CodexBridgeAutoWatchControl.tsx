@@ -1,11 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   CODEX_BRIDGE_AUTO_WATCH_GET,
+  CODEX_BRIDGE_AUTO_WATCH_REGISTRATION_REASONS,
   CODEX_BRIDGE_AUTO_WATCH_SET,
   CODEX_BRIDGE_AUTO_WATCH_STORAGE_KEY,
   isCodexBridgeWatchIdentifier,
   type CodexBridgeAutoWatchStatus,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
+import {
+  formatRegistrationOutcomes,
+  parseRegistrationOutcomes,
+  registrationOutcomesHaveFailure,
+} from './codexbridge-auto-watch-registration-diagnostics.ts';
 import { conversationIdFromPath, isConversationId } from '../shared/conversation-route.ts';
 import { codexBridgeAutoWatchFailureLabel } from './codexbridge-auto-watch-presentation.ts';
 import {
@@ -31,6 +37,7 @@ type AutoWatchDiagnosticStage = Readonly<{
   status: 'not-run' | 'pending' | 'ok' | 'failed' | 'skipped';
   count: number | null;
   reason: string | null;
+  details: string | null;
 }>;
 type AutoWatchCompletionDiagnostic = Readonly<{
   scope: number;
@@ -45,6 +52,7 @@ type AutoWatchCompletionDiagnostic = Readonly<{
 
 const DIAGNOSTIC_REASONS = new Set([
   ...AUTO_FAILURES,
+  ...CODEX_BRIDGE_AUTO_WATCH_REGISTRATION_REASONS,
   'invalid-route', 'candidate-response-invalid', 'no-running-candidates', 'dom-unavailable', 'turn-not-unique',
   'answer-not-confirmed', 'answer-too-large', 'no-matching-ids', 'ambiguous-match', 'too-many-matches',
   'no-active-cycle', 'assistant-message-unavailable', 'answer-completion-event-not-fired', 'invalid-request',
@@ -52,8 +60,8 @@ const DIAGNOSTIC_REASONS = new Set([
 ]);
 
 function diagnosticStage(status: AutoWatchDiagnosticStage['status'], count: number | null = null,
-  reason: string | null = null): AutoWatchDiagnosticStage {
-  return { status, count, reason };
+  reason: string | null = null, details: string | null = null): AutoWatchDiagnosticStage {
+  return { status, count, reason, details };
 }
 
 function safeDiagnosticReason(reason: string | null): string | null {
@@ -64,7 +72,8 @@ function safeDiagnosticReason(reason: string | null): string | null {
 function stageLabel(stage: AutoWatchDiagnosticStage): string {
   const label = stage.status === 'not-run' ? '未実行' : stage.status === 'pending' ? '待機中'
     : stage.status === 'ok' ? 'OK' : stage.status === 'failed' ? '失敗' : 'スキップ';
-  return `${label}${stage.count === null ? '' : `・${stage.count}件`}${stage.reason ? `（${stage.reason}）` : ''}`;
+  return `${label}${stage.count === null ? '' : `・${stage.count}件`}${stage.reason ? `（${stage.reason}）` : ''}`
+    + (stage.details ? ` [${stage.details}]` : '');
 }
 
 function diagnosticTime(timestamp: number): string {
@@ -273,9 +282,15 @@ export function CodexBridgeAutoWatchControl({ targetId, targetName, conversation
           const refreshed = await refresh(expectedTarget, expectedConversation, requestToken);
           if (!isCurrentRun()) return;
           const count = registeredCount as number;
+          const outcomes = parseRegistrationOutcomes(data?.outcomes);
+          const outcomeDetails = outcomes?.length ? formatRegistrationOutcomes(outcomes) : null;
           const failureReason = safeDiagnosticReason(refreshed?.failure ?? null);
-          if (count > 0) updateDiagnostic({ registration: diagnosticStage('ok', count) });
-          else if (failureReason) updateDiagnostic({ registration: diagnosticStage('failed', 0, failureReason) });
+          if (count > 0) updateDiagnostic({ registration: diagnosticStage('ok', count, null, outcomeDetails) });
+          else if (outcomes?.length) {
+            const reason = safeDiagnosticReason(outcomes[0]!.reason) ?? 'no-thread-registered';
+            const status = registrationOutcomesHaveFailure(outcomes) ? 'failed' : 'skipped';
+            updateDiagnostic({ registration: diagnosticStage(status, 0, reason, outcomeDetails) });
+          } else if (failureReason) updateDiagnostic({ registration: diagnosticStage('failed', 0, failureReason) });
           else updateDiagnostic({ registration: diagnosticStage('skipped', 0, 'no-thread-registered') });
         } catch {
           if (!isCurrentRun()) return;

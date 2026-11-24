@@ -39,7 +39,8 @@ const event: CodexBridgeTerminalEvent = {
 function handlerFixture(connectionId = item.connectionId, sourceItems: readonly CodexBridgeWatchSnapshot[] = [item],
   sourceEvents: readonly CodexBridgeTerminalEvent[] = [event], startTransferred = false, includeAuto = false,
   changeConnectionAfterRead = false, removeEventAfterRead = false,
-  ownerClaim: 'current' | 'other-tab' | 'recovering' | 'storage-error' | 'connection-unavailable' = 'current') {
+  ownerClaim: 'current' | 'other-tab' | 'recovering' | 'storage-error' | 'connection-unavailable' = 'current',
+  includeDetailedRegistration = false) {
   const calls: string[] = [];
   const requestedOwners: CodexBridgeWatchOwnerMute[] = [];
   let finalAnswerRead = false;
@@ -102,6 +103,9 @@ function handlerFixture(connectionId = item.connectionId, sourceItems: readonly 
       calls.push(`auto:completed:${targetId}:${candidateConnectionId}:${tabId}:${conversationId}:${turnKey}:${assistantMessageId}:${threadIds.join(',')}`);
       return threadIds.length;
     },
+    ...(includeDetailedRegistration ? { async registerCompletedAnswerWithDiagnostics() {
+      return { registeredCount: 0, outcomes: [{ reason: 'already-watching-same-owner' as const, count: 1 }] };
+    } } : {}),
     async stopWatch(connection: string, targetId: string, threadId: string, conversationId: string) {
       calls.push(`auto:stop:${connection}:${targetId}:${threadId}:${conversationId}`);
       return true;
@@ -389,6 +393,18 @@ test('自動登録completionの余分なfieldと32件超過を拒否する', asy
     ok: false, reason: 'invalid-request',
   });
   assert.deepEqual(calls, []);
+});
+
+test('completion handlerは詳細登録理由を互換フィールドと一緒に返す', async () => {
+  const { handle } = handlerFixture(item.connectionId, [item], [event], false, true, false, false, 'current', true);
+  const completed = {
+    type: CODEX_BRIDGE_AUTO_WATCH_COMPLETED, targetId: 'target-1', candidateConnectionId: item.connectionId,
+    conversationId: 'test', turnKey: 'turn-1', assistantMessageId: 'answer-1',
+    threadIds: ['01a207cf-52ab-7900-a91d-3288982ab221'],
+  };
+  assert.deepEqual(await handle(completed, trustedSender), {
+    ok: true, data: { registeredCount: 0, outcomes: [{ reason: 'already-watching-same-owner', count: 1 }] },
+  });
 });
 
 test('owner tab routeはmain-frame content scriptが返す会話identityと一致するときだけ有効', async () => {

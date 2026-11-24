@@ -25,6 +25,7 @@ import {
   type CodexBridgeWatchOwnerMute,
   type CodexBridgeAutoWatchMessage,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
+import type { CodexBridgeAutoWatchRegistrationResult } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import { conversationIdFromPath, isConversationId } from '../shared/conversation-route.ts';
 import {
   CODEX_BRIDGE_OWNER_IDENTITY_PING,
@@ -60,7 +61,8 @@ export type CodexBridgeThreadMonitorHandlerOptions = Readonly<{
     | { readonly ok: false }
   >;
   autoRegistration?: Pick<CodexBridgeAutoThreadRegistration, 'getStatus' | 'setEnabled' | 'getRunningCandidates'
-    | 'registerCompletedAnswer' | 'stopWatch'> & Partial<Pick<CodexBridgeAutoThreadRegistration, 'claimOwner'>>;
+    | 'registerCompletedAnswer' | 'stopWatch'> & Partial<Pick<CodexBridgeAutoThreadRegistration,
+      'claimOwner' | 'registerCompletedAnswerWithDiagnostics'>>;
 }>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -235,7 +237,7 @@ export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridg
     | CodexBridgeWatchResponse<CodexBridgeWatchListData>
     | CodexBridgeWatchResponse<CodexBridgeAutoWatchStatus>
     | CodexBridgeWatchResponse<Readonly<{ connectionId: string | null; threadIds: readonly string[] }>>
-    | CodexBridgeWatchResponse<Readonly<{ registeredCount: number }>>
+    | CodexBridgeWatchResponse<Readonly<{ registeredCount: number; outcomes?: CodexBridgeAutoWatchRegistrationResult['outcomes'] }>>
     | CodexBridgeWatchResponse<CodexBridgeWatchSnapshot | null>
     | CodexBridgeWatchResponse<CodexBridgeWatchListData>
     | CodexBridgeWatchResponse<CodexBridgeFinalAnswerResult>
@@ -268,6 +270,12 @@ export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridg
       }
       if (message.type === CODEX_BRIDGE_AUTO_WATCH_COMPLETED) {
         if (!options.autoRegistration) return { ok: true, data: { registeredCount: 0 } };
+        if (options.autoRegistration.registerCompletedAnswerWithDiagnostics) {
+          const data = await options.autoRegistration.registerCompletedAnswerWithDiagnostics(message.targetId,
+            message.candidateConnectionId, identity.tabId, identity.conversationId, message.turnKey,
+            message.assistantMessageId, message.threadIds);
+          return { ok: true, data };
+        }
         const registeredCount = await options.autoRegistration.registerCompletedAnswer(message.targetId,
           message.candidateConnectionId, identity.tabId, identity.conversationId, message.turnKey,
           message.assistantMessageId, message.threadIds);
