@@ -149,6 +149,16 @@
 - Chrome手順は`docs/c50-terminal-answer-template-acceptance.md`に追記。2026-11-24のユーザー報告で、設定欄、プレビュー、保存後保持、token欠落時の保存拒否、既存draft保持、既定値復元、および直前のC50記録更新後にCodex終了時のtemplate反映があった正常系をPASSとし、主要8項目中7/8の部分PASSへ更新。自動送信なしは明示報告がないためNOT_RUN。選択範囲、添付、JSON入出力、複数token、競合、失敗経路等も未確認。CPP側の反映成功はC49の両会話owner帰属を証明せず、C49の既存暫定観測と3項目PASSは変更しない。C48の自動801/801 PASS・Chrome NOT_RUNも維持する。
 - 自動検証：`pnpm test` 823/823 PASS、`pnpm typecheck` PASS、`pnpm lint` PASS（check:size 291 files、最大500行/32768 bytes）、`pnpm build` PASS、`git diff --check` PASS。これはsource/build確認で、C50 Chrome実機受入はNOT_RUN。
 
+## C51 ChatGPT / Codex通知音の独立設定（2026-11-24）
+
+- Issue #21。ChatGPT回答完了音とCodex監視終了音にそれぞれenabled/soundId/volumePercentと試聴を設ける。音源asset管理・単一出力先・offscreen再生基盤は共通利用し、Issue #20の複数出力デバイスは含めない。
+- schema 1を維持しCodex専用の3 fieldを追加する。Codexの新規既定はOFF・`two-tone`・60%。旧設定/JSONでCodex fieldが欠けた場合は、対応するChatGPT fieldを旧既定値（OFF・`tone-660`・60%）で正規化してから項目ごとに引き継ぐ。明示Codex値は保持し、保存/JSON exportで正規化した後はChatGPT側設定から独立する。
+- Optionsは通知設定を2組表示し、共通音源管理と出力先は重複表示しない。共通カスタム音源の削除前に、保存済み設定の該当する両参照だけを既定音へ保存し、各draftも一致する選択欄だけを更新する。読込/保存失敗や競合では音源削除を行わない。
+- Codex終了音だけ専用設定を参照する。ChatGPT回答完了の通知経路、会話別ミュート/owner guard、終端eventの重複防止、初回既終了状態・手動解除の非通知条件は維持する。
+- Chrome受入手順は`docs/c51-independent-terminal-sound-acceptance.md`。本実装の実機結果は未報告のため全項目NOT_RUN。C48は自動801/801・Chrome NOT_RUN、C49は限定3項目PASSと追加暫定観測、C50は主要7/8部分PASS・自動送信なしNOT_RUNのまま保持する。
+- 詳細設計・実装順は`docs/superpowers/plans/2026-11-24-issue-21-independent-terminal-sound.md`。
+- 自動検証：`pnpm test` 832/832 PASS、`pnpm typecheck` PASS、`pnpm lint` PASS（check:size 292 files、最大500行/32768 bytes）、`pnpm build` PASS、`git diff --check` PASS。source/build確認とChrome実機受入は区別し、C51の全実機項目NOT_RUNを維持する。
+
 ## C46 semantic guard correction（2026-11-24）
 
 - 08:09:15 JSTのユーザー提示スクリーンショットでは、イベント検出、Bridge候補取得OK・2件、本文照合`dom-changed`、監視登録未実行、B監視0、自動登録ON。Bridge側候補は2件とも`live/in_progress`。実機からIDや回答本文は記録しない。

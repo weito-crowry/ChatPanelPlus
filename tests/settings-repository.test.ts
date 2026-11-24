@@ -477,6 +477,9 @@ test('ローカルconfig変更だけを通知し、不正値はパネル更新�
   assert.deepEqual(received[0], {
     schemaVersion: 1,
     tabOrder: ['wall', 'directive', 'control', 'binary', 'quad'],
+    codexBridgeTerminalSoundEnabled: false,
+    codexBridgeTerminalSoundId: 'tone-660',
+    codexBridgeTerminalSoundVolumePercent: 60,
     codexBridgeTerminalAnswerTemplate: '##Codex最終回答##',
   });
   unsubscribe();

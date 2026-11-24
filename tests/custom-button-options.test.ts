@@ -142,6 +142,11 @@ test('resetとlegacy importはcustom tab依存を保ち、明示置換の削除�
   assert.equal(reset.customButtons?.[CUSTOM_BUTTON_IDS[0]! as `custom-${string}`]?.groupId, CUSTOM_TAB_ID);
   assert.equal(reset.buttonOrder?.[CUSTOM_TAB_ID]?.length, 7);
   assert.ok(reset.tabOrder?.includes(CUSTOM_TAB_ID));
+  assert.deepEqual([
+    reset.codexBridgeTerminalSoundEnabled,
+    reset.codexBridgeTerminalSoundId,
+    reset.codexBridgeTerminalSoundVolumePercent,
+  ], [false, 'two-tone', 60]);
   assert.equal(resetSettingsPreservingCustomButtons({ ...settings, codexBridgeTerminalAnswerTemplate: '固定 ##Codex最終回答##' })
     .codexBridgeTerminalAnswerTemplate, '##Codex最終回答##');
 
@@ -152,6 +157,11 @@ test('resetとlegacy importはcustom tab依存を保ち、明示置換の削除�
   assert.deepEqual(merged.customTabs, settings.customTabs);
   assert.deepEqual(merged.customButtons, settings.customButtons);
   assert.equal(merged.codexBridgeTerminalAnswerTemplate, '##Codex最終回答##');
+  assert.deepEqual([
+    merged.codexBridgeTerminalSoundEnabled,
+    merged.codexBridgeTerminalSoundId,
+    merged.codexBridgeTerminalSoundVolumePercent,
+  ], [true, 'tone-660', 60]);
   assert.equal(serializeSettings(merged).includes('custom-tab-'), true);
 
   const explicitRemoval = { schemaVersion: 1 as const, customTabs: {}, customButtons: {} };

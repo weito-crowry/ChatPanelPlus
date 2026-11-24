@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { resolveDefaultUI } from '../../src/shared/default-ui.ts';
 import { createChromeSettingsRepository } from '../../src/shared/settings-repository.ts';
-import { DEFAULT_COMPLETION_SOUND_ID } from '../../src/shared/answer-completion-sound-definitions.ts';
+import {
+  DEFAULT_COMPLETION_SOUND_ID,
+  DEFAULT_CODEX_BRIDGE_TERMINAL_SOUND_ID,
+} from '../../src/shared/answer-completion-sound-definitions.ts';
 import { DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT } from '../../src/shared/answer-completion-sound-volume.ts';
 import { CODEX_BRIDGE_MCP_DEFAULT_URL } from '../../src/shared/codexbridge-mcp-protocol.ts';
 import {
@@ -35,6 +38,7 @@ export function OptionsPage() {
   const [draft, setDraft] = useState<ExtensionSettings>(DEFAULT_SETTINGS);
   const [ready, setReady] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [soundAssetOperation, setSoundAssetOperation] = useState(false);
   const [resetViewOnSave, setResetViewOnSave] = useState(false);
   const [replaceKnownFieldsOnSave, setReplaceKnownFieldsOnSave] = useState(false);
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
@@ -70,6 +74,10 @@ export function OptionsPage() {
     setDraft((current) => ({ ...current, answerCompletionSoundVolumePercent: volumePercent }));
     setStatus('未保存の変更があります。');
   }
+  function updateCodexTerminalSoundVolume(volumePercent: number) {
+    setDraft((current) => ({ ...current, codexBridgeTerminalSoundVolumePercent: volumePercent }));
+    setStatus('未保存の変更があります。');
+  }
   async function prepareAnswerCompletionSoundDeletion(soundId: string): Promise<boolean> {
     const result = await prepareSoundAssetDeletion(repository, soundId);
     if (!result.ok) {
@@ -79,12 +87,16 @@ export function OptionsPage() {
       return false;
     }
     setBase(result.base);
-    setDraft((current) => current.answerCompletionSoundId === soundId
-      ? { ...current, answerCompletionSoundId: DEFAULT_COMPLETION_SOUND_ID } : current);
+    setDraft((current) => ({
+      ...current,
+      ...(current.answerCompletionSoundId === soundId ? { answerCompletionSoundId: DEFAULT_COMPLETION_SOUND_ID } : {}),
+      ...(current.codexBridgeTerminalSoundId === soundId
+        ? { codexBridgeTerminalSoundId: DEFAULT_CODEX_BRIDGE_TERMINAL_SOUND_ID } : {}),
+    }));
     return true;
   }
   async function save() {
-    if (!ready || saving) return;
+    if (!ready || saving || soundAssetOperation) return;
     const validated = validateExtensionSettings(draft);
     if (!validated.ok) {
       setStatus(validated.reason === 'invalid-terminal-answer-template'
@@ -141,12 +153,13 @@ export function OptionsPage() {
     setStatus('読込内容を確認し、ドラフトへ適用してください。');
   }
   function resetDraft() {
+    if (soundAssetOperation) return;
     if (!window.confirm('ボタンとタブの設定を既定値へ戻す変更をドラフトに適用しますか？保存するまで反映されません。')) return;
     setDraft((current) => resetSettingsPreservingCustomButtons(current)); setResetViewOnSave(true); setReplaceKnownFieldsOnSave(true);
     setStatus('既定値への変更をドラフトに適用しました。保存すると確定します。');
   }
   function applyImport() {
-    if (!importPreview) return;
+    if (!importPreview || soundAssetOperation) return;
     const { deletionIds, deletedCustomTabCount } = importPreview;
     if ((deletionIds.length || deletedCustomTabCount) && !window.confirm(
       `JSONの適用でカスタム構造を置換し、カスタムボタン${deletionIds.length}個・タブ${deletedCustomTabCount}個を削除します。保存後の復元にはJSONバックアップが必要です。\n\n${deletionIds.join('\n')}\n\nドラフトに適用しますか？`)) {
@@ -167,7 +180,7 @@ export function OptionsPage() {
         </section>
         <section className="options-section" id="connection" aria-labelledby="connection-title" hidden={section !== 'connection'}>
           <h2 id="connection-title">接続設定</h2><p className="scope-note">接続先は共通設定、MCP tokenはsession領域に独立して保存されます。</p>
-          <McpConnectionSettings endpoint={draft.codexBridgeMcpUrl ?? CODEX_BRIDGE_MCP_DEFAULT_URL} disabled={!ready || saving}
+          <McpConnectionSettings endpoint={draft.codexBridgeMcpUrl ?? CODEX_BRIDGE_MCP_DEFAULT_URL} disabled={!ready || saving || soundAssetOperation}
             onEndpointChange={(value) => updateSetting('codexBridgeMcpUrl', value)} />
         </section>
         <section className="options-section" id="projects" aria-labelledby="projects-title" hidden={section !== 'projects'}>
@@ -175,21 +188,45 @@ export function OptionsPage() {
           <ProjectFolderPatternsSettings />
         </section>
         <section className="options-section" id="audio" aria-labelledby="audio-title" hidden={section !== 'audio'}>
-          <h2 id="audio-title">通知・音声</h2><p className="scope-note">有効化・音量は共通設定、音源と出力先は独立保存、ミュートは会話別です。</p>
-          <fieldset disabled={!ready || saving}><AnswerCompletionSoundSettings
-            selectedSoundId={draft.answerCompletionSoundId ?? DEFAULT_COMPLETION_SOUND_ID}
-            enabled={draft.answerCompletionSoundEnabled === true}
-            volumePercent={draft.answerCompletionSoundVolumePercent ?? DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT}
-            disabled={!ready || saving} onSelect={(value) => updateSetting('answerCompletionSoundId', value)}
-            onToggleEnabled={(value) => updateSetting('answerCompletionSoundEnabled', value)}
-            onVolumeChange={updateAnswerCompletionSoundVolume}
-            onBeforeDelete={prepareAnswerCompletionSoundDeletion} /></fieldset>
+          <h2 id="audio-title">通知・音声</h2><p className="scope-note">通知ごとに有効化・音源・音量を設定できます。音源ライブラリと出力先は共通、ミュートは会話別です。</p>
+          <fieldset disabled={!ready || saving || soundAssetOperation}>
+            <AnswerCompletionSoundSettings
+              idPrefix="answer-completion"
+              title="ChatGPT回答完了音"
+              enabledLabel="ChatGPTの回答完了時に音を鳴らす"
+              soundLabel="ChatGPT回答完了時に再生する音"
+              selectedSoundId={draft.answerCompletionSoundId ?? DEFAULT_COMPLETION_SOUND_ID}
+              enabled={draft.answerCompletionSoundEnabled === true}
+              volumePercent={draft.answerCompletionSoundVolumePercent ?? DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT}
+              disabled={!ready || saving || soundAssetOperation}
+              onSelect={(value) => updateSetting('answerCompletionSoundId', value)}
+              onToggleEnabled={(value) => updateSetting('answerCompletionSoundEnabled', value)}
+              onVolumeChange={updateAnswerCompletionSoundVolume}
+              onBeforeDelete={prepareAnswerCompletionSoundDeletion}
+              defaultSoundId={DEFAULT_COMPLETION_SOUND_ID}
+              includeSharedLibrary
+              onSharedLibraryBusyChange={setSoundAssetOperation} />
+            <AnswerCompletionSoundSettings
+              idPrefix="codex-terminal-completion"
+              title="Codex監視終了音"
+              enabledLabel="Codexスレッドの監視終了時に音を鳴らす"
+              soundLabel="Codex監視終了時に再生する音"
+              selectedSoundId={draft.codexBridgeTerminalSoundId ?? DEFAULT_CODEX_BRIDGE_TERMINAL_SOUND_ID}
+              enabled={draft.codexBridgeTerminalSoundEnabled === true}
+              volumePercent={draft.codexBridgeTerminalSoundVolumePercent ?? DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT}
+              disabled={!ready || saving || soundAssetOperation}
+              onSelect={(value) => updateSetting('codexBridgeTerminalSoundId', value)}
+              onToggleEnabled={(value) => updateSetting('codexBridgeTerminalSoundEnabled', value)}
+              onVolumeChange={updateCodexTerminalSoundVolume}
+              onBeforeDelete={prepareAnswerCompletionSoundDeletion}
+              defaultSoundId={DEFAULT_CODEX_BRIDGE_TERMINAL_SOUND_ID} />
+          </fieldset>
         </section>
         <section className="options-section" id="auto-reflect" aria-labelledby="auto-reflect-title" hidden={section !== 'auto-reflect'}>
           <h2 id="auto-reflect-title">自動反映</h2>
           <p className="scope-note">監視終了時の最終回答を、会話別にONにした入力欄へ未送信の下書きとして反映します。</p>
           <TerminalAnswerTemplateSettings value={draft.codexBridgeTerminalAnswerTemplate ?? DEFAULT_CODEX_BRIDGE_TERMINAL_ANSWER_TEMPLATE}
-            disabled={!ready || saving}
+            disabled={!ready || saving || soundAssetOperation}
             onChange={(value) => updateSetting('codexBridgeTerminalAnswerTemplate', value)} />
         </section>
         <section className="options-section" id="data" aria-labelledby="data-title" hidden={section !== 'data'}>
@@ -197,23 +234,23 @@ export function OptionsPage() {
           <section className="settings-card layout-actions" aria-labelledby="layout-actions-title">
             <h2 id="layout-actions-title">設定JSON</h2>
             <p>JSONはタブ・ボタン等の共通設定のみです。全保存領域のバックアップではなく、フォルダパターンとMCP tokenを含みません。</p>
-            <div className="layout-buttons"><button type="button" disabled={!ready || saving} onClick={resetDraft}>既定値に戻す</button>
-              <button type="button" disabled={!ready || saving} onClick={exportSettings}>JSONを書き出す</button>
-              <label className="import-picker">JSONを読み込む<input type="file" accept="application/json,.json" disabled={!ready || saving}
+            <div className="layout-buttons"><button type="button" disabled={!ready || saving || soundAssetOperation} onClick={resetDraft}>既定値に戻す</button>
+              <button type="button" disabled={!ready || saving || soundAssetOperation} onClick={exportSettings}>JSONを書き出す</button>
+              <label className="import-picker">JSONを読み込む<input type="file" accept="application/json,.json" disabled={!ready || saving || soundAssetOperation}
                 onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; void inspectImport(file); }} /></label></div>
             {importPreview && <div className="import-preview" aria-label="インポートプレビュー">
               <p>schemaVersion {importPreview.settings.schemaVersion}、ボタン{importPreview.importedCustomCount}個の設定です。</p>
               <p>保存済みカスタムボタン: {importPreview.savedCustomCount}個 / 適用後: {importPreview.importedCustomCount}個{importPreview.legacy ? '（旧JSONのため保存済み定義を保持）' : ''}</p>
               {importPreview.deletedCustomTabCount > 0 && <p>明示置換で削除されるカスタムタブ: {importPreview.deletedCustomTabCount}個</p>}
               {importPreview.deletionIds.length > 0 && <p>削除予定ID: {importPreview.deletionIds.join('、')}</p>}
-              <button type="button" disabled={!ready || saving} onClick={applyImport}>この設定をドラフトに適用</button>
+              <button type="button" disabled={!ready || saving || soundAssetOperation} onClick={applyImport}>この設定をドラフトに適用</button>
             </div>}
           </section>
         </section>
       </div>
     </div>
     <footer className="save-bar"><span className="save-bar-status" aria-hidden="true">{status}</span>
-      <button type="button" disabled={!ready || saving} onClick={() => void reload()}>保存値を再読み込み</button>
-      <button type="button" className="save-button" disabled={!ready || saving} onClick={() => void save()}>{saving ? '保存中…' : '保存'}</button></footer>
+      <button type="button" disabled={!ready || saving || soundAssetOperation} onClick={() => void reload()}>保存値を再読み込み</button>
+      <button type="button" className="save-button" disabled={!ready || saving || soundAssetOperation} onClick={() => void save()}>{saving ? '保存中…' : '保存'}</button></footer>
   </main>;
 }

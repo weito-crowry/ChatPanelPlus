@@ -20,7 +20,9 @@ test('Optionsに表示切替・上下並べ替え・ドラフト保存・確認�
   for (const behavior of ['type="checkbox"', '上へ', '下へ', 'type="color"', '<textarea', 'CustomButtonCreator']) {
     assert.ok(editor.includes(behavior), `OptionsPanelEditor missing ${behavior}`);
   }
-  assert.ok(soundSettings.includes('回答完了音'));
+  assert.ok(soundSettings.includes('soundLabel'));
+  assert.ok(source.includes('title="ChatGPT回答完了音"'));
+  assert.ok(source.includes('title="Codex監視終了音"'));
   assert.ok(source.includes('enabled={draft.answerCompletionSoundEnabled === true}'));
 });
 

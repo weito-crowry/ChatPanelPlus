@@ -14,6 +14,9 @@ function notification(options: {
   enabled?: boolean;
   volume?: number;
   soundId?: string;
+  chatGptEnabled?: boolean;
+  chatGptSoundId?: string;
+  chatGptVolume?: number;
   deviceId?: string;
   asset?: SoundAsset;
   outputAvailable?: boolean;
@@ -31,9 +34,13 @@ function notification(options: {
   const handler = createCodexBridgeNotificationHandler({
     settings: { async loadSettings() {
       return { ok: true as const, settings: {
-        schemaVersion: 1, answerCompletionSoundEnabled: options.enabled ?? true,
-        answerCompletionSoundId: options.soundId,
-        answerCompletionSoundVolumePercent: options.volume ?? 37,
+        schemaVersion: 1,
+        answerCompletionSoundEnabled: options.chatGptEnabled ?? false,
+        answerCompletionSoundId: options.chatGptSoundId ?? 'tone-660',
+        answerCompletionSoundVolumePercent: options.chatGptVolume ?? 60,
+        codexBridgeTerminalSoundEnabled: options.enabled ?? true,
+        codexBridgeTerminalSoundId: options.soundId ?? 'two-tone',
+        codexBridgeTerminalSoundVolumePercent: options.volume ?? 37,
       } as ExtensionSettings };
     } },
     outputDevice: { async load() {
@@ -72,7 +79,7 @@ test('default and selected output devices both use the offscreen audio route wit
 });
 
 test('disabled sound and zero volume skip playback, while device and audio failures remain explicit', async () => {
-  const disabled = notification({ enabled: false });
+  const disabled = notification({ enabled: false, chatGptEnabled: true });
   assert.deepEqual(await disabled.handler.prepare(disabled.event), { state: 'skipped', reason: 'disabled' });
   assert.deepEqual(disabled.requests, []);
 
@@ -87,6 +94,36 @@ test('disabled sound and zero volume skip playback, while device and audio failu
   const prepared = await denied.handler.prepare(denied.event);
   assert.equal(prepared.state, 'ready');
   if (prepared.state === 'ready') assert.deepEqual(await prepared.play(), { ok: false, reason: 'permission-denied' });
+});
+
+test('Codex終了音はChatGPT回答完了音の専用設定を参照し、相手側の値に追随しない', async () => {
+  const harness = notification({
+    enabled: true, soundId: 'soft-chime', volume: 19,
+    chatGptEnabled: false, chatGptSoundId: 'tone-660', chatGptVolume: 88,
+  });
+  const prepared = await harness.handler.prepare(harness.event);
+  assert.equal(prepared.state, 'ready');
+  if (prepared.state === 'ready') {
+    assert.deepEqual(await prepared.play(), { ok: true });
+  }
+  assert.deepEqual(harness.requests, [{
+    type: 'CPP_OFFSCREEN_PLAY_ANSWER_COMPLETION_SOUND', deviceId: 'default',
+    soundId: 'soft-chime', volumePercent: 19,
+  }]);
+});
+
+test('専用設定で選んだカスタム音源が欠落した場合はCodex既定音へ戻る', async () => {
+  const selectedId = 'user-12345678-1234-4234-9234-123456789012';
+  const harness = notification({ enabled: true, soundId: selectedId, chatGptSoundId: 'soft-chime' });
+  const prepared = await harness.handler.prepare(harness.event);
+  assert.equal(prepared.state, 'ready');
+  if (prepared.state === 'ready') {
+    assert.deepEqual(await prepared.play(), { ok: true });
+  }
+  assert.deepEqual(harness.requests, [{
+    type: 'CPP_OFFSCREEN_PLAY_ANSWER_COMPLETION_SOUND', deviceId: 'default',
+    soundId: 'two-tone', volumePercent: 37,
+  }]);
 });
 
 test('ownerless・muted・再生直前mute raceはBridge完了音をskipする', async () => {

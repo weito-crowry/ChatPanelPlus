@@ -9,7 +9,12 @@ import {
   type InsertionMode,
   type TabId,
 } from './default-ui.ts';
-import { isBuiltinCompletionSoundId, isUserCompletionSoundId } from './answer-completion-sound-definitions.ts';
+import {
+  DEFAULT_COMPLETION_SOUND_ID,
+  DEFAULT_CODEX_BRIDGE_TERMINAL_SOUND_ID,
+  isBuiltinCompletionSoundId,
+  isUserCompletionSoundId,
+} from './answer-completion-sound-definitions.ts';
 import {
   DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT,
   MAX_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT,
@@ -36,6 +41,9 @@ export type ExtensionSettings = Readonly<{
   answerCompletionSoundEnabled?: boolean;
   answerCompletionSoundId?: string;
   answerCompletionSoundVolumePercent?: number;
+  codexBridgeTerminalSoundEnabled?: boolean;
+  codexBridgeTerminalSoundId?: string;
+  codexBridgeTerminalSoundVolumePercent?: number;
   codexBridgeTerminalAnswerTemplate?: string;
   codexBridgeMcpUrl?: string;
   customButtons?: Readonly<Record<CustomButtonId, CustomButtonDefinition>>;
@@ -51,6 +59,9 @@ export type SettingsValidationResult =
 export const DEFAULT_SETTINGS: ExtensionSettings = Object.freeze({
   schemaVersion: SETTINGS_SCHEMA_VERSION,
   answerCompletionSoundVolumePercent: DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT,
+  codexBridgeTerminalSoundEnabled: false,
+  codexBridgeTerminalSoundId: DEFAULT_CODEX_BRIDGE_TERMINAL_SOUND_ID,
+  codexBridgeTerminalSoundVolumePercent: DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT,
   codexBridgeTerminalAnswerTemplate: DEFAULT_CODEX_BRIDGE_TERMINAL_ANSWER_TEMPLATE,
 });
 
@@ -228,6 +239,21 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
       || value.answerCompletionSoundVolumePercent > MAX_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT)) {
     return settingsError('invalid-settings');
   }
+  if (value.codexBridgeTerminalSoundEnabled !== undefined && typeof value.codexBridgeTerminalSoundEnabled !== 'boolean') {
+    return settingsError('invalid-settings');
+  }
+  if (value.codexBridgeTerminalSoundId !== undefined
+    && (typeof value.codexBridgeTerminalSoundId !== 'string'
+      || (!isBuiltinCompletionSoundId(value.codexBridgeTerminalSoundId) && !isUserCompletionSoundId(value.codexBridgeTerminalSoundId)))) {
+    return settingsError('invalid-settings');
+  }
+  if (value.codexBridgeTerminalSoundVolumePercent !== undefined
+    && (typeof value.codexBridgeTerminalSoundVolumePercent !== 'number'
+      || !Number.isInteger(value.codexBridgeTerminalSoundVolumePercent)
+      || value.codexBridgeTerminalSoundVolumePercent < MIN_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT
+      || value.codexBridgeTerminalSoundVolumePercent > MAX_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT)) {
+    return settingsError('invalid-settings');
+  }
   if (value.codexBridgeMcpUrl !== undefined && typeof value.codexBridgeMcpUrl !== 'string') {
     return settingsError('invalid-settings');
   }
@@ -240,6 +266,15 @@ export function validateExtensionSettings(value: unknown): SettingsValidationRes
     settings: {
       ...value,
       schemaVersion: SETTINGS_SCHEMA_VERSION,
+      codexBridgeTerminalSoundEnabled: value.codexBridgeTerminalSoundEnabled === undefined
+        ? value.answerCompletionSoundEnabled === true : value.codexBridgeTerminalSoundEnabled as boolean,
+      codexBridgeTerminalSoundId: value.codexBridgeTerminalSoundId === undefined
+        ? value.answerCompletionSoundId === undefined ? DEFAULT_COMPLETION_SOUND_ID : value.answerCompletionSoundId as string
+        : value.codexBridgeTerminalSoundId as string,
+      codexBridgeTerminalSoundVolumePercent: value.codexBridgeTerminalSoundVolumePercent === undefined
+        ? value.answerCompletionSoundVolumePercent === undefined
+          ? DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT : value.answerCompletionSoundVolumePercent as number
+        : value.codexBridgeTerminalSoundVolumePercent as number,
       codexBridgeTerminalAnswerTemplate: value.codexBridgeTerminalAnswerTemplate === undefined
         ? DEFAULT_CODEX_BRIDGE_TERMINAL_ANSWER_TEMPLATE : value.codexBridgeTerminalAnswerTemplate as string,
       ...(value.buttonOverrides === undefined ? {} : { buttonOverrides }),

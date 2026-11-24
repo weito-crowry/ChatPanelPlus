@@ -43,6 +43,11 @@ test('パネルのスピーカー1個は実効音声状態を示し、会話別m
   assert.ok(controller.includes('getConversationMuteSnapshot: conversationMute.getSnapshot'));
   assert.ok(muteHook.includes('setMuted(id, nextMuted)'));
   assert.ok(options.includes('enabled={draft.answerCompletionSoundEnabled === true}'));
+  assert.ok(options.includes('enabled={draft.codexBridgeTerminalSoundEnabled === true}'));
+  assert.ok(options.includes('volumePercent={draft.codexBridgeTerminalSoundVolumePercent ?? DEFAULT_ANSWER_COMPLETION_SOUND_VOLUME_PERCENT}'));
+  assert.match(options, /current\.codexBridgeTerminalSoundId === soundId[\s\S]*?codexBridgeTerminalSoundId: DEFAULT_CODEX_BRIDGE_TERMINAL_SOUND_ID/);
+  assert.match(options, /codexBridgeTerminalSoundVolumePercent: volumePercent/);
+  assert.equal((options.match(/<AnswerCompletionSoundSettings/g) ?? []).length, 2);
 });
 
 test('Optionsで通知音と出力先を試聴・選択し、音源管理と上限を説明する', async () => {
@@ -53,12 +58,12 @@ test('Optionsで通知音と出力先を試聴・選択し、音源管理と上�
     read('../src/shared/answer-completion-sound-assets.ts'),
     read('../options/src/AnswerCompletionOutputDeviceSettings.tsx'),
   ]);
-  for (const text of ['aria-label="回答完了時に再生する音"', 'onSelect(event.currentTarget.value)', '選択中の音を選択中の出力先で試聴', 'accept=".wav,.mp3,.ogg', 'role="alert"', 'role="status"', 'window.confirm', 'asset.name', '既定の短音へ切り替え']) {
+  for (const text of ['aria-label={soundLabel}', 'onSelect(event.currentTarget.value)', '選択中の音を選択中の出力先で試聴', 'accept=".wav,.mp3,.ogg', 'role="alert"', 'role="status"', 'window.confirm', 'asset.name', '各通知の既定音へ切り替え']) {
     assert.ok(component.includes(text), `音設定UIに ${text} がありません`);
   }
   assert.ok(component.indexOf('await onBeforeDelete(asset.id)') < component.indexOf('await repository.removeAsset(asset.id)'));
   assert.match(options, /onBeforeDelete=\{prepareAnswerCompletionSoundDeletion\}/);
-  assert.match(actions, /answerCompletionSoundId: DEFAULT_COMPLETION_SOUND_ID/);
+  assert.match(actions, /codexBridgeTerminalSoundId: DEFAULT_CODEX_BRIDGE_TERMINAL_SOUND_ID/);
   assert.match(assets, /chatPanelPlus.answerCompletionSoundAssets/);
   assert.match(component, /最大5件/);
   assert.match(component, /512 KiB/);
@@ -70,6 +75,8 @@ test('Optionsで通知音と出力先を試聴・選択し、音源管理と上�
     assert.ok(outputDevice.includes(text), `出力先UIに ${text} がありません`);
   }
   assert.ok(component.includes('ANSWER_COMPLETION_SOUND_PREVIEW'));
+  assert.equal((component.match(/<AnswerCompletionOutputDeviceSettings/g) ?? []).length, 1);
+  assert.ok(component.includes('includeSharedLibrary'));
 });
 
 test('Optionsの音量rangeは値を表示し、previewにdraft値を渡し、0%で再生できないと示す', async () => {
@@ -83,7 +90,7 @@ test('Optionsの音量rangeは値を表示し、previewにdraft値を渡し、0%
   assert.match(component, /min=\{0\}/);
   assert.match(component, /max=\{100\}/);
   assert.match(component, /step=\{1\}/);
-  assert.match(component, /htmlFor="answer-completion-sound-volume"/);
+  assert.match(component, /htmlFor=\{`\$\{idPrefix\}-volume`\}/);
   assert.match(component, /aria-valuetext=\{`\$\{volumePercent\}%`\}/);
   assert.match(component, /\{volumePercent\}%/);
   assert.match(component, /音量0%のため試聴・通知音は再生されません/);

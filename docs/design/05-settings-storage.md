@@ -31,6 +31,11 @@
   - buttonOrder: 表示グループ（常時表示／各タブ）単位の安定 ID 配列。既定IDと当該グループのユーザー作成IDを含む
   - tabOrder: 安定 tabId 配列
   - answerCompletionSoundEnabled?: 回答完了音の有効状態。省略時は無効
+  - answerCompletionSoundId?: ChatGPT回答完了音の選択ID。省略時は`tone-660`
+  - answerCompletionSoundVolumePercent?: ChatGPT回答完了音の音量。0〜100、未設定時60
+  - codexBridgeTerminalSoundEnabled?: Codex監視終了音の有効状態
+  - codexBridgeTerminalSoundId?: Codex監視終了音の選択ID
+  - codexBridgeTerminalSoundVolumePercent?: Codex監視終了音の音量。0〜100
   - customButtons?: CustomButtonId をキーとしたユーザー作成ボタン定義。省略時は空
 - ButtonOverride:
   - visible?: boolean
@@ -93,6 +98,7 @@ order は同一表示領域内での並び替えを表す。ユーザー作成�
 - 将来版の設定ファイルや破損した JSON を無確認で上書きしない。読み込み専用・エラー表示など安全な方式を採る。
 - v7.2 の localStorage キーは gpt-quick-btns-active-tab（旧版のラベル値を ID に変換）と gpt-quick-btns-minimized。新しい chrome.storage.local に暗黙移行しない。要否と互換性の実測後に独立した移行処理を追加する。
 - ID の名称を変更する場合は旧 ID からの対応表とテストを必須とする。単なる表示ラベル変更で ID は変更しない。
+- schema 1のCodex終了音専用fieldが省略された設定・JSONは、対応するChatGPT回答完了音の正規値を項目ごとに引き継ぐ。ChatGPT側も省略時はOFF・`tone-660`・60%。検証後の保存/JSON exportではCodex値を明示し、その後はChatGPT側変更に追随しない。新規設定既定はCodex側OFF・`two-tone`・60%。
 
 ## 7. エクスポート・インポート
 

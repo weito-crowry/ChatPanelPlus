@@ -12,19 +12,23 @@ import {
   type SoundAsset,
   type SoundAssetError,
 } from '../../src/shared/answer-completion-sound-assets.ts';
-import {
-  BUILTIN_COMPLETION_SOUNDS,
-  DEFAULT_COMPLETION_SOUND_ID,
-} from '../../src/shared/answer-completion-sound-definitions.ts';
+import { BUILTIN_COMPLETION_SOUNDS } from '../../src/shared/answer-completion-sound-definitions.ts';
 import { decodeSoundData, previewCompletionSound } from '../../src/shared/answer-completion-sound-playback.ts';
 import { AnswerCompletionOutputDeviceSettings } from './AnswerCompletionOutputDeviceSettings.tsx';
 import { ANSWER_COMPLETION_SOUND_PREVIEW } from '../../src/shared/answer-completion-output-device-protocol.ts';
 
 interface AnswerCompletionSoundSettingsProps {
+  readonly idPrefix: string;
+  readonly title: string;
+  readonly enabledLabel: string;
+  readonly soundLabel: string;
   readonly selectedSoundId: string;
   readonly enabled: boolean;
   readonly volumePercent: number;
   readonly disabled: boolean;
+  readonly defaultSoundId: string;
+  readonly includeSharedLibrary?: boolean;
+  readonly onSharedLibraryBusyChange?: (busy: boolean) => void;
   readonly onSelect: (soundId: string) => void;
   readonly onToggleEnabled: (enabled: boolean) => void;
   readonly onVolumeChange: (volumePercent: number) => void;
@@ -68,10 +72,17 @@ function outputPlaybackError(reason: string): string {
 }
 
 export function AnswerCompletionSoundSettings({
+  idPrefix,
+  title,
+  enabledLabel,
+  soundLabel,
   selectedSoundId,
   enabled,
   volumePercent,
   disabled,
+  defaultSoundId,
+  includeSharedLibrary = false,
+  onSharedLibraryBusyChange,
   onSelect,
   onToggleEnabled,
   onVolumeChange,
@@ -117,24 +128,29 @@ export function AnswerCompletionSoundSettings({
     setBusy(true);
     setError('');
     setMessage('音源を検証しています。');
-    const prepared = await prepareSoundAsset(file, (data) => decodeSoundData(data, audioContextFactory));
-    if (!prepared.ok) {
-      setError(fileErrorMessage(prepared.reason));
+    try {
+      const prepared = await prepareSoundAsset(file, (data) => decodeSoundData(data, audioContextFactory));
+      if (!prepared.ok) {
+        setError(fileErrorMessage(prepared.reason));
+        setMessage('');
+        return;
+      }
+      const result = await repository.addAsset(prepared.asset);
+      if (!result.ok) {
+        setError(storageErrorMessage(result.reason));
+        setMessage('');
+        return;
+      }
+      setAssets((current) => current.some(({ id }) => id === result.asset?.id) || !result.asset
+        ? current
+        : [...current, result.asset]);
+      setMessage(`「${result.asset?.name ?? file.name}」を保存しました。選択欄から指定できます。`);
+    } catch {
+      setError('音源を保存できませんでした。既存音源は保持されています。');
       setMessage('');
+    } finally {
       setBusy(false);
-      return;
     }
-    const result = await repository.addAsset(prepared.asset);
-    setBusy(false);
-    if (!result.ok) {
-      setError(storageErrorMessage(result.reason));
-      setMessage('');
-      return;
-    }
-    setAssets((current) => current.some(({ id }) => id === result.asset?.id) || !result.asset
-      ? current
-      : [...current, result.asset]);
-    setMessage(`「${result.asset?.name ?? file.name}」を保存しました。選択欄から指定できます。`);
   }
 
   async function preview(soundId: string, asset?: SoundAsset) {
@@ -175,38 +191,37 @@ export function AnswerCompletionSoundSettings({
   }
 
   async function remove(asset: SoundAsset) {
-    if (busy || !window.confirm(`「${asset.name}」を削除しますか？${selectedSoundId === asset.id ? '\n選択中のため、先に既定の短音へ切り替えます。' : ''}`)) return;
+    if (busy || !window.confirm(`「${asset.name}」を削除しますか？使用中の通知設定は、削除前に各通知の既定音へ切り替えます。`)) return;
     setBusy(true);
+    onSharedLibraryBusyChange?.(true);
     setError('');
     setMessage('');
-    let safeToDelete: boolean;
     try {
-      safeToDelete = await onBeforeDelete(asset.id);
+      const safeToDelete = await onBeforeDelete(asset.id);
+      if (!safeToDelete) return;
+      const result = await repository.removeAsset(asset.id);
+      if (!result.ok) {
+        setError(storageErrorMessage(result.reason));
+        return;
+      }
+      setAssets((current) => current.filter(({ id }) => id !== asset.id));
+      setMessage(`「${asset.name}」を削除しました。`);
     } catch {
-      safeToDelete = false;
       setError('選択中の音を既定音へ保存できなかったため、ファイルは削除していません。');
-    }
-    if (!safeToDelete) {
+    } finally {
       setBusy(false);
-      return;
+      onSharedLibraryBusyChange?.(false);
     }
-    const result = await repository.removeAsset(asset.id);
-    setBusy(false);
-    if (!result.ok) {
-      setError(storageErrorMessage(result.reason));
-      return;
-    }
-    setAssets((current) => current.filter(({ id }) => id !== asset.id));
-    setMessage(`「${asset.name}」を削除しました。`);
   }
 
   const selectedAsset = assets.find(({ id }) => id === selectedSoundId);
   const selectedMissing = selectedSoundId.startsWith('user-') && !selectedAsset;
-  const previewSoundId = selectedMissing ? DEFAULT_COMPLETION_SOUND_ID : selectedSoundId;
+  const previewSoundId = selectedMissing ? defaultSoundId : selectedSoundId;
+  const fallbackSound = BUILTIN_COMPLETION_SOUNDS.find(({ id }) => id === defaultSoundId)?.label ?? '既定音';
 
   return (
-    <section className="settings-card sound-settings" aria-labelledby="answer-completion-sound-title">
-      <h2 id="answer-completion-sound-title">回答完了音</h2>
+    <section className="settings-card sound-settings" aria-labelledby={`${idPrefix}-title`}>
+      <h2 id={`${idPrefix}-title`}>{title}</h2>
       <label className="tab-visibility">
         <input
           type="checkbox"
@@ -214,14 +229,14 @@ export function AnswerCompletionSoundSettings({
           disabled={disabled}
           onChange={(event) => onToggleEnabled(event.currentTarget.checked)}
         />
-        ChatGPTの回答完了時に音を鳴らす
+        {enabledLabel}
       </label>
-      <p>初期状態は無効です。有効にした後、ChatGPTページで操作すると再生できるようになります。</p>
+      <p>保存後にこの通知の再生へ反映します。選択音の試聴には、この通知の音量を使います。</p>
       <div className="sound-volume-control">
-        <label htmlFor="answer-completion-sound-volume">音量</label>
+        <label htmlFor={`${idPrefix}-volume`}>音量</label>
         <div className="sound-volume-control-row">
           <input
-            id="answer-completion-sound-volume"
+            id={`${idPrefix}-volume`}
             type="range"
             min={0}
             max={100}
@@ -231,14 +246,14 @@ export function AnswerCompletionSoundSettings({
             disabled={disabled}
             onChange={(event) => onVolumeChange(Number(event.currentTarget.value))}
           />
-          <output htmlFor="answer-completion-sound-volume">{volumePercent}%</output>
+          <output htmlFor={`${idPrefix}-volume`}>{volumePercent}%</output>
         </div>
       </div>
       {volumePercent === 0 && <p className="sound-settings-status" role="status">音量0%のため試聴・通知音は再生されません。</p>}
       <label className="field-label sound-select-label">
         通知音
         <select
-          aria-label="回答完了時に再生する音"
+          aria-label={soundLabel}
           value={selectedSoundId}
           disabled={disabled || busy}
           onChange={(event) => onSelect(event.currentTarget.value)}
@@ -253,40 +268,43 @@ export function AnswerCompletionSoundSettings({
         className="sound-preview-button"
         disabled={disabled || busy || !!previewingId || volumePercent === 0}
         onClick={() => { void preview(previewSoundId, selectedAsset); }}
+        aria-label={`${title}の選択音を現在の出力先で試聴`}
       >{previewingId === previewSoundId ? '試聴中…' : '選択中の音を選択中の出力先で試聴'}</button>
-      <AnswerCompletionOutputDeviceSettings disabled={disabled || busy || !!previewingId} />
-      {selectedMissing && assetsReady && <p className="sound-settings-warning" role="status">選択音源を読み込めません。再生時は短音（660 Hz）を使用します。</p>}
+      {selectedMissing && assetsReady && <p className="sound-settings-warning" role="status">選択音源を読み込めません。再生時は{fallbackSound}を使用します。</p>}
       {selectedMissing && !assetsReady && !loadError && <p className="sound-settings-status" role="status">ユーザー音源を読み込んでいます。</p>}
-      <p>WAV、MP3、OGGに対応。{MAX_SOUND_ASSET_DURATION_SECONDS}秒以内、1ファイル512 KiB以下、最大5件、保存音源の合計2 MiBまでです。音声内容も再生可能か検査します。Chromeの保存容量によっては追加できない場合があります。</p>
-      <label className="sound-file-picker">
-        音源ファイルを追加
-        <input
-          type="file"
-          accept=".wav,.mp3,.ogg,audio/wav,audio/mpeg,audio/ogg"
-          aria-label="通知音ファイルを追加"
-          disabled={disabled || busy || !assetsReady || assets.length >= MAX_SOUND_ASSETS}
-          onChange={(event) => {
-            const file = event.currentTarget.files?.[0];
-            event.currentTarget.value = '';
-            void addFile(file);
-          }}
-        />
-      </label>
-      {loadError && <p className="sound-settings-error" role="alert">{loadError}</p>}
       {error && <p className="sound-settings-error" role="alert">{error}</p>}
       {message && <p className="sound-settings-status" role="status">{message}</p>}
-      <ul className="sound-asset-list" aria-label="追加した通知音">
-        {assets.map((asset) => (
-          <li key={asset.id}>
-            <span className="sound-asset-name">{asset.name}</span>
-            <span className="sound-asset-size">{Math.ceil(asset.sizeBytes / 1024)} KiB</span>
-            <button type="button" disabled={disabled || busy || !!previewingId || volumePercent === 0} onClick={() => { void preview(asset.id, asset); }}>
-              {previewingId === asset.id ? '試聴中…' : '試聴'}
-            </button>
-            <button type="button" disabled={disabled || busy} onClick={() => { void remove(asset); }}>削除</button>
-          </li>
-        ))}
-      </ul>
+      {includeSharedLibrary && <>
+        <AnswerCompletionOutputDeviceSettings disabled={disabled || busy || !!previewingId} />
+        <p>WAV、MP3、OGGに対応。{MAX_SOUND_ASSET_DURATION_SECONDS}秒以内、1ファイル512 KiB以下、最大5件、保存音源の合計2 MiBまでです。音声内容も再生可能か検査します。Chromeの保存容量によっては追加できない場合があります。</p>
+        <label className="sound-file-picker">
+          音源ファイルを追加
+          <input
+            type="file"
+            accept=".wav,.mp3,.ogg,audio/wav,audio/mpeg,audio/ogg"
+            aria-label="通知音ファイルを追加"
+            disabled={disabled || busy || !assetsReady || assets.length >= MAX_SOUND_ASSETS}
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              event.currentTarget.value = '';
+              void addFile(file);
+            }}
+          />
+        </label>
+        {loadError && <p className="sound-settings-error" role="alert">{loadError}</p>}
+        <ul className="sound-asset-list" aria-label="追加した通知音">
+          {assets.map((asset) => (
+            <li key={asset.id}>
+              <span className="sound-asset-name">{asset.name}</span>
+              <span className="sound-asset-size">{Math.ceil(asset.sizeBytes / 1024)} KiB</span>
+              <button type="button" disabled={disabled || busy || !!previewingId || volumePercent === 0} onClick={() => { void preview(asset.id, asset); }}>
+                {previewingId === asset.id ? '試聴中…' : '試聴'}
+              </button>
+              <button type="button" disabled={disabled || busy} onClick={() => { void remove(asset); }}>削除</button>
+            </li>
+          ))}
+        </ul>
+      </>}
     </section>
   );
 }

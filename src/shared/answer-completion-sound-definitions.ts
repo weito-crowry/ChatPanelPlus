@@ -36,6 +36,7 @@ export const BUILTIN_COMPLETION_SOUNDS: readonly BuiltinCompletionSound[] = Obje
 ]);
 
 export const DEFAULT_COMPLETION_SOUND_ID = BUILTIN_COMPLETION_SOUNDS[0]!.id;
+export const DEFAULT_CODEX_BRIDGE_TERMINAL_SOUND_ID = 'two-tone';
 
 export function isBuiltinCompletionSoundId(value: string): boolean {
   return BUILTIN_COMPLETION_SOUNDS.some(({ id }) => id === value);

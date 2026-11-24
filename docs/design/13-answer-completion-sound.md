@@ -17,7 +17,8 @@
 - デバイス一覧が既定出力だけの場合に限り、Optionsの明示ボタンからマイク権限を要求できる。許可後は全トラックを直ちに停止し、録音・保存・送信しない。権限は拡張機能オリジンに対してChromeが保持する。
 - 出力先は `chatPanelPlus.answerCompletionOutputDevice` 専用の `chrome.storage.local` キーへ `{ deviceId, label }` として保存する。デバイスIDは拡張機能オリジンに束縛されるため、設定JSONのimport/exportに含めず、任意サイトへ送信しない。設定破損・保存失敗では既存値を上書きしない。
 - ユーザー音源は `chatPanelPlus.answerCompletionSoundAssets` 専用の `chrome.storage.local` キーへ保存する。形式はWAV、MP3、OGG、1ファイル512 KiB以下・10秒以内・最大5件・Base64化後の合計2 MiBまでとする。拡張子とMIMEタイプに加えてシグネチャ、AudioContextデコード、長さを検証する。
-- 選択IDが参照する音源が見つからない、または再生用デコードに失敗した場合は既定の660 Hz音へフォールバックする。Optionsは欠落状態を表示する。選択音源の削除は既定音IDの設定保存後にファイルデータを削除する。
+- Codex監視終了音は`codexBridgeTerminalSoundEnabled`、`codexBridgeTerminalSoundId`、`codexBridgeTerminalSoundVolumePercent`で独立管理する。schema 1を維持し、新規既定はOFF・`two-tone`・60%。Codex fieldを含まない旧設定は対応するChatGPT回答完了音fieldの旧正規値を項目ごとに引き継ぎ、保存/export後は独立する。Optionsでは両通知に選択音試聴を設けるが、ユーザー音源管理と出力先設定は共有の1組とする。
+- 選択IDが参照する音源が見つからない、または再生用デコードに失敗した場合は各通知の既定音へフォールバックする。ChatGPT回答完了音は660 Hz音、Codex監視終了音は2音を使う。Optionsは欠落状態を表示する。選択音源の削除前に両通知の保存済み参照を必要な分だけ各既定音へ保存し、ファイルデータを削除する。
 - Manifestには特定デバイス再生用に `offscreen` 権限だけを追加する。Offscreen Documentは `AUDIO_PLAYBACK` 理由で必要時に作り、音のない状態が30秒続いた後の自動終了と次回再作成を前提にする。
 - システムの既定出力は従来どおりContent ScriptのWeb Audio経路で再生する。特定デバイスはBackgroundが保存済み出力先を読み、同じ拡張機能オリジンのOffscreen Documentで `AudioContext.setSinkId()` を確定してから再生する。通知と試聴は同じ出力選択・再生処理を使い、最大gainは0.30とする。
 - BackgroundはContent Scriptから音声バイト列やURLを受け取らない。通知要求は音源IDと0〜100%の音量だけとし、ユーザー音源データはローカル保存値から検証済みのものを読み込む。指定先が見つからない、権限が拒否された、またはsink切替・再生に失敗した場合は既定出力へフォールバックせず、エラーを表示する。
@@ -50,6 +51,7 @@
 - WAV/MP3/OGGの検査、MIME/シグネチャ不一致、破損・デコード不能・10秒超過・ファイル/件数/合計容量上限をテストする。保存読込失敗・破損データ・Chrome保存容量超過時に既存音源を上書きしない。
 - 音源の追加、別タブ購読、削除、選択中音源の既定音切替、欠落参照時のOptions表示と再生フォールバックをテストする。
 - 内蔵音選択、ユーザー音源デコード再生、ミュート、試聴時のユーザー操作resume、0〜100%から最大0.30へのgain変換、通知と試聴の音量一致、Optionsのdraft音量適用、UI配置とアクセシビリティ、再マウント後のリスナー解放をテストする。
+- Codex通知は専用のenabled/音源/音量だけを参照し、ChatGPT回答完了音を変更しない。共通カスタム音源の削除は保存済み両参照を必要な分だけ既定音へ保存してから行い、両通知のドラフト選択も一致する欄だけリセットする。設定読込/保存失敗や競合では音源を削除しない。
 - 初回表示済み回答、F5・SPA遷移だけの変化、未知状態、IDなし、`in_progress`を観測しないID変更、同じ完了状態の反復では鳴らない。初期 `in_progress` は、その後の `complete` を観測したときだけ鳴る。
 - 基準化後に観測した `in_progress` → `complete` は1回鳴る。同一Turn Keyで次の `in_progress` → `complete` を観測できた再生成はもう1回鳴る。
 - 有効な完了イベントを設定OFF時に受けても再生せず、UI、Composer、送信処理へイベントを伝播・抑止しない。

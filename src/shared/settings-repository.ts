@@ -72,6 +72,9 @@ function settingPaths(settings: readonly ExtensionSettings[]): string[][] {
   paths.push(['answerCompletionSoundEnabled']);
   paths.push(['answerCompletionSoundId']);
   paths.push(['answerCompletionSoundVolumePercent']);
+  paths.push(['codexBridgeTerminalSoundEnabled']);
+  paths.push(['codexBridgeTerminalSoundId']);
+  paths.push(['codexBridgeTerminalSoundVolumePercent']);
   paths.push(['codexBridgeTerminalAnswerTemplate']);
   paths.push(['codexBridgeMcpUrl']);
   return paths;

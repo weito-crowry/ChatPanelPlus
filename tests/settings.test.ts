@@ -15,6 +15,9 @@ test('the default settings use the current schema version', () => {
     schemaVersion: 1,
     answerCompletionSoundVolumePercent: 60,
     codexBridgeTerminalAnswerTemplate: '##Codex最終回答##',
+    codexBridgeTerminalSoundEnabled: false,
+    codexBridgeTerminalSoundId: 'two-tone',
+    codexBridgeTerminalSoundVolumePercent: 60,
   });
   assert.equal(isExtensionSettings(DEFAULT_SETTINGS), true);
 });
@@ -51,7 +54,10 @@ test('JSON import/exportは設定だけ往復し、不正JSONと未知schemaを�
   const settings = { schemaVersion: 1, buttonOverrides: { 'wall-task-btn': { text: 'A\n\n B ' } } };
   const parsed = parseSettingsJson(serializeSettings(settings));
   assert.equal(parsed.ok, true);
-  if (parsed.ok) assert.deepEqual(parsed.settings, { ...settings, codexBridgeTerminalAnswerTemplate: '##Codex最終回答##' });
+  if (parsed.ok) assert.deepEqual(parsed.settings, {
+    ...settings, codexBridgeTerminalSoundEnabled: false, codexBridgeTerminalSoundId: 'tone-660',
+    codexBridgeTerminalSoundVolumePercent: 60, codexBridgeTerminalAnswerTemplate: '##Codex最終回答##',
+  });
   assert.equal(parseSettingsJson('{').ok, false);
   assert.equal(parseSettingsJson('{"schemaVersion":2}').ok, false);
 });
@@ -66,6 +72,68 @@ test('旧schema 1設定は最終回答token単独へ正規化し、JSON export�
   const imported = parseSettingsJson('{"schemaVersion":1}');
   assert.equal(imported.ok, true);
   if (imported.ok) assert.equal(imported.settings.codexBridgeTerminalAnswerTemplate, '##Codex最終回答##');
+});
+
+test('旧回答完了音からCodex音をfieldごとに移行し、保存後は互いに独立する', () => {
+  const legacy = validateExtensionSettings({
+    schemaVersion: 1, answerCompletionSoundEnabled: true,
+    answerCompletionSoundId: 'soft-chime', answerCompletionSoundVolumePercent: 38,
+  });
+  assert.equal(legacy.ok, true);
+  if (!legacy.ok) return;
+  assert.equal(legacy.settings.codexBridgeTerminalSoundEnabled, true);
+  assert.equal(legacy.settings.codexBridgeTerminalSoundId, 'soft-chime');
+  assert.equal(legacy.settings.codexBridgeTerminalSoundVolumePercent, 38);
+
+  const partial = parseSettingsJson(JSON.stringify({
+    schemaVersion: 1, answerCompletionSoundEnabled: true,
+    answerCompletionSoundId: 'soft-chime', answerCompletionSoundVolumePercent: 38,
+    codexBridgeTerminalSoundEnabled: false, codexBridgeTerminalSoundVolumePercent: 0,
+  }));
+  assert.equal(partial.ok, true);
+  if (!partial.ok) return;
+  assert.equal(partial.settings.codexBridgeTerminalSoundEnabled, false);
+  assert.equal(partial.settings.codexBridgeTerminalSoundId, 'soft-chime');
+  assert.equal(partial.settings.codexBridgeTerminalSoundVolumePercent, 0);
+
+  const exported = serializeSettings(legacy.settings);
+  const independent = parseSettingsJson(exported);
+  assert.equal(independent.ok, true);
+  if (!independent.ok) return;
+  const changed = validateExtensionSettings({
+    ...independent.settings, answerCompletionSoundEnabled: false,
+    answerCompletionSoundId: 'tone-660', answerCompletionSoundVolumePercent: 81,
+  });
+  assert.equal(changed.ok, true);
+  if (changed.ok) {
+    assert.equal(changed.settings.codexBridgeTerminalSoundEnabled, true);
+    assert.equal(changed.settings.codexBridgeTerminalSoundId, 'soft-chime');
+    assert.equal(changed.settings.codexBridgeTerminalSoundVolumePercent, 38);
+  }
+
+  const missingLegacyFields = validateExtensionSettings({ schemaVersion: 1 });
+  assert.equal(missingLegacyFields.ok, true);
+  if (missingLegacyFields.ok) {
+    assert.equal(missingLegacyFields.settings.codexBridgeTerminalSoundEnabled, false);
+    assert.equal(missingLegacyFields.settings.codexBridgeTerminalSoundId, 'tone-660');
+    assert.equal(missingLegacyFields.settings.codexBridgeTerminalSoundVolumePercent, 60);
+  }
+});
+
+test('Codex音設定はboolean・builtin/custom ID・整数音量だけを受け入れる', () => {
+  for (const [field, value] of [
+    ['codexBridgeTerminalSoundEnabled', 'true'],
+    ['codexBridgeTerminalSoundId', 'unknown'],
+    ['codexBridgeTerminalSoundVolumePercent', 20.5],
+    ['codexBridgeTerminalSoundVolumePercent', 101],
+  ] as const) {
+    assert.equal(validateExtensionSettings({ schemaVersion: 1, [field]: value }).ok, false);
+  }
+  assert.equal(validateExtensionSettings({
+    schemaVersion: 1, codexBridgeTerminalSoundEnabled: false,
+    codexBridgeTerminalSoundId: 'user-00000000-0000-4000-8000-000000000001',
+    codexBridgeTerminalSoundVolumePercent: 0,
+  }).ok, true);
 });
 
 test('templateはplaceholderなし・不正型・8192 UTF-16 code units超過を拒否する', () => {
