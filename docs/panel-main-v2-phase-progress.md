@@ -137,7 +137,8 @@
 - 有効設定の照会はcurrent connection/target/conversationに限定し、他会話がONでもOFF側を競合errorにしない。別connectionの古いentryをcurrent connectionとして選ばず、不一致中は登録を見送る。同一会話の複数tabは従来の単一owner tab制約とstale tabの再bind条件を保つ。ON/OFFをentry単位で直列化し、running_only待ちのroute変更後は保存しない。
 - 回答完了候補は従来どおり当該会話の確定済assistant回答内に存在するBridge live IDのみ。候補ID一致は起動turn/threadを暗号学的に証明しない制約をC49受入手順へ明記。running全件の周期探索は追加していない。
 - watch所有権は既存の`CodexBridgeThreadMonitorStorage.mutate` read-modify-write直列化と`allowOwnerTransfer: false`でconnection/target/canonical thread単位に保つ。異なる会話が同一threadへ同時要求しても一人だけが作成し、競合failureはその会話に記録して別候補は続行する。同一会話の完了登録とstop/skipを同じentry lockに揃え、登録中のstop競合でwatchが残る回帰も修正した。
-- 受入手順は`docs/c49-parallel-auto-watch-acceptance.md`、最終項目は本書C49行。自動検証は`pnpm test` 814/814、`pnpm typecheck` PASS、`pnpm lint` PASS（check:size 289 files、最大500行/32768 bytes）、`pnpm build` PASS、`git diff --check` PASS。これはsource/build検証でChrome受入ではない。Chrome reload/F5・Bridge操作・既存storage変更は未実施、C49 Chrome受入はNOT_RUN。C48は従来記録の801/801 automated PASS・Chrome NOT_RUNを維持する。
+- 受入手順は`docs/c49-parallel-auto-watch-acceptance.md`、最終項目は本書C49行。自動検証は`pnpm test` 814/814、`pnpm typecheck` PASS、`pnpm lint` PASS（check:size 289 files、最大500行/32768 bytes）、`pnpm build` PASS、`git diff --check` PASS。実装時点のsource/build検証とChrome実機受入は区別する。後続の限定的な実機観測は下記に記録し、C48は従来の801/801 automated PASS・Chrome NOT_RUNを維持する。
+- 2026-11-24ユーザー報告：異なる2つのChatGPT会話で自動監視をONにできた、片方をOFFにしてももう片方に影響しなかった、F5後も会話ごとの設定が維持された、の3項目をPASSとして記録。PASS範囲はこの3観測に限定し、OFF後のwatch/event等やF5後のwatch/event復元・owner帰属へ拡張しない。別threadの自動登録、監視対象の非混在、終了通知の会話owner帰属、C47最終回答自動反映、同一thread競合、skip/mute/failure、接続変更、別tab、SPA等の未報告項目はNOT_RUN。C49全体は部分PASSで、実機受入完了扱いにしない。C48のNOT_RUN記録は変更しない。
 
 ## C46 semantic guard correction（2026-11-24）
 
