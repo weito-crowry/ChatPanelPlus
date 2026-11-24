@@ -30,6 +30,7 @@ function dispatchThroughTree(target: FakeElement, event: Event): boolean {
 export class FakeElement extends FakeEventTarget {
   readonly attributes: Record<string, string>;
   readonly tagName: string;
+  readonly nodeType = 1;
   readonly children: FakeElement[] = [];
   parentElement: FakeElement | null = null;
   ownerDocument: EventTarget | null = null;
@@ -48,6 +49,10 @@ export class FakeElement extends FakeEventTarget {
   get isContentEditable(): boolean { return this.getAttribute('contenteditable') === 'true'; }
   get innerText(): string { return this.text + this.children.map((child) => child.innerText).join(''); }
   get textContent(): string { return this.innerText; }
+  get childNodes(): NodeListOf<ChildNode> {
+    const textNodes = this.text ? [{ nodeType: 3, textContent: this.text }] : [];
+    return [...textNodes, ...this.children] as unknown as NodeListOf<ChildNode>;
+  }
   getClientRects(): DOMRect[] { return [{} as DOMRect]; }
   checkVisibility(): boolean { return true; }
   getAttribute(name: string): string | null { return this.attributes[name] ?? null; }

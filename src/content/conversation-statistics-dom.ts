@@ -7,6 +7,12 @@ const DIL_SELECTOR = '[data-dil-message-id]';
 const TURN_STATE_SELECTOR = '[data-talvt-turn-state]';
 const HIDDEN_SELECTOR = '[hidden],[aria-hidden="true"],[style]';
 const OMIT_SELECTOR = 'button,[role="button"],[role="toolbar"],[aria-hidden="true"],svg,img,video,audio,canvas,iframe,input,textarea,[contenteditable="true"],[data-testid*="attachment"],[data-message-attachment]';
+const AUTO_WATCH_BLOCK_TAGS = new Set([
+  'ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'CAPTION', 'DD', 'DETAILS', 'DIALOG', 'DIV', 'DL', 'DT',
+  'FIELDSET', 'FIGCAPTION', 'FIGURE', 'FOOTER', 'FORM', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HEADER',
+  'HR', 'LI', 'MAIN', 'MENU', 'NAV', 'OL', 'P', 'PRE', 'SECTION', 'SUMMARY', 'TABLE', 'TBODY', 'TFOOT',
+  'TH', 'THEAD', 'TR', 'TD', 'UL',
+]);
 
 export type AssistantTurnState = 'complete' | 'in_progress' | 'unknown';
 
@@ -72,6 +78,47 @@ function visibleText(element: Element): string | null {
   }
 }
 
+function appendAutoWatchLineBreak(parts: string[]): void {
+  if (parts.length > 0 && !parts[parts.length - 1]!.endsWith('\n')) parts.push('\n');
+}
+
+function collectAutoWatchText(node: Node, parts: string[]): void {
+  if (node.nodeType === 3) {
+    if (node.textContent) parts.push(node.textContent);
+    return;
+  }
+  if (node.nodeType !== 1) return;
+
+  const element = node as Element;
+  const tagName = element.tagName.toUpperCase();
+  if (tagName === 'BR') {
+    appendAutoWatchLineBreak(parts);
+    return;
+  }
+  let previousWasBlock = false;
+  for (const child of Array.from(element.childNodes)) {
+    const isBlock = child.nodeType === 1 && AUTO_WATCH_BLOCK_TAGS.has((child as Element).tagName.toUpperCase());
+    if (previousWasBlock || isBlock) appendAutoWatchLineBreak(parts);
+    collectAutoWatchText(child, parts);
+    previousWasBlock = isBlock;
+  }
+}
+
+function visibleAutoWatchText(element: Element): string | null {
+  try {
+    const clone = element.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll(OMIT_SELECTOR).forEach((child) => child.remove());
+    clone.querySelectorAll(HIDDEN_SELECTOR).forEach((child) => {
+      if (isHiddenElement(child)) child.remove();
+    });
+    const parts: string[] = [];
+    collectAutoWatchText(clone, parts);
+    return parts.join('');
+  } catch {
+    return null;
+  }
+}
+
 function outermost(elements: readonly Element[]): Element[] {
   return elements.filter((element) => !elements.some((other) => other !== element && other.contains(element)));
 }
@@ -123,7 +170,7 @@ function readSelectedAssistantTexts(turn: Element, assistantMessageId: string): 
       if (matching.length !== 1) return null;
       body = matching[0]!;
     }
-    const text = visibleText(body);
+    const text = visibleAutoWatchText(body);
     if (text === null || text.length === 0) return null;
     texts.push(text);
   }

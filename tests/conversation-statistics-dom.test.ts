@@ -17,6 +17,7 @@ class FakeElement {
   readonly baseText: string;
   readonly children: FakeElement[];
   readonly tagName: string;
+  readonly nodeType = 1;
   parentElement: FakeElement | null = null;
   removed = false;
   cloneCalls = 0;
@@ -32,6 +33,10 @@ class FakeElement {
   getAttribute(name: string): string | null { return this.attributes[name] ?? null; }
   get innerText(): string { return this.baseText + this.children.filter((child) => !child.removed).map((child) => child.innerText).join(''); }
   get textContent(): string { return this.innerText; }
+  get childNodes(): NodeListOf<ChildNode> {
+    const textNodes = this.baseText ? [{ nodeType: 3, textContent: this.baseText }] : [];
+    return [...textNodes, ...this.children.filter((child) => !child.removed)] as unknown as NodeListOf<ChildNode>;
+  }
   remove(): void { this.removed = true; }
   cloneNode(): FakeElement { this.cloneCalls += 1; return new FakeElement({ ...this.attributes }, this.baseText, this.children.map((child) => child.cloneNode()), this.tagName); }
   contains(element: FakeElement): boolean { return this.children.includes(element) || this.children.some((child) => child.contains(element)); }
@@ -262,4 +267,44 @@ test('同じ確定message IDに複数の異なる本文があれば完了本文�
     ]),
   ]);
   assert.equal(readCompletedAssistantMessageText(duplicate as unknown as Element, 'assistant-same'), null);
+});
+
+test('自動監視本文はbr・表セル・コードブロックのDOM境界を保持する', () => {
+  const turnElement = new FakeElement({ 'data-turn-key': 'block-text-turn' }, '', [
+    new FakeElement({ 'data-talvt-turn-state': 'complete' }),
+    new FakeElement({ 'data-chatgpt-selection-message-id': 'assistant-block-text' }, '', [
+      new FakeElement({ 'data-dil-message-id': 'assistant-block-text' }, '', [
+        new FakeElement({}, '段落1', [], 'p'),
+        new FakeElement({}, '', [new FakeElement({}, '01a207cf-52ab-7900-a91d-3288982ab221', [], 'code')], 'p'),
+        new FakeElement({}, '', [
+          new FakeElement({}, '行1'), new FakeElement({}, '', [], 'br'), new FakeElement({}, '行2'),
+        ], 'p'),
+        new FakeElement({}, '', [new FakeElement({}, '', [
+          new FakeElement({}, '', [new FakeElement({}, '01a207d0-12ab-7c00-a911-3288982ab222', [], 'code')], 'td'),
+          new FakeElement({}, '', [new FakeElement({}, '01a207d1-12ab-7c00-a911-3288982ab223', [], 'code')], 'td'),
+        ], 'tr')], 'table'),
+        new FakeElement({}, '', [new FakeElement({}, '01a207d2-12ab-7c00-a911-3288982ab224', [], 'code')], 'pre'),
+      ]),
+    ]),
+  ]);
+
+  assert.equal(readCompletedAssistantMessageText(turnElement as unknown as Element, 'assistant-block-text'),
+    '段落1\n01a207cf-52ab-7900-a91d-3288982ab221\n行1\n行2\n01a207d0-12ab-7c00-a911-3288982ab222\n01a207d1-12ab-7c00-a911-3288982ab223\n01a207d2-12ab-7c00-a911-3288982ab224');
+});
+
+test('統計OUTPUT文字数はブロック本文の既存flat text計数を維持する', () => {
+  const turnElement = new FakeElement({ 'data-turn-key': 'statistics-block-turn' }, '', [
+    new FakeElement({ 'data-talvt-turn-state': 'complete' }),
+    new FakeElement({ 'data-user-message-bubble': '' }, 'question'),
+    new FakeElement({ 'data-chatgpt-selection-message-id': 'assistant-statistics-block' }, '', [
+      new FakeElement({ 'data-dil-message-id': 'assistant-statistics-block' }, '', [
+        new FakeElement({}, 'ab', [], 'p'), new FakeElement({}, 'cd', [], 'p'),
+      ]),
+    ]),
+  ]);
+
+  assert.deepEqual(collect(turnElement).observations, [{
+    turnKey: 'statistics-block-turn', inputChars: 8, assistantMessageId: 'assistant-statistics-block',
+    outputChars: 4, assistantState: 'complete',
+  }]);
 });

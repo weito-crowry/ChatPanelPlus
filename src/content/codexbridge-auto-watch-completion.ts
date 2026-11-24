@@ -16,6 +16,7 @@ import { findUniqueTurnElement, readCompletedAssistantMessageText } from './conv
 const MAX_ANSWER_TEXT_CODE_UNITS = 65_536;
 const MAX_RECENT_COMPLETIONS = 256;
 const TOKEN_CONTINUATION = /[\p{L}\p{N}\p{M}\p{Pc}\p{Cf}\p{Dash_Punctuation}._~%/\\?&#=+@:]/u;
+const JAPANESE_TEXT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
 const URL_TOKEN = /(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|www\.)[^\s<>"'`]+/giu;
 const CANDIDATE_FAILURES = new Set([
   'ok', '401', '403', 'timeout', 'disconnected', 'unknown', 'permission-required', 'settings-unavailable',
@@ -233,10 +234,16 @@ function withinUrl(ranges: readonly (readonly [number, number])[], start: number
   return ranges.some(([from, to]) => start >= from && end <= to);
 }
 
-function isIndependentToken(text: string, start: number, end: number,
+function isTokenContinuation(character: string, aliasIsAscii: boolean): boolean {
+  if (!TOKEN_CONTINUATION.test(character)) return false;
+  return !(aliasIsAscii && JAPANESE_TEXT.test(character));
+}
+
+function isIndependentToken(text: string, start: number, end: number, aliasIsAscii: boolean,
   ranges: readonly (readonly [number, number])[]): boolean {
   if (withinUrl(ranges, start, end)) return false;
-  return !TOKEN_CONTINUATION.test(charBefore(text, start)) && !TOKEN_CONTINUATION.test(charAfter(text, end));
+  return !isTokenContinuation(charBefore(text, start), aliasIsAscii)
+    && !isTokenContinuation(charAfter(text, end), aliasIsAscii);
 }
 
 function aliasesForBridgeId(targetId: string, bridgeId: string): readonly string[] {
@@ -271,13 +278,14 @@ export function matchKnownBridgeRunningThreadIds(
   const occurrences: { start: number; end: number; id: string }[] = [];
   for (const [alias, canonicalIds] of aliases) {
     if (canonicalIds.size !== 1) continue;
+    const aliasIsAscii = Array.from(alias).every((character) => (character.codePointAt(0) ?? 0) <= 0x7f);
     let offset = 0;
     while (offset < text.length) {
       const start = text.indexOf(alias, offset);
       if (start < 0) break;
       const end = start + alias.length;
       offset = start + 1;
-      if (!isIndependentToken(text, start, end, ranges)) continue;
+      if (!isIndependentToken(text, start, end, aliasIsAscii, ranges)) continue;
       const id = canonicalIds.values().next().value!;
       matched.add(id);
       occurrences.push({ start, end, id });
