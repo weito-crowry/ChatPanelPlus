@@ -19,6 +19,7 @@ import {
   CODEX_BRIDGE_MCP_GET_TARGETS,
   CODEX_BRIDGE_MCP_GET_THREADS,
   CODEX_BRIDGE_MCP_TEST_MESSAGE,
+  CODEX_BRIDGE_MCP_TOKEN_SESSION_KEY,
 } from './shared/codexbridge-mcp-protocol.ts';
 import { createCodexBridgeMcpTestHandler } from './background/codexbridge-mcp.ts';
 import { createDefaultCodexBridgePanelHandler } from './background/codexbridge-panel.ts';
@@ -43,6 +44,8 @@ import { createDefaultCodexBridgeThreadMonitor, readOwnerTabIdentity } from './b
 import { CodexBridgeSessionOwnerLeases } from './background/thread-monitor-owner-lease.ts';
 import { CodexBridgeThreadMonitorStorage } from './background/thread-monitor-storage.ts';
 import { CodexBridgeTerminalEventDelivery } from './background/terminal-event-delivery.ts';
+import { CodexBridgeReadService } from './background/codexbridge-read-service.ts';
+import { CONFIG_STORAGE_KEY } from './shared/settings-repository.ts';
 
 type OpenOptionsMessage = Readonly<{ type: 'OPEN_OPTIONS' }>;
 
@@ -97,7 +100,24 @@ const handleCodexBridgeMcpTest = createCodexBridgeMcpTestHandler({
   extensionId: chrome.runtime.id,
   optionsPageUrl: chrome.runtime.getURL('index.html'),
 });
-const handleCodexBridgePanel = createDefaultCodexBridgePanelHandler(chrome.runtime.id);
+const codexBridgeReadService = new CodexBridgeReadService({ sessionStorage: chrome.storage.session,
+  permissions: chrome.permissions, settings: createChromeSettingsRepository() });
+const handleCodexBridgePanel = createDefaultCodexBridgePanelHandler(chrome.runtime.id, codexBridgeReadService);
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === 'session' && CODEX_BRIDGE_MCP_TOKEN_SESSION_KEY in changes) {
+    codexBridgeReadService.invalidate();
+  }
+  const config = changes[CONFIG_STORAGE_KEY];
+  if (areaName === 'local' && config) {
+    const endpoint = (value: unknown) => typeof value === 'object' && value !== null
+      ? (value as { codexBridgeMcpUrl?: unknown }).codexBridgeMcpUrl : undefined;
+    if (endpoint(config.oldValue) !== endpoint(config.newValue)) codexBridgeReadService.invalidate();
+  }
+});
+chrome.permissions.onRemoved.addListener((permissions) => {
+  codexBridgeReadService.invalidatePermissionRemoval(permissions.origins ?? []);
+});
 
 const outputDeviceRepository = createChromeAnswerCompletionOutputDeviceRepository();
 const soundAssetRepository = createChromeSoundAssetRepository();
@@ -164,7 +184,8 @@ const codexBridgeThreadMonitor = createDefaultCodexBridgeThreadMonitor(chrome.ru
   const mute = await conversationAudioMuteStore.load(tabId, conversationId);
   return mute.ok ? { ok: true, muted: mute.value.muted, revision: mute.value.revision } : { ok: false };
 }, async (event) => { await codexBridgeTerminalEventDelivery.dispatch(event.eventId); }, codexBridgeOwnerLeases,
-  (identity, tabId) => codexBridgeTerminalEventDelivery.resume(identity, tabId), codexBridgeThreadMonitorStorage);
+  (identity, tabId) => codexBridgeTerminalEventDelivery.resume(identity, tabId), codexBridgeThreadMonitorStorage,
+  codexBridgeReadService);
 const handleConversationAudioMute = createConversationAudioMuteMessageHandler(
   conversationAudioMuteStore,
   chrome.runtime.id,

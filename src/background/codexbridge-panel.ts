@@ -1,10 +1,7 @@
 import {
-  CODEX_BRIDGE_MCP_DEFAULT_URL,
   CODEX_BRIDGE_MCP_GET_STATUS,
   CODEX_BRIDGE_MCP_GET_TARGETS,
   CODEX_BRIDGE_MCP_GET_THREADS,
-  CODEX_BRIDGE_MCP_TOKEN_SESSION_KEY,
-  parseCodexBridgeMcpEndpoint,
   type CodexBridgeReadFailureReason,
   type CodexBridgeReadResponse,
   type CodexBridgeTargetsMessage,
@@ -15,7 +12,7 @@ import {
   type CodexBridgeThreadStatus,
 } from '../shared/codexbridge-mcp-protocol.ts';
 import { createChromeSettingsRepository, type SettingsRepository } from '../shared/settings-repository.ts';
-import { CodexBridgeMcpClient } from './mcp-client.ts';
+import { CodexBridgeReadService, createDefaultCodexBridgeReadService, type CodexBridgeRunningSnapshot } from './codexbridge-read-service.ts';
 import { McpTransportError } from './mcp-transport.ts';
 
 type SessionStorageLike = Readonly<{ get(keys: string[]): Promise<Record<string, unknown>> }>;
@@ -35,6 +32,7 @@ export type CodexBridgePanelHandlerOptions = Readonly<{
   extensionId: string;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  readService?: Pick<CodexBridgeReadService, 'readTargets' | 'readThreads' | 'readStatus' | 'readRunningSnapshot'>;
 }>;
 
 const CHATGPT_ORIGIN = 'https://chatgpt.com';
@@ -81,8 +79,13 @@ function readRequest(message: unknown): CodexBridgeTargetsMessage | CodexBridgeT
     return { type: CODEX_BRIDGE_MCP_GET_TARGETS };
   }
   if (message.type === CODEX_BRIDGE_MCP_GET_THREADS && isIdentifier(message.targetId)
-    && keys.every((key) => key === 'type' || key === 'targetId' || key === 'cursor' || key === 'runningOnly')
+    && keys.every((key) => key === 'type' || key === 'targetId' || key === 'cursor' || key === 'runningOnly'
+      || key === 'refresh' || key === 'priority')
     && (message.runningOnly === undefined || typeof message.runningOnly === 'boolean')
+    && (message.refresh === undefined || message.refresh === 'auto' || message.refresh === 'force')
+    && (message.priority === undefined || message.priority === 'foreground' || message.priority === 'background'
+      || message.priority === 'manual')
+    && (message.runningOnly === true || message.refresh === undefined)
     && !(message.runningOnly === true && message.cursor !== undefined)
     && (message.cursor === undefined || (typeof message.cursor === 'string'
       && message.cursor.length > 0 && message.cursor.length <= 2048
@@ -92,6 +95,9 @@ function readRequest(message: unknown): CodexBridgeTargetsMessage | CodexBridgeT
       targetId: message.targetId,
       ...(typeof message.cursor === 'string' ? { cursor: message.cursor } : {}),
       ...(message.runningOnly === true ? { runningOnly: true } : {}),
+      ...(message.refresh === 'force' ? { refresh: 'force' } : {}),
+      ...(message.priority === 'foreground' || message.priority === 'background' || message.priority === 'manual'
+        ? { priority: message.priority } : {}),
     };
   }
   if (message.type === CODEX_BRIDGE_MCP_GET_STATUS && isIdentifier(message.targetId)
@@ -109,6 +115,11 @@ function responseForError(error: unknown): CodexBridgeReadFailureReason {
 }
 
 export function createCodexBridgePanelHandler(options: CodexBridgePanelHandlerOptions) {
+  const readService = options.readService ?? new CodexBridgeReadService({
+    sessionStorage: options.sessionStorage, permissions: options.permissions, settings: options.settings,
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+  });
   return async (message: unknown, sender: CodexBridgePanelSender): Promise<
     CodexBridgeReadResponse<readonly CodexBridgeTarget[]>
     | CodexBridgeReadResponse<CodexBridgeThreadPage>
@@ -119,51 +130,42 @@ export function createCodexBridgePanelHandler(options: CodexBridgePanelHandlerOp
     const request = readRequest(message);
     if (!request) return { ok: false, reason: 'protocol-error' };
 
-    const loaded = await options.settings.loadSettings();
-    if (!loaded.ok) return { ok: false, reason: 'settings-unavailable' };
-    const endpoint = parseCodexBridgeMcpEndpoint(loaded.settings.codexBridgeMcpUrl ?? CODEX_BRIDGE_MCP_DEFAULT_URL);
-    if (!endpoint) return { ok: false, reason: 'invalid-endpoint' };
     try {
-      if (!await options.permissions.contains({ origins: [endpoint.originPattern] })) {
-        return { ok: false, reason: 'permission-required' };
-      }
-    } catch {
-      return { ok: false, reason: 'permission-required' };
-    }
-
-    let token = '';
-    try {
-      const stored = await options.sessionStorage.get([CODEX_BRIDGE_MCP_TOKEN_SESSION_KEY]);
-      const value = stored[CODEX_BRIDGE_MCP_TOKEN_SESSION_KEY];
-      if (value !== undefined && typeof value !== 'string') return { ok: false, reason: 'settings-unavailable' };
-      if (typeof value === 'string') token = value;
-    } catch {
-      return { ok: false, reason: 'settings-unavailable' };
-    }
-
-    try {
-      const client = new CodexBridgeMcpClient(endpoint.url, token, {
-        ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
-        ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
-      });
       if (request.type === CODEX_BRIDGE_MCP_GET_TARGETS) {
-        return { ok: true, data: await client.readTargets() };
+        return { ok: true, data: await readService.readTargets('foreground') };
       }
       if (request.type === CODEX_BRIDGE_MCP_GET_THREADS) {
-        return { ok: true, data: await client.readThreads(request.targetId, request.cursor, request.runningOnly === true) };
+        if (request.runningOnly === true) {
+          const priority = request.priority ?? 'foreground';
+          const snapshot: CodexBridgeRunningSnapshot = await readService.readRunningSnapshot(request.targetId, {
+            priority, force: request.refresh === 'force',
+          });
+          const runningSnapshot = {
+            freshness: snapshot.freshness,
+            observedAt: snapshot.observedAt,
+            ageMs: snapshot.ageMs,
+            reason: snapshot.ok ? snapshot.failureReason : snapshot.reason,
+          } as const;
+          return snapshot.ok
+            ? { ok: true, data: snapshot.page, runningSnapshot }
+            : { ok: false, reason: snapshot.reason };
+        }
+        return { ok: true, data: await readService.readThreads(request.targetId, request.cursor, request.priority ?? 'foreground') };
       }
-      return { ok: true, data: await client.readStatus(request.targetId, request.threadId) };
+      return { ok: true, data: await readService.readStatus(request.targetId, request.threadId, 'manual') };
     } catch (error) {
       return { ok: false, reason: responseForError(error) };
     }
   };
 }
 
-export function createDefaultCodexBridgePanelHandler(extensionId: string) {
+export function createDefaultCodexBridgePanelHandler(extensionId: string,
+  readService: CodexBridgeReadService = createDefaultCodexBridgeReadService()) {
   return createCodexBridgePanelHandler({
     sessionStorage: chrome.storage.session,
     permissions: chrome.permissions,
     settings: createChromeSettingsRepository(),
     extensionId,
+    readService,
   });
 }

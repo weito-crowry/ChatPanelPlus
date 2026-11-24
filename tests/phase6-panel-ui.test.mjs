@@ -68,7 +68,7 @@ test('新規watch snapshotだけがAの対象connectionを更新し、running行
   assert.match(list, /observeWatchAdditions\(batch\.additions/);
   assert.match(list, /loadThreads\(false, false, context\)/);
   assert.match(list, /loadRunningSummary\(context\.targetId, context\)/);
-  assert.match(list, /reportRunningSummary\(\{ targetId: requestedTargetId, threads: updated, status: 'ready' \}\)/);
+  assert.match(list, /status: freshness === 'fresh' \? 'ready' : freshness === 'stale' \? 'stale' : 'unknown'/);
   assert.doesNotMatch(list, /setInterval\(/);
 });
 

@@ -39,11 +39,11 @@
 - Produces: `CodexBridgeReadService`; `readTargets`, `readThreads`, `readStatus`, `readFinalAnswer`, `readRunningSnapshot`, `invalidate`, `scheduleRead`。
 - Snapshot success contains `page`, `freshness`, `observedAt`, `ageMs`, `failureReason`。Options support TTL/force/priority.
 
-- [ ] Add RED tests for same-target running snapshot single-flight/cache TTL, separate target cache, manual force, queue priority/concurrency cap, failure backoff/stale metadata, credential generation invalidation and dropped old response.
-- [ ] Add `connection-changed` failure and extension response snapshot metadata to the shared MCP protocol types.
-- [ ] Implement one in-memory client per active endpoint/token context; generation checks before and after queued/network work.
-- [ ] Implement 5s/30s TTL, 2s candidate freshness, 5s→5m backoff, 3 active reads, 48 queued reads, priority/FIFO, and per-operation single-flight.
-- [ ] Run `node --experimental-strip-types --test tests/codexbridge-read-service.test.ts` and observe RED→GREEN.
+- [x] Add RED tests for same-target running snapshot single-flight/cache TTL, separate target cache, manual force, queue priority/concurrency cap, failure backoff/stale metadata, credential generation invalidation and dropped old response.
+- [x] Add `connection-changed` failure and extension response snapshot metadata to the shared MCP protocol types.
+- [x] Implement one in-memory client per active endpoint/token context; generation checks before and after queued/network work.
+- [x] Implement 5s/30s TTL, 2s candidate freshness, 5s→5m backoff, 3 active reads, 48 queued reads, priority/FIFO, and per-operation single-flight.
+- [x] Run `node --experimental-strip-types --test tests/codexbridge-read-service.test.ts` and observe RED→GREEN.
 
 ### Task 2: Panel and individual watch integration
 
@@ -61,11 +61,11 @@
 - Consumes Task 1 service/snapshot contracts.
 - Produces one background singleton shared by panel handler and monitor; monitor read access remains usable when running-only is unsupported.
 
-- [ ] Test simultaneous panel/watch refreshes share a snapshot; fresh absence raises matching status priority; presence continues status checks; running-only error/unsupported/stale does not stop watch polling.
-- [ ] Route panel targets/pages/status through the shared service and validate refresh mode/priority message fields.
-- [ ] Remove the monitor's second MCP client cache. Use common scheduler once per MCP read; keep storage, notifications and delivery outside its queue.
-- [ ] Add permission/token/endpoint listeners that invalidate only in-memory service state; preserve existing worker restore and watch alarm.
-- [ ] Run focused panel/monitor suites and confirm existing #24 terminal/gap, deduplication and notification tests pass.
+- [x] Test simultaneous panel/watch refreshes share a snapshot; fresh absence raises matching status priority; presence continues status checks; running-only error/unsupported/stale does not stop watch polling.
+- [x] Route panel targets/pages/status through the shared service and validate refresh mode/priority message fields.
+- [x] Remove the monitor's second MCP client cache. Use common scheduler once per MCP read; keep storage, notifications and delivery outside its queue.
+- [x] Add permission/token/endpoint listeners that invalidate only in-memory service state; preserve existing worker restore and watch alarm.
+- [x] Run focused panel/monitor suites and confirm existing #24 terminal/gap, deduplication and notification tests pass.
 
 ### Task 3: Candidate and completion freshness
 
@@ -79,10 +79,10 @@
 **Interfaces:**
 - Consumes Task 1 `readRunningSnapshot` and Task 2 shared `CodexBridgeMonitorAccess`.
 
-- [ ] Test candidate result refuses stale/incomplete/error page, accepts only live execution, and stays bound to the current owner/connection.
-- [ ] Test completion registration forces a fresh page and refuses old cached-only IDs after owner/connection change.
-- [ ] Use shared target read and snapshot methods; preserve exact answer-ID matching, skip/mute/lease, no blanket registration and watch ownership.
-- [ ] Run candidate, completion, owner rebind and terminal auto-unwatch suites.
+- [x] Test candidate result refuses stale/incomplete/error page, accepts only live execution, and stays bound to the current owner/connection.
+- [x] Test completion registration forces a fresh page and refuses old cached-only IDs after owner/connection change.
+- [x] Use shared target read and snapshot methods; preserve exact answer-ID matching, skip/mute/lease, no blanket registration and watch ownership.
+- [x] Run candidate, completion, owner rebind and terminal auto-unwatch suites.
 
 ### Task 4: Running list cadence and stale presentation
 
@@ -94,11 +94,11 @@
 - Modify: `tests/codexbridge-running-summary.test.ts`
 - Create: `tests/codexbridge-running-refresh.test.ts`
 
-- [ ] Test visible cadence 5s, background/minimized cadence 30s, and cleanup on disable/target/mode/route changes.
-- [ ] Test fresh count, stale count `—`, stale-list label, unknown initial state and unsupported/error display.
-- [ ] Refresh running A list periodically and only summary in normal mode; preserve cursor pagination, selection and existing hover/watch/event UI.
-- [ ] Pass manual `force` and foreground/background priority through the extension message; ignore stale responses after target/route/mode changes.
-- [ ] Run running-summary, request-tracker, thread-selection, terminal-refresh and UI-related test files.
+- [x] Test visible cadence 5s, background/minimized cadence 30s, and cleanup on disable/target/mode/route changes.
+- [x] Test fresh count, stale count `—`, stale-list label, unknown initial state and unsupported/error display.
+- [x] Refresh running A list periodically and only summary in normal mode; preserve cursor pagination, selection and existing hover/watch/event UI.
+- [x] Pass manual `force` and foreground/background priority through the extension message; ignore stale responses after target/route/mode changes.
+- [x] Run running-summary, request-tracker, thread-selection, terminal-refresh and UI-related test files.
 
 ### Task 5: C55 acceptance and final closure
 
@@ -108,7 +108,15 @@
 - Modify: `docs/panel-main-v2-phase-progress.md`
 - Modify: this plan ledger/result.
 
-- [ ] Add C55 Chrome steps for multi-tab coalescing, start/end without terminal event, stale/auth switch, missing-thread status, failure fallback, pagination/selection, worker restore and existing C48–C54 behavior; mark all live checks `NOT_RUN`.
-- [ ] Verify C48–C54 acceptance rows/results are unchanged.
-- [ ] Run `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm build`, `git diff --check`; read exit codes and outputs.
-- [ ] Review `git diff`, verify size caps and branch state, then commit implementation/docs. Do not push, merge or close the issue.
+- [x] Add C55 Chrome steps for multi-tab coalescing, start/end without terminal event, stale/auth switch, missing-thread status, failure fallback, pagination/selection, worker restore and existing C48–C54 behavior; mark all live checks `NOT_RUN`.
+- [x] Verify C48–C54 acceptance rows/results are unchanged.
+- [x] Run `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm build`, `git diff --check`; read exit codes and outputs.
+- [x] Review `git diff`, verify size caps and branch state, then commit implementation/docs. Do not push, merge or close the issue.
+
+## 実測結果
+
+- `pnpm test`: PASS、887/887。内包するOptions/Content/Service Worker/offscreen buildも成功。
+- `pnpm typecheck`: PASS。`pnpm lint`: PASS。`pnpm check:size`: PASS、312ファイルが500行・32KiB以内。
+- 独立した`pnpm build`: PASS。`git diff --check`: PASS（改行コード変換の警告のみ）。
+- C55 Chrome実機受入: `NOT_RUN`。C48〜C54の受入記録は未変更。
+- 実装を現在のbranchへlocal commitした（`55d4698`）。push/merge/Issue closeは行っていない。

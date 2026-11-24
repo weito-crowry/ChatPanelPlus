@@ -18,7 +18,14 @@ export type McpFailureCode =
   | 'readonly-tool-unavailable'
   | 'running-only-unsupported'
   | 'readonly-probe-failed'
-  | 'response-too-large';
+  | 'response-too-large'
+  | 'permission-required'
+  | 'settings-unavailable'
+  | 'invalid-endpoint'
+  | 'connection-changed'
+  | 'read-queue-full'
+  | 'storage-error'
+  | 'unknown-error';
 
 export class McpTransportError extends Error {
   readonly code: McpFailureCode;

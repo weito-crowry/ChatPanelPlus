@@ -3,7 +3,6 @@ import {
   CODEX_BRIDGE_MCP_GET_STATUS,
   CODEX_BRIDGE_MCP_GET_TARGETS,
   CODEX_BRIDGE_MCP_GET_THREADS,
-  type CodexBridgeReadResponse,
   type CodexBridgeTarget,
   type CodexBridgeThread,
   type CodexBridgeThreadPage,
@@ -18,7 +17,10 @@ import { CodexBridgeProjectFolderFilter } from './CodexBridgeProjectFolderFilter
 import { reconcileCodexBridgeThreadSelection } from './codexbridge-thread-selection.ts';
 import { codexBridgeReadErrorLabel } from './codexbridge-read-error-label.ts';
 import type { ConversationPanelWatchSelection } from '../shared/conversation-panel-state-repository.ts';
-import type { RunningThreadSummary } from './codexbridge-running-summary.ts';
+import { staleRunningThreadSummary, type RunningThreadSummary } from './codexbridge-running-summary.ts';
+import { browserCodexBridgeRunningRefreshRuntime, startCodexBridgeRunningRefresh } from './codexbridge-running-refresh.ts';
+import { isReadResponse, isRecord } from './codexbridge-list-validation.ts';
+import { fetchRunningThreadSummary } from './codexbridge-running-summary-loader.ts';
 import type { CodexBridgeWatchSummary } from './codexbridge-watch-summary.ts';
 import { conversationIdFromPath } from '../shared/conversation-route.ts';
 import { CodexBridgeTerminalRefreshCoordinator, type CodexBridgeTerminalEventSignal } from './codexbridge-terminal-refresh.ts';
@@ -26,14 +28,6 @@ import type { CodexBridgeWatchAdditionBatch } from './codexbridge-watch-addition
 import { isCodexBridgeWatchRefreshContextCurrent, type CodexBridgeWatchRefreshContext } from './codexbridge-watch-refresh-context.ts';
 
 type ConnectionState = 'loading' | 'connected' | 'error';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isReadResponse<T>(value: unknown): value is CodexBridgeReadResponse<T> {
-  return isRecord(value) && typeof value.ok === 'boolean';
-}
 
 export function CodexBridgeList({
   foregroundEnabled = true,
@@ -79,8 +73,11 @@ export function CodexBridgeList({
   const terminalContext = useRef({ connection, mode: listMode, threadsBusy: false });
   const selectedRef = useRef<CodexBridgeThread | null>(null);
   const targetIdRef = useRef('');
+  const currentCursor = useRef<string | null>(null);
   const targetListGeneration = useRef(0);
   const runningSummaryGeneration = useRef(0);
+  const runningSummaryRef = useRef<RunningThreadSummary>({ targetId: null, threads: null, status: 'loading' });
+  const runningObservedAt = useRef<string | null>(null);
   const terminalRefresh = useRef(new CodexBridgeTerminalRefreshCoordinator());
   const requestTracker = useRef<CodexBridgeRequestTracker | null>(null);
   const routeIdentity = useRef({ conversationId, generation: 0 });
@@ -89,6 +86,7 @@ export function CodexBridgeList({
   if (!requestTracker.current) requestTracker.current = new CodexBridgeRequestTracker();
   if (routeIdentity.current.conversationId !== conversationId) {
     routeIdentity.current = { conversationId, generation: routeIdentity.current.generation + 1 };
+    requestTracker.current.invalidateThreads();
     terminalRefresh.current.clearPending();
     runningSummaryGeneration.current += 1;
   }
@@ -99,11 +97,20 @@ export function CodexBridgeList({
   }
 
   function reportRunningSummary(summary: RunningThreadSummary) {
+    const targetChanged = runningSummaryRef.current.targetId !== summary.targetId;
+    runningSummaryRef.current = summary;
+    if (targetChanged) runningObservedAt.current = summary.observedAt ?? null;
+    else if (summary.observedAt !== undefined) runningObservedAt.current = summary.observedAt;
     onRunningSummaryChange?.(summary);
+  }
+
+  function retainStaleRunningSummary(requestedTargetId: string) {
+    reportRunningSummary(staleRunningThreadSummary(requestedTargetId, runningSummaryRef.current, runningObservedAt.current));
   }
 
   function updateConnection(next: ConnectionState) { terminalContext.current.connection = next; setConnection(next); }
   function updateThreadsBusy(busy: boolean) { terminalContext.current.threadsBusy = busy; setThreadsBusy(busy); }
+  function resetThreadList() { currentCursor.current = null; setThreads([]); setNextCursor(null); setThreadsLoaded(false); updateThreadsBusy(false); setThreadsError(''); }
 
   function currentWatchRefreshContext(): CodexBridgeWatchRefreshContext | null {
     const current = watchSnapshot.current;
@@ -133,10 +140,7 @@ export function CodexBridgeList({
     requestTracker.current?.invalidateThreads();
     requestTracker.current?.invalidateStatus();
     terminalRefresh.current.clearPending();
-    setThreads([]);
-    setNextCursor(null);
-    setThreadsLoaded(false);
-    updateThreadsBusy(false);
+    resetThreadList();
     setStatus(null);
     setStatusBusy(false);
     setThreadsError('');
@@ -173,11 +177,7 @@ export function CodexBridgeList({
         requestTracker.current?.selectTarget(nextTargetId);
         invalidateRunningSummary('loading', nextTargetId || null);
         setTargetId(nextTargetId);
-        setThreads([]);
-        setNextCursor(null);
-        setThreadsLoaded(false);
-        updateThreadsBusy(false);
-        setThreadsError('');
+        resetThreadList();
         updateSelected(null);
         setSelectedMissing(false);
         setStatus(null);
@@ -202,20 +202,24 @@ export function CodexBridgeList({
     onConnectionChange?.({ state: connection, targetId: targetId || null, targetName });
   }, [connection, onConnectionChange, targetId, targets]);
 
-  async function loadThreads(loadMore: boolean, resetWatchFeedback = true, refreshContext?: CodexBridgeWatchRefreshContext) {
+  async function loadThreads(loadMore: boolean, resetWatchFeedback = true, refreshContext?: CodexBridgeWatchRefreshContext,
+    runningRefresh?: Readonly<{ refresh: 'auto' | 'force'; priority: 'foreground' | 'background' | 'manual' }>) {
     const requestedTargetId = targetIdRef.current;
-    if (!requestedTargetId || terminalContext.current.threadsBusy || (refreshContext && !isWatchRefreshContextCurrent(refreshContext))
+    if (!requestedTargetId || (terminalContext.current.threadsBusy && runningRefresh?.priority !== 'manual')
+      || (refreshContext && !isWatchRefreshContextCurrent(refreshContext))
       || (loadMore && (terminalContext.current.mode !== 'normal' || !nextCursor))) return;
     if (resetWatchFeedback) setWatchFeedbackResetToken((current) => current + 1);
-    const requestedCursor = loadMore ? nextCursor : null;
+    const requestedCursor = loadMore ? nextCursor
+      : runningRefresh?.priority === 'manual' && terminalContext.current.mode === 'normal' ? currentCursor.current : null;
     const request = requestTracker.current!.beginThreads(requestedTargetId, requestedCursor);
     if (!requestTracker.current!.isCurrentThreads(request)) return;
-    if (terminalContext.current.mode === 'running' && !loadMore) {
+    const preserveList = !loadMore && runningRefresh !== undefined;
+    if (terminalContext.current.mode === 'running' && !preserveList && !loadMore) {
       invalidateRunningSummary('loading', requestedTargetId);
     }
     updateThreadsBusy(true);
     setThreadsError('');
-    if (!loadMore) {
+    if (!loadMore && !preserveList) {
       setThreads([]);
       setNextCursor(null);
       setThreadsLoaded(false);
@@ -228,6 +232,8 @@ export function CodexBridgeList({
         type: CODEX_BRIDGE_MCP_GET_THREADS,
         targetId: requestedTargetId,
         ...(terminalContext.current.mode === 'running' ? { runningOnly: true } : {}),
+        ...(runningRefresh ? { priority: runningRefresh.priority,
+          ...(terminalContext.current.mode === 'running' ? { refresh: runningRefresh.refresh } : {}) } : {}),
         ...(requestedCursor ? { cursor: requestedCursor } : {}),
       });
       if (!requestTracker.current!.isCurrentThreads(request) || (refreshContext && !isWatchRefreshContextCurrent(refreshContext))) return;
@@ -239,7 +245,8 @@ export function CodexBridgeList({
           : 'Bridgeから不正な応答が返りました。');
         if (request.mode === 'running' && !loadMore) {
           const reason = isReadResponse(response) && !response.ok ? response.reason : null;
-          reportRunningSummary({ targetId: requestedTargetId, threads: null,
+          if (runningRefresh && reason !== 'running-only-unsupported') retainStaleRunningSummary(requestedTargetId);
+          else reportRunningSummary({ targetId: requestedTargetId, threads: null,
             status: reason === 'running-only-unsupported' ? 'unsupported' : 'error' });
         }
         return;
@@ -247,17 +254,25 @@ export function CodexBridgeList({
       if (!requestTracker.current!.setNextCursor(request, response.data.nextCursor)) return;
       const updated = loadMore ? mergeCodexBridgeThreads(threads, response.data.threads) : [...response.data.threads];
       setThreads(updated);
-      setNextCursor(response.data.nextCursor);
+      setNextCursor(response.data.nextCursor); currentCursor.current = requestedCursor;
       setThreadsLoaded(true);
       if (request.mode === 'running' && !loadMore) {
-        reportRunningSummary({ targetId: requestedTargetId, threads: updated, status: 'ready' });
+        const freshness = isReadResponse<CodexBridgeThreadPage>(response) && response.ok
+          ? response.runningSnapshot?.freshness : undefined;
+        reportRunningSummary({ targetId: requestedTargetId, threads: updated,
+          status: freshness === 'fresh' ? 'ready' : freshness === 'stale' ? 'stale' : 'unknown',
+          observedAt: isReadResponse<CodexBridgeThreadPage>(response) && response.ok
+            ? response.runningSnapshot?.observedAt : null });
       }
       const selectionUpdate = reconcileCodexBridgeThreadSelection(selectedRef.current, updated, loadMore);
       if (selectionUpdate) { updateSelected(selectionUpdate.thread); setSelectedMissing(selectionUpdate.missing); }
     } catch {
       if (requestTracker.current!.isCurrentThreads(request) && (!refreshContext || isWatchRefreshContextCurrent(refreshContext))) {
         setThreadsError('Bridgeへ接続できません。');
-        if (request.mode === 'running' && !loadMore) reportRunningSummary({ targetId: requestedTargetId, threads: null, status: 'error' });
+        if (request.mode === 'running' && !loadMore) {
+          if (runningRefresh) retainStaleRunningSummary(requestedTargetId);
+          else reportRunningSummary({ targetId: requestedTargetId, threads: null, status: 'error' });
+        }
       }
     } finally {
       if (requestTracker.current!.isLatestThreads(request)) {
@@ -273,30 +288,19 @@ export function CodexBridgeList({
     }
   }
 
-  async function loadRunningSummary(requestedTargetId: string, refreshContext?: CodexBridgeWatchRefreshContext) {
+  async function loadRunningSummary(requestedTargetId: string, refreshContext?: CodexBridgeWatchRefreshContext,
+    priority: 'foreground' | 'background' | 'manual' = 'foreground', force = false) {
     if (refreshContext && !isWatchRefreshContextCurrent(refreshContext)) return;
     const generation = ++runningSummaryGeneration.current;
-    reportRunningSummary({ targetId: requestedTargetId, threads: null, status: 'loading' });
-    try {
-      const response: unknown = await chrome.runtime.sendMessage({
-        type: CODEX_BRIDGE_MCP_GET_THREADS, targetId: requestedTargetId, runningOnly: true,
-      });
-      if (generation !== runningSummaryGeneration.current || targetIdRef.current !== requestedTargetId
-        || (refreshContext && !isWatchRefreshContextCurrent(refreshContext))) return;
-      if (!isReadResponse<CodexBridgeThreadPage>(response) || !response.ok
-        || !isRecord(response.data) || !Array.isArray(response.data.threads) || response.data.nextCursor !== null) {
-        const reason = isReadResponse(response) && !response.ok ? response.reason : null;
-        reportRunningSummary({ targetId: requestedTargetId, threads: null,
-          status: reason === 'running-only-unsupported' ? 'unsupported' : 'error' });
-        return;
-      }
-      reportRunningSummary({ targetId: requestedTargetId, threads: response.data.threads, status: 'ready' });
-    } catch {
-      if (generation === runningSummaryGeneration.current && targetIdRef.current === requestedTargetId
-        && (!refreshContext || isWatchRefreshContextCurrent(refreshContext))) {
-        reportRunningSummary({ targetId: requestedTargetId, threads: null, status: 'error' });
-      }
+    if (!runningSummaryRef.current.threads || runningSummaryRef.current.targetId !== requestedTargetId) {
+      reportRunningSummary({ targetId: requestedTargetId, threads: null, status: 'loading' });
     }
+    const result = await fetchRunningThreadSummary(requestedTargetId, priority, force,
+      (message) => chrome.runtime.sendMessage(message), () => generation === runningSummaryGeneration.current
+        && targetIdRef.current === requestedTargetId && (!refreshContext || isWatchRefreshContextCurrent(refreshContext)));
+    if (!result) return;
+    if (!result.threads && runningSummaryRef.current.threads && result.status !== 'unsupported') retainStaleRunningSummary(requestedTargetId);
+    else reportRunningSummary(result);
   }
 
   function handleTerminalEvents(events: readonly CodexBridgeTerminalEventSignal[]) {
@@ -341,11 +345,7 @@ export function CodexBridgeList({
     requestTracker.current?.selectMode(mode);
     terminalContext.current.mode = mode; terminalRefresh.current.clearPending();
     runningSummaryGeneration.current += 1; setListMode(mode);
-    setThreads([]);
-    setNextCursor(null);
-    setThreadsLoaded(false);
-    updateThreadsBusy(false);
-    setThreadsError('');
+    resetThreadList();
     setSelectedMissing(Boolean(selectedRef.current));
     setStatus(null);
     setStatusBusy(false);
@@ -358,6 +358,13 @@ export function CodexBridgeList({
     void loadThreads(false);
     if (listMode === 'normal') void loadRunningSummary(targetId);
   }, [connection, targetId, listMode, conversationId]);
+
+  useEffect(() => startCodexBridgeRunningRefresh({ runtime: browserCodexBridgeRunningRefreshRuntime,
+    enabled: connection === 'connected' && Boolean(targetId), foregroundEnabled, now: Date.now,
+    onRefresh: (priority) => listMode === 'running'
+      ? void loadThreads(false, false, undefined, { refresh: 'auto', priority })
+      : void loadRunningSummary(targetIdRef.current, undefined, priority),
+  }), [connection, targetId, listMode, foregroundEnabled, conversationId]);
 
   async function checkSelectedStatus() {
     if (!selected || statusBusy) return;
@@ -413,11 +420,7 @@ export function CodexBridgeList({
             requestTracker.current?.selectTarget(value); terminalRefresh.current.clearPending();
             invalidateRunningSummary('loading', value || null);
             setTargetId(value);
-            setThreads([]);
-            setNextCursor(null);
-            setThreadsLoaded(false);
-            updateThreadsBusy(false);
-            setThreadsError('');
+            resetThreadList();
             updateSelected(null);
             setSelectedMissing(false);
             setStatus(null);
@@ -437,9 +440,9 @@ export function CodexBridgeList({
         <>
           <div className="codex-bridge-actions">
             <button type="button" className="codex-bridge-button" onClick={() => {
-              void loadThreads(false);
-              if (listMode === 'normal') void loadRunningSummary(targetIdRef.current);
-            }} disabled={threadsBusy}>
+              void loadThreads(false, true, undefined, { refresh: 'force', priority: 'manual' });
+              if (listMode === 'normal') void loadRunningSummary(targetIdRef.current, undefined, 'manual', true);
+                }} disabled={threadsBusy && listMode === 'normal'}>
               {threadsBusy ? '読込中…' : 'thread一覧を更新'}
             </button>
             {listMode === 'normal' && nextCursor && (

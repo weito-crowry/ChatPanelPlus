@@ -27,10 +27,12 @@ function runningDetail(runningSummary: RunningThreadSummary, targetId: string | 
   connectionState: Props['connection']['state']) {
   const count = formatRunningThreadCount(runningSummary, targetId, connectionState);
   const threads = connectionState === 'connected' && targetId === runningSummary.targetId
-    && runningSummary.status === 'ready' ? runningSummary.threads : null;
+    && ['ready', 'stale', 'unknown'].includes(runningSummary.status) ? runningSummary.threads : null;
   const empty = threads?.length === 0;
   return <>
     {!threads && <p role="status">{count.title}</p>}
+    {threads && runningSummary.status === 'stale' && <p role="status">一覧の最終確認: {runningSummary.observedAt ?? '時刻不明'}。表示件数は最新状態ではありません。</p>}
+    {threads && runningSummary.status === 'unknown' && <p role="status">一覧の鮮度を確認できていません。件数は未確定です。</p>}
     {empty && <p role="status">実行中threadはありません。</p>}
     {threads && threads.length > 0 && <ul className="phase6-counter-list" aria-label="running_only thread一覧">
       {threads.map((thread) => {

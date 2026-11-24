@@ -26,10 +26,11 @@ export const MAX_ENTRIES = 100;
 export const MAX_SKIPS_PER_ENTRY = 256;
 const MAX_RUNNING_THREADS = 1_000;
 const FAILURE_REASONS: readonly CodexBridgeAutoWatchFailure[] = [
-  'ok', '401', '403', 'timeout', 'disconnected', 'unknown', 'permission-required', 'settings-unavailable',
+  'ok', '401', '403', 'authentication-required', 'forbidden', 'timeout', 'disconnected', 'unknown', 'permission-required', 'settings-unavailable',
   'endpoint-not-found', 'session-expired', 'http-error', 'protocol-error', 'protocol-version-unsupported',
   'readonly-tool-unavailable', 'readonly-probe-failed', 'running-only-unsupported', 'connection-changed',
   'target-unavailable', 'owner-conflict', 'ownerless-watch', 'watch-limit', 'owner-tab-unavailable', 'storage-error',
+  'invalid-endpoint', 'read-queue-full', 'response-too-large', 'unknown-error',
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {

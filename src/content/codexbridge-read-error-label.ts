@@ -17,6 +17,8 @@ const ERROR_LABELS: Record<CodexBridgeReadFailureReason, string> = {
   'readonly-probe-failed': 'Bridgeの読み取りtoolが失敗しました。',
   'response-too-large': 'Bridgeの応答が上限を超えました。',
   'storage-error': '保存済み接続情報を読み取れません。',
+  'connection-changed': '接続設定が切り替わりました。現在の接続から再取得してください。',
+  'read-queue-full': 'Bridgeへの読み取り要求が混み合っています。少し待って再取得してください。',
   'settings-unavailable': '保存済み接続設定を読み取れません。',
   'unknown-error': 'Bridgeの読み取りに失敗しました。',
 };

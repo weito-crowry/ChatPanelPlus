@@ -107,6 +107,8 @@ export type CodexBridgeMcpDiagnosticCode =
   | 'readonly-probe-failed'
   | 'response-too-large'
   | 'storage-error'
+  | 'connection-changed'
+  | 'read-queue-full'
   | 'unknown-error';
 
 export type CodexBridgeMcpTestMessage = Readonly<{
@@ -130,8 +132,21 @@ export type CodexBridgeMcpTestResponse =
     }>;
 
 export type CodexBridgeReadFailureReason = CodexBridgeMcpDiagnosticCode | 'settings-unavailable';
-export type CodexBridgeReadResponse<T> = Readonly<{ ok: true; data: T }>
-  | Readonly<{ ok: false; reason: CodexBridgeReadFailureReason }>;
+export type CodexBridgeRunningSnapshotInfo = Readonly<{
+  freshness: 'fresh' | 'stale' | 'error';
+  observedAt: string | null;
+  ageMs: number | null;
+  reason: CodexBridgeReadFailureReason | null;
+}>;
+export type CodexBridgeReadResponse<T> = Readonly<{
+  ok: true;
+  data: T;
+  runningSnapshot?: CodexBridgeRunningSnapshotInfo;
+}> | Readonly<{
+  ok: false;
+  reason: CodexBridgeReadFailureReason;
+  runningSnapshot?: CodexBridgeRunningSnapshotInfo;
+}>;
 
 export type CodexBridgeTarget = Readonly<{
   id: string;
@@ -191,6 +206,8 @@ export type CodexBridgeThreadsMessage = Readonly<{
   targetId: string;
   cursor?: string;
   runningOnly?: boolean;
+  refresh?: 'auto' | 'force';
+  priority?: 'foreground' | 'background' | 'manual';
 }>;
 export type CodexBridgeStatusMessage = Readonly<{
   type: typeof CODEX_BRIDGE_MCP_GET_STATUS;

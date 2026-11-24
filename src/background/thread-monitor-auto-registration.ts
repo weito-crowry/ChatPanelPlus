@@ -8,13 +8,14 @@ import {
   type CodexBridgeAutoWatchStatus,
   type CodexBridgeWatchOwnerMute,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
-import type { CodexBridgeTarget, CodexBridgeThread } from '../shared/codexbridge-mcp-protocol.ts';
+import type { CodexBridgeThread } from '../shared/codexbridge-mcp-protocol.ts';
 import { isConversationId } from '../shared/conversation-route.ts';
 import type { LocalStorageLike } from './thread-monitor-storage.ts';
 import { MAX_ENTRIES, MAX_SKIPS_PER_ENTRY, readAutoWatchState,
   type AutoEntry, type AutoState } from './thread-monitor-auto-registration-state.ts';
 import { CodexBridgeAutoWatchCandidates, type CodexBridgeAutoWatchCandidateLookupResult }
   from './thread-monitor-auto-registration-candidates.ts';
+import { readFreshRunningPage } from './thread-monitor-running-page.ts';
 import { currentExecution, failureFor, isLiveCandidate, isRecord, statusFromThread, threadIdsMatch }
   from './thread-monitor-auto-registration-utils.ts';
 import { CodexBridgeAutoRegistrationQueue } from './thread-monitor-auto-registration-queue.ts';
@@ -185,14 +186,16 @@ export class CodexBridgeAutoThreadRegistration {
     if (competingOwner && staleOwnerTabId === null) return { ok: false, reason: 'auto-owner-conflict' };
     if (!access.readTargets) return { ok: false, reason: access.failure ?? 'readonly-tool-unavailable' };
     try {
-      const targets = await this.monitor.scheduleTargetRequest(targetId, () => access.readTargets!());
+      const targets = access.readsScheduled ? await access.readTargets('manual')
+        : await this.monitor.scheduleTargetRequest(targetId, () => access.readTargets!('manual'));
       if (!targets.some((candidate) => candidate.id === targetId && candidate.available !== false)) {
         return { ok: false, reason: 'target-unavailable' };
       }
     } catch (error) { return { ok: false, reason: failureFor(error) }; }
     let latestAccess: CodexBridgeMonitorAccess;
     try { latestAccess = await this.resolveAccess(); } catch (error) { return { ok: false, reason: failureFor(error) }; }
-    if (latestAccess.connectionId !== expectedConnectionId) return { ok: false, reason: 'connection-changed' };
+    if (latestAccess.connectionId !== expectedConnectionId || (access.generation !== undefined
+      && latestAccess.generation !== access.generation)) return { ok: false, reason: 'connection-changed' };
     if (!this.ownerLeases && !await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false)) {
       return { ok: false, reason: 'owner-tab-unavailable' };
     }
@@ -331,20 +334,15 @@ export class CodexBridgeAutoThreadRegistration {
       await this.recordFailureForEntry(entry, 'owner-tab-unavailable');
       return 0;
     }
-    if (!access.readTargets || !access.readRunningThreads) {
+    if (!access.readTargets || (!access.readRunningThreads && !access.readRunningSnapshot)) {
       await this.recordFailureForEntry(entry, access.failure ?? 'readonly-tool-unavailable');
       return 0;
     }
 
     let threads: readonly CodexBridgeThread[];
     try {
-      const page = await this.monitor.scheduleTargetRequest(targetId, async () => {
-        const targets: readonly CodexBridgeTarget[] = await access.readTargets!();
-        if (!targets.some((candidate) => candidate.id === targetId && candidate.available !== false)) {
-          throw Object.assign(new Error('target unavailable'), { code: 'target-unavailable' });
-        }
-        return access.readRunningThreads!(targetId);
-      });
+      const page = await readFreshRunningPage(access, this.monitor, targetId,
+        { priority: 'manual', maxAgeMs: 0, force: true });
       if (!page || page.nextCursor !== null || !Array.isArray(page.threads) || page.threads.length > MAX_RUNNING_THREADS
         || Array.from(page.threads).some((thread) => !isRecord(thread))) {
         throw Object.assign(new Error('invalid running_only response'), { code: 'protocol-error' });
@@ -370,7 +368,8 @@ export class CodexBridgeAutoThreadRegistration {
       await this.recordFailureForEntry(entry, failureFor(error));
       return 0;
     }
-    if (latestAccess.connectionId !== entry.connectionId || latestAccess.connectionId !== candidateConnectionId) {
+    if (latestAccess.connectionId !== entry.connectionId || latestAccess.connectionId !== candidateConnectionId
+      || (access.generation !== undefined && latestAccess.generation !== access.generation)) {
       await this.recordFailureForEntry(entry, 'connection-changed');
       return 0;
     }
@@ -420,7 +419,8 @@ export class CodexBridgeAutoThreadRegistration {
         break;
       }
       const result = await this.monitor.startWatch(targetId, thread.id, owner, {
-        allowOwnerTransfer: false, expectedConnectionId: entry.connectionId, initialStatus: statusFromThread(thread),
+        allowOwnerTransfer: false, expectedConnectionId: entry.connectionId, expectedGeneration: access.generation,
+        initialStatus: statusFromThread(thread),
       });
       if (result.ok) {
         if (result.created) registeredCount += 1;

@@ -6,6 +6,7 @@
 - 2026-11-24のC46ユーザー実機観測：10:00:42 JSTに回答完了検出、Bridge候補2件、コード装飾付き対象IDの本文照合1件、明示対象1件だけの監視登録。対照候補は未登録。対象終了後はA実行中0、B監視0、設定内監視0、C通知1。これはC46基本正常経路のPASSで、C46全項目やC38/C45全体のPASSではない。
 - C38はC46前後でA件数2→0を表示した部分観測。Aの独立手動更新有無、live schema、mode・target・失敗時の表示等は未確認。C45は対象watchの終了後にB/設定が0、C通知1となった部分観測。技術情報内のnotification identityは直接照合しておらず、厳密poll周期、音声、異常系、worker復旧等は未確認。2026-11-23に記録したC45のFAILと修正経路は履歴として保持し、今回の限定観測を専用C45再受入へ拡張しない。
 - C47主要正常系は部分PASSだが、OFF/過去event、watch起点、選択範囲、近接/同時完了、owner/SPA、音声/mute、IME/添付、取得失敗などは未受入。Issue #22/C50で最終回答templateを実装し、Chrome受入は別途NOT_RUNで記録する。現状を「メインパネルv2全体受入済み」やmerge-readyとは扱わず、残項目は`docs/panel-main-v2-final-acceptance-checklist.md`を参照する。
+- Issue #25/C55: 共通MCP read serviceと5秒/30秒running snapshot更新を実装。自動テスト887/887、typecheck/lint/build、サイズ上限、差分チェックはPASS。Chrome実機はC55専用手順の`NOT_RUN`を維持し、C48〜C54の既存受入結果は変更していない。周期・TTL・backoffと残課題はIssue #25実装計画およびC55受入手順を参照。
 
 ### 残工程の推奨順
 

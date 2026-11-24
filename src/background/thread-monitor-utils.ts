@@ -19,6 +19,12 @@ export function mapMonitorError(error: unknown): CodexBridgeWatchFetchOutcome {
       case 'readonly-probe-failed': return 'readonly-probe-failed';
       case 'running-only-unsupported': return 'running-only-unsupported';
       case 'protocol-error': return 'protocol-error';
+      case 'connection-changed': return 'connection-changed';
+      case 'read-queue-full': return 'read-queue-full';
+      case 'invalid-endpoint': return 'invalid-endpoint';
+      case 'storage-error': return 'storage-error';
+      case 'response-too-large': return 'response-too-large';
+      case 'unknown-error': return 'unknown-error';
     }
   }
   return 'unknown';

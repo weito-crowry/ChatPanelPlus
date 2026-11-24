@@ -82,6 +82,8 @@ export type CodexBridgeWatchFetchOutcome =
   | 'ok'
   | '401'
   | '403'
+  | 'authentication-required'
+  | 'forbidden'
   | 'timeout'
   | 'disconnected'
   | 'unknown'
@@ -95,7 +97,12 @@ export type CodexBridgeWatchFetchOutcome =
   | 'readonly-tool-unavailable'
   | 'readonly-probe-failed'
   | 'running-only-unsupported'
-  | 'connection-changed';
+  | 'connection-changed'
+  | 'invalid-endpoint'
+  | 'read-queue-full'
+  | 'storage-error'
+  | 'response-too-large'
+  | 'unknown-error';
 
 export type CodexBridgeAutoWatchFailure = CodexBridgeWatchFetchOutcome
   | 'connection-unavailable' | 'target-unavailable' | 'owner-conflict' | 'ownerless-watch' | 'watch-limit' | 'owner-tab-unavailable'
@@ -208,10 +215,11 @@ export type CodexBridgeWatchResponse<T = undefined> =
 
 export function isCodexBridgeWatchFetchOutcome(value: unknown): value is CodexBridgeWatchFetchOutcome {
   return typeof value === 'string' && [
-    'ok', '401', '403', 'timeout', 'disconnected', 'unknown', 'permission-required',
+    'ok', '401', '403', 'authentication-required', 'forbidden', 'timeout', 'disconnected', 'unknown', 'permission-required',
     'settings-unavailable', 'endpoint-not-found', 'session-expired', 'http-error',
     'protocol-error', 'protocol-version-unsupported', 'readonly-tool-unavailable',
-    'readonly-probe-failed', 'running-only-unsupported', 'connection-changed',
+    'readonly-probe-failed', 'running-only-unsupported', 'connection-changed', 'invalid-endpoint',
+    'read-queue-full', 'storage-error', 'response-too-large', 'unknown-error',
   ].includes(value);
 }
 

@@ -8,10 +8,11 @@ import {
   type CodexBridgeAutoWatchCandidateData,
   type CodexBridgeAutoWatchFailure,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
-import type { CodexBridgeTarget, CodexBridgeThread, CodexBridgeThreadPage } from '../shared/codexbridge-mcp-protocol.ts';
+import type { CodexBridgeThread } from '../shared/codexbridge-mcp-protocol.ts';
 import { isConversationId } from '../shared/conversation-route.ts';
 import type { LocalStorageLike } from './thread-monitor-storage.ts';
 import { readAutoWatchState } from './thread-monitor-auto-registration-state.ts';
+import { readFreshRunningPage } from './thread-monitor-running-page.ts';
 import type { CodexBridgeMonitorAccess, CodexBridgeThreadMonitor } from './thread-monitor.ts';
 
 type MonitorLike = Pick<CodexBridgeThreadMonitor, 'scheduleTargetRequest'>;
@@ -30,6 +31,7 @@ function failureFor(error: unknown): CodexBridgeAutoWatchFailure {
     && ['ok', '401', '403', 'timeout', 'disconnected', 'unknown', 'permission-required', 'settings-unavailable',
       'endpoint-not-found', 'session-expired', 'http-error', 'protocol-error', 'protocol-version-unsupported',
       'readonly-tool-unavailable', 'readonly-probe-failed', 'running-only-unsupported', 'connection-changed',
+      'authentication-required', 'forbidden', 'invalid-endpoint', 'read-queue-full', 'response-too-large', 'unknown-error',
       'target-unavailable', 'owner-conflict', 'ownerless-watch', 'watch-limit', 'owner-tab-unavailable',
       'connection-unavailable', 'storage-error'].includes(error.code)
     ? error.code as CodexBridgeAutoWatchFailure : 'unknown';
@@ -86,19 +88,14 @@ export class CodexBridgeAutoWatchCandidates {
     if (!await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false)) {
       return { ok: false, reason: 'owner-tab-unavailable' };
     }
-    if (!access.readTargets || !access.readRunningThreads) {
+    if (!access.readTargets || (!access.readRunningThreads && !access.readRunningSnapshot)) {
       return { ok: false, reason: access.failure ?? 'readonly-tool-unavailable' };
     }
 
-    let page: CodexBridgeThreadPage;
+    let page;
     try {
-      page = await this.monitor.scheduleTargetRequest(targetId, async () => {
-        const targets: readonly CodexBridgeTarget[] = await access.readTargets!();
-        if (!targets.some((candidate) => candidate.id === targetId && candidate.available !== false)) {
-          throw Object.assign(new Error('target unavailable'), { code: 'target-unavailable' });
-        }
-        return access.readRunningThreads!(targetId);
-      });
+      page = await readFreshRunningPage(access, this.monitor, targetId,
+        { priority: 'candidate', maxAgeMs: 2_000 });
     } catch (error) { return { ok: false, reason: failureFor(error) }; }
     if (!page || page.nextCursor !== null || !Array.isArray(page.threads) || page.threads.length > MAX_RUNNING_THREADS
       || Array.from(page.threads).some((thread) => !isRecord(thread))) {
@@ -116,7 +113,8 @@ export class CodexBridgeAutoWatchCandidates {
     }
     let latestAccess: CodexBridgeMonitorAccess;
     try { latestAccess = await this.resolveAccess(); } catch (error) { return { ok: false, reason: failureFor(error) }; }
-    if (latestAccess.connectionId !== entry.connectionId) return { ok: false, reason: 'connection-changed' };
+    if (latestAccess.connectionId !== entry.connectionId || (access.generation !== undefined
+      && latestAccess.generation !== access.generation)) return { ok: false, reason: 'connection-changed' };
 
     const seen = new Set<string>();
     const threadIds: string[] = [];

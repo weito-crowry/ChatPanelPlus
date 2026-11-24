@@ -16,9 +16,12 @@ import {
   type CodexBridgeWatchTurnChange,
 } from '../shared/codexbridge-thread-monitor-protocol.ts';
 import type { CodexBridgeTarget, CodexBridgeThreadPage, CodexBridgeThreadStatus } from '../shared/codexbridge-mcp-protocol.ts';
+import type { CodexBridgeRunningSnapshot, CodexBridgeReadPriority } from './codexbridge-read-service.ts';
 import { codexBridgeTerminalHoldReason, detectCodexBridgeTerminalStatus } from './thread-monitor-events.ts';
+import { refreshMissingCodexBridgeWatches } from './thread-monitor-running-snapshot.ts';
+import { selectDueWatchPolls } from './thread-monitor-refresh.ts';
 import { CodexBridgeThreadMonitorStorage, type LocalStorageLike } from './thread-monitor-storage.ts';
-import { registerCodexBridgeWatch } from './thread-monitor-registration.ts';
+import { registerCodexBridgeWatchForGeneration } from './thread-monitor-registration.ts';
 import { mapMonitorError as mapError, monitorTimestamp as timestamp, statusEvidence } from './thread-monitor-utils.ts';
 
 type AlarmLike = Readonly<{
@@ -29,10 +32,12 @@ type AlarmLike = Readonly<{
 
 export type CodexBridgeMonitorAccess = Readonly<{
   connectionId: string | null;
-  readTargets?: () => Promise<readonly CodexBridgeTarget[]>;
+  generation?: number; readsScheduled?: boolean; isCurrent?: () => boolean;
+  readTargets?: (priority?: CodexBridgeReadPriority) => Promise<readonly CodexBridgeTarget[]>;
   readRunningThreads?: (targetId: string) => Promise<CodexBridgeThreadPage>;
-  readStatus?: (targetId: string, threadId: string) => Promise<CodexBridgeThreadStatus>;
-  readFinalAnswer?: (targetId: string, threadId: string, turnId: string) => Promise<CodexBridgeFinalAnswerResult>;
+  readRunningSnapshot?: (targetId: string, options?: Readonly<{ priority?: CodexBridgeReadPriority; force?: boolean; maxAgeMs?: number }>) => Promise<CodexBridgeRunningSnapshot>;
+  readStatus?: (targetId: string, threadId: string, priority?: CodexBridgeReadPriority) => Promise<CodexBridgeThreadStatus>;
+  readFinalAnswer?: (targetId: string, threadId: string, turnId: string, priority?: CodexBridgeReadPriority) => Promise<CodexBridgeFinalAnswerResult>;
   failure?: CodexBridgeWatchFetchOutcome;
 }>;
 
@@ -63,7 +68,6 @@ type MonitorOptions = Readonly<{
 
 const MAX_POLL_FAILURES = 8;
 const MAX_BACKOFF_MS = 5 * 60_000;
-const MAX_POLLS_PER_TARGET_PER_CYCLE = 3;
 
 export class CodexBridgeThreadMonitor {
   private readonly now: () => number;
@@ -130,6 +134,7 @@ export class CodexBridgeThreadMonitor {
   async startWatch(targetId: string, threadId: string, owner?: CodexBridgeWatchOwnerMute, registration: {
     allowOwnerTransfer?: boolean;
     expectedConnectionId?: string;
+    expectedGeneration?: number;
     initialStatus?: CodexBridgeThreadStatus;
   } = {}): Promise<
     | Readonly<{ ok: true; item: CodexBridgeWatchSnapshot; created: boolean; transferred: boolean }>
@@ -145,7 +150,8 @@ export class CodexBridgeThreadMonitor {
       access = { connectionId: null, failure: 'settings-unavailable' };
     }
     if (!access.connectionId) return { ok: false, reason: 'connection-unavailable' };
-    if (registration.expectedConnectionId && access.connectionId !== registration.expectedConnectionId) {
+    if ((registration.expectedConnectionId && access.connectionId !== registration.expectedConnectionId)
+      || (registration.expectedGeneration !== undefined && access.generation !== registration.expectedGeneration)) {
       return { ok: false, reason: 'connection-changed' };
     }
 
@@ -158,9 +164,10 @@ export class CodexBridgeThreadMonitor {
       terminalHoldReason: null, needsAttention: null, turnChange: 'unknown', observedAt: null, lastSuccessAt: null,
       fetchOutcome: 'unknown', nextPollAt: this.now(), failureCount: 0,
     };
-    const result = await this.storage.mutate((items, events) => registerCodexBridgeWatch(
-      items, events, initial, owner, registration.allowOwnerTransfer !== false,
-    ));
+    const { registration: result, generationChanged } = await this.storage.mutate((items, events) =>
+      registerCodexBridgeWatchForGeneration(items, events, initial, owner, registration.allowOwnerTransfer !== false,
+        access, registration.expectedGeneration));
+    if (generationChanged) return { ok: false, reason: 'connection-changed' };
     if (result.ownerConflict) return { ok: false, reason: 'owner-conflict' };
     if (result.ownerUnavailable) return { ok: false, reason: 'owner-unavailable' };
     if (!result.item) return { ok: false, reason: 'watch-limit' };
@@ -229,15 +236,8 @@ export class CodexBridgeThreadMonitor {
     if (items.some((item) => item.enabled)) await this.refresh('background');
   }
 
-  async refreshForeground(): Promise<void> {
-    this.foregroundUntil = this.now() + 35_000;
-    await this.refresh('foreground');
-  }
-
-  async refreshAlarm(): Promise<void> {
-    await this.refresh('background');
-  }
-
+  async refreshForeground(): Promise<void> { this.foregroundUntil = this.now() + 35_000; await this.refresh('foreground'); }
+  async refreshAlarm(): Promise<void> { await this.refresh('background'); }
   scheduleTargetRequest<T>(targetId: string, operation: () => Promise<T>): Promise<T> {
     return this.withTarget(targetId, () => this.withRequestSlot(operation));
   }
@@ -250,48 +250,48 @@ export class CodexBridgeThreadMonitor {
       access = { connectionId: null, failure: 'settings-unavailable' };
     }
     if (!access.connectionId) return;
+    const items = await this.list();
     const now = this.now();
-    const interval = cadence === 'foreground' || this.foregroundUntil > now ? CODEX_BRIDGE_THREAD_MONITOR_FOREGROUND_MS : 30_000;
-    const candidates = (await this.list())
-      .filter((item) => {
-        if (!item.enabled || item.connectionId !== access.connectionId) return false;
-        if (force || item.nextPollAt <= now) return true;
-        if (cadence !== 'foreground' || item.fetchOutcome !== 'ok' || !item.lastSuccessAt) return false;
-        return Date.parse(item.lastSuccessAt) + CODEX_BRIDGE_THREAD_MONITOR_FOREGROUND_MS <= now;
-      })
-      .sort((left, right) => left.nextPollAt - right.nextPollAt || (left.lastSuccessAt ?? '').localeCompare(right.lastSuccessAt ?? ''))
-    const perTarget = new Map<string, number>();
-    const due: CodexBridgeWatchSnapshot[] = [];
-    for (const item of candidates) {
-      const count = perTarget.get(item.targetId) ?? 0;
-      if (count >= MAX_POLLS_PER_TARGET_PER_CYCLE) continue;
-      perTarget.set(item.targetId, count + 1);
-      due.push(item);
-      if (due.length >= this.maxPollsPerCycle) break;
-    }
-    await Promise.all(due.map((item) => this.poll(item, access, cadence, interval)));
+    const cadenceNow: PollCadence = cadence === 'foreground' || this.foregroundUntil > now ? 'foreground' : 'background';
+    const { interval, due } = selectDueWatchPolls(items, access.connectionId, now, cadenceNow, force,
+      this.maxPollsPerCycle, CODEX_BRIDGE_THREAD_MONITOR_FOREGROUND_MS);
+    const snapshotRefresh = refreshMissingCodexBridgeWatches(items, access, cadence,
+      (item, priority) => this.poll(item, access, cadence, interval, priority));
+    const statusRefresh = Promise.all(due.map((item) => this.poll(item, access, cadence, interval,
+      cadenceNow === 'foreground' ? 'foreground' : 'candidate')));
+    await Promise.all([snapshotRefresh, statusRefresh]);
   }
 
-  private poll(item: CodexBridgeWatchSnapshot, access: CodexBridgeMonitorAccess, cadence: PollCadence, interval?: number): Promise<void> {
+  private poll(item: CodexBridgeWatchSnapshot, access: CodexBridgeMonitorAccess, cadence: PollCadence,
+    interval?: number, priority: CodexBridgeReadPriority = 'background'): Promise<void> {
     const key = codexBridgeWatchKey(item.connectionId, item.targetId, item.threadId);
     const flightKey = `${key}\u0000${item.watchId}`;
     const current = this.pollFlights.get(flightKey);
-    if (current) return current;
-    const task = this.withTarget(item.targetId, () => this.withRequestSlot(async () => {
+    if (current) {
+      if (priority === 'urgent' && access.readsScheduled && access.readStatus) {
+        void access.readStatus(item.targetId, item.threadId, priority).catch(() => {});
+      }
+      return current;
+    }
+    const read = async () => {
       const active = (await this.read(item.connectionId, item.targetId, item.threadId))?.watchId === item.watchId;
       if (!active) return;
       if (!access.readStatus) { await this.saveFailure(item, access.failure ?? 'unknown', cadence); return; }
       let status: CodexBridgeThreadStatus;
       try {
-        status = await access.readStatus(item.targetId, item.threadId);
+        status = access.readsScheduled
+          ? await access.readStatus(item.targetId, item.threadId, priority)
+          : await access.readStatus(item.targetId, item.threadId);
       } catch (error) {
         await this.saveFailure(item, mapError(error), cadence);
         return;
       }
+      if (access.isCurrent && !access.isCurrent()) return;
       try {
         await this.saveSuccess(item, status, cadence, interval);
       } catch { /* Keep the last persisted observation for terminal detection on the next poll. */ }
-    }));
+    };
+    const task = access.readsScheduled ? read() : this.withTarget(item.targetId, () => this.withRequestSlot(read));
     this.pollFlights.set(flightKey, task);
     const cleanup = () => {
       if (this.pollFlights.get(flightKey) === task) this.pollFlights.delete(flightKey);

@@ -359,3 +359,26 @@ test('only a top-frame ChatGPT content script may read, and requests cannot supp
   });
   assert.equal(requests.length, 0);
 });
+
+test('running_only snapshotはfreshness metadataを返し、同一handlerのcacheを手動更新だけが迂回する', async () => {
+  const mock = createMock({ runningOnlySchema: true, threads: { threads: [
+    { id: 'running-1', current_execution: { state: 'in_progress', evidence: 'live' } },
+  ], external_threads: [], next_cursor: null } });
+  const request = { type: CODEX_BRIDGE_MCP_GET_THREADS, targetId: 'machine-1', runningOnly: true,
+    priority: 'foreground' };
+  const first = await mock.handler(request, trustedSender);
+  assert.equal(first?.ok, true);
+  if (!first?.ok) return;
+  assert.equal(first.runningSnapshot?.freshness, 'fresh');
+  assert.equal(first.runningSnapshot?.reason, null);
+  assert.equal(typeof first.runningSnapshot?.observedAt, 'string');
+  const repeated = await mock.handler(request, trustedSender);
+  assert.equal(repeated?.ok, true);
+  assert.equal(mock.requests.filter(({ payload }) => payload.method === 'tools/call'
+    && (payload.params as { name: string }).name === 'codex_threads').length, 1);
+
+  const manual = await mock.handler({ ...request, refresh: 'force', priority: 'manual' }, trustedSender);
+  assert.equal(manual?.ok, true);
+  assert.equal(mock.requests.filter(({ payload }) => payload.method === 'tools/call'
+    && (payload.params as { name: string }).name === 'codex_threads').length, 2);
+});

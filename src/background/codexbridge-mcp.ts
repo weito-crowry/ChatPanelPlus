@@ -37,7 +37,7 @@ function isTestMessage(value: unknown): value is CodexBridgeMcpTestMessage {
 
 function responseForError(error: unknown): CodexBridgeMcpTestResponse {
   if (error instanceof McpTransportError) {
-    let reason: CodexBridgeMcpDiagnosticCode;
+    let reason: CodexBridgeMcpDiagnosticCode = 'unknown-error';
     switch (error.code) {
       case 'authentication-required': reason = 'authentication-required'; break;
       case 'forbidden': reason = 'forbidden'; break;

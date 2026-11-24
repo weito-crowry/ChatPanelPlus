@@ -14,6 +14,11 @@ export type WatchRegistrationResult = Readonly<{
   ownerConflict: boolean;
 }>;
 
+export type GuardedWatchRegistrationResult = Readonly<{
+  registration: WatchRegistrationResult;
+  generationChanged: boolean;
+}>;
+
 export function registerCodexBridgeWatch(
   items: CodexBridgeWatchSnapshot[],
   events: CodexBridgeTerminalEvent[],
@@ -46,4 +51,18 @@ export function registerCodexBridgeWatch(
     items: [...items, candidate], events,
     result: { item: candidate, created: true, transferred: false, ownerUnavailable: false, ownerConflict: false },
   };
+}
+
+export function registerCodexBridgeWatchForGeneration(
+  items: CodexBridgeWatchSnapshot[], events: CodexBridgeTerminalEvent[], candidate: CodexBridgeWatchSnapshot,
+  owner: CodexBridgeWatchOwnerMute | undefined, allowOwnerTransfer: boolean,
+  access: Readonly<{ generation?: number; isCurrent?: () => boolean }>, expectedGeneration?: number,
+): Readonly<{ items: CodexBridgeWatchSnapshot[]; events: CodexBridgeTerminalEvent[];
+  result: GuardedWatchRegistrationResult }> {
+  const current = expectedGeneration === undefined || (access.generation === expectedGeneration
+    && (!access.isCurrent || access.isCurrent()));
+  if (!current) return { items, events, result: { registration: { item: null, created: false,
+    transferred: false, ownerUnavailable: false, ownerConflict: false }, generationChanged: true } };
+  const registered = registerCodexBridgeWatch(items, events, candidate, owner, allowOwnerTransfer);
+  return { ...registered, result: { registration: registered.result, generationChanged: false } };
 }

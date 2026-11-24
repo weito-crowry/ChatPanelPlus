@@ -8,13 +8,15 @@ import { deriveCodexBridgeWatchTurnState } from '../shared/codexbridge-thread-mo
 import type { CodexBridgeWatchListFailureReason } from './codexbridge-watch-response.ts';
 
 const WATCH_OUTCOME_LABELS: Readonly<Record<CodexBridgeWatchSnapshot['fetchOutcome'], string>> = {
-  ok: '取得成功', '401': '認証失敗（401）', '403': '拒否（403）', timeout: 'timeout',
+  ok: '取得成功', '401': '認証失敗（401）', '403': '拒否（403）',
+  'authentication-required': '認証が必要', forbidden: '読み取り拒否', timeout: 'timeout',
   disconnected: '切断', unknown: '不明', 'permission-required': '権限なし',
   'settings-unavailable': '接続設定またはtokenを取得できません', 'endpoint-not-found': 'endpointなし',
   'session-expired': 'MCP session失効', 'http-error': 'HTTPエラー', 'protocol-error': '応答形式不明',
   'protocol-version-unsupported': 'protocol version非対応', 'readonly-tool-unavailable': 'codex_statusなし',
   'readonly-probe-failed': 'codex_status失敗', 'running-only-unsupported': 'running_only非対応',
-  'connection-changed': '接続先変更',
+  'connection-changed': '接続先変更', 'invalid-endpoint': '接続先URL不正', 'read-queue-full': '読取要求混雑',
+  'storage-error': '保存状態エラー', 'response-too-large': '応答上限超過', 'unknown-error': '読取エラー',
 };
 
 const TERMINAL_HOLD_LABELS: Readonly<Record<CodexBridgeTerminalHoldReason, string>> = {

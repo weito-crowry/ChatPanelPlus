@@ -42,6 +42,8 @@ const DIAGNOSTIC_MESSAGES: Record<CodexBridgeMcpDiagnosticCode, string> = {
   'readonly-probe-failed': 'codex_targetsの読み取り確認に失敗しました。',
   'response-too-large': 'サーバー応答が上限を超えました。',
   'storage-error': 'token保存領域を読み取れませんでした。',
+  'connection-changed': '接続設定が変わりました。現在の設定で再接続してください。',
+  'read-queue-full': 'Bridge読み取り要求が混み合っています。少し待って再試行してください。',
   'unknown-error': '接続確認に失敗しました。',
 };
 

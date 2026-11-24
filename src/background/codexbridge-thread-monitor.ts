@@ -1,8 +1,5 @@
-import {
-  CODEX_BRIDGE_MCP_DEFAULT_URL,
-  CODEX_BRIDGE_MCP_TOKEN_SESSION_KEY,
-  parseCodexBridgeMcpEndpoint,
-} from '../shared/codexbridge-mcp-protocol.ts';
+import type { CodexBridgeReadService } from './codexbridge-read-service.ts';
+import { createDefaultCodexBridgeReadService } from './codexbridge-read-service.ts';
 import {
   CODEX_BRIDGE_WATCH_FOREGROUND_REFRESH,
   CODEX_BRIDGE_WATCH_ACK_EVENTS,
@@ -17,7 +14,6 @@ import {
   CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER,
   CODEX_BRIDGE_WATCH_START,
   CODEX_BRIDGE_WATCH_STOP,
-  createCodexBridgeConnectionId,
   isCodexBridgeAutoWatchIdentity,
   isCodexBridgeWatchIdentifier,
   type CodexBridgeWatchListData,
@@ -34,8 +30,6 @@ import {
   CODEX_BRIDGE_OWNER_IDENTITY_PING,
   codexBridgeOwnerIdentityConversationId,
 } from '../shared/codexbridge-owner-identity.ts';
-import { createChromeSettingsRepository } from '../shared/settings-repository.ts';
-import { CodexBridgeMcpClient } from './mcp-client.ts';
 import { CodexBridgeAutoThreadRegistration } from './thread-monitor-auto-registration.ts';
 import type { CodexBridgeSessionOwnerLeases } from './thread-monitor-owner-lease.ts';
 import { McpTransportError } from './mcp-transport.ts';
@@ -47,8 +41,6 @@ import {
 } from './thread-monitor.ts';
 import type { CodexBridgeThreadMonitorStorage } from './thread-monitor-storage.ts';
 
-type SessionStorageLike = Readonly<{ get(keys: string[]): Promise<Record<string, unknown>> }>;
-type PermissionApiLike = Readonly<{ contains(permissions: { origins: string[] }): Promise<boolean> }>;
 type SenderLike = Readonly<{
   id?: string;
   origin?: string;
@@ -226,7 +218,12 @@ function finalAnswerFailure(error: unknown): CodexBridgeFinalAnswerResult {
     if (error.code === 'response-too-large') {
       return { status: 'incomplete', reason: 'history-too-large', completeness: 'unconfirmed' };
     }
-    return { status: 'failed', reason: error.code === 'running-only-unsupported' ? 'readonly-tool-unavailable' : error.code };
+    switch (error.code) {
+      case 'running-only-unsupported': return { status: 'failed', reason: 'readonly-tool-unavailable' };
+      case 'invalid-endpoint': case 'read-queue-full': case 'storage-error': case 'unknown-error':
+        return { status: 'failed', reason: 'unknown-error' };
+      default: return { status: 'failed', reason: error.code };
+    }
   }
   return { status: 'failed', reason: 'unknown-error' };
 }
@@ -326,9 +323,10 @@ export function createCodexBridgeThreadMonitorMessageHandler(options: CodexBridg
           result = finalAnswerFailure(error);
         }
         const [stillCurrent, stillSaved] = await Promise.all([
-          currentConnectionId(options.resolveAccess), options.monitor.readEvent(event.eventId, identity.conversationId),
+          options.resolveAccess().catch(() => ({ connectionId: null })), options.monitor.readEvent(event.eventId, identity.conversationId),
         ]);
-        if (stillCurrent !== event.connectionId) return { ok: true, data: { status: 'failed', reason: 'connection-changed' } };
+        if (stillCurrent.connectionId !== event.connectionId || (access.generation !== undefined
+          && stillCurrent.generation !== access.generation)) return { ok: true, data: { status: 'failed', reason: 'connection-changed' } };
         if (!stillSaved || stillSaved.connectionId !== event.connectionId || stillSaved.targetId !== event.targetId
           || stillSaved.threadId !== event.threadId || stillSaved.turnId !== event.turnId || stillSaved.status !== event.status) {
           return { ok: true, data: { status: 'failed', reason: 'event-not-found' } };
@@ -373,63 +371,9 @@ export function createDefaultCodexBridgeThreadMonitor(
   ownerLeases?: Pick<CodexBridgeSessionOwnerLeases, 'claim' | 'release'>,
   onOwnerClaim?: (identity: import('./thread-monitor-owner-lease.ts').CodexBridgeOwnerIdentity, tabId: number) => Promise<void>,
   storage?: CodexBridgeThreadMonitorStorage,
+  readService: CodexBridgeReadService = createDefaultCodexBridgeReadService(),
 ) {
-  const sessionStorage = chrome.storage.session as SessionStorageLike;
-  const settings = createChromeSettingsRepository();
-  const permissions = chrome.permissions as PermissionApiLike;
-  let cached: Readonly<{ connectionId: string; endpoint: string; token: string; client: CodexBridgeMcpClient }> | null = null;
-
-  const resolveAccess = async (): Promise<CodexBridgeMonitorAccess> => {
-    const loaded = await settings.loadSettings();
-    if (!loaded.ok) {
-      cached = null;
-      return { connectionId: null, failure: 'settings-unavailable' };
-    }
-    const endpoint = parseCodexBridgeMcpEndpoint(loaded.settings.codexBridgeMcpUrl ?? CODEX_BRIDGE_MCP_DEFAULT_URL);
-    if (!endpoint) {
-      cached = null;
-      return { connectionId: null, failure: 'settings-unavailable' };
-    }
-    const connectionId = await createCodexBridgeConnectionId(endpoint.url);
-    if (!connectionId) {
-      cached = null;
-      return { connectionId: null, failure: 'unknown' };
-    }
-    try {
-      if (!await permissions.contains({ origins: [endpoint.originPattern] })) {
-        cached = null;
-        return { connectionId, failure: 'permission-required' };
-      }
-    } catch {
-      cached = null;
-      return { connectionId, failure: 'permission-required' };
-    }
-
-    let token = '';
-    try {
-      const stored = await sessionStorage.get([CODEX_BRIDGE_MCP_TOKEN_SESSION_KEY]);
-      const value = stored[CODEX_BRIDGE_MCP_TOKEN_SESSION_KEY];
-      if (value !== undefined && typeof value !== 'string') {
-        cached = null;
-        return { connectionId, failure: 'settings-unavailable' };
-      }
-      if (typeof value === 'string') token = value;
-    } catch {
-      cached = null;
-      return { connectionId, failure: 'settings-unavailable' };
-    }
-    if (!cached || cached.connectionId !== connectionId || cached.endpoint !== endpoint.url || cached.token !== token) {
-      cached = { connectionId, endpoint: endpoint.url, token, client: new CodexBridgeMcpClient(endpoint.url, token, { timeoutMs: 4_000 }) };
-    }
-    const client = cached.client;
-    return {
-      connectionId,
-      readTargets: () => client.readTargets(),
-      readRunningThreads: (targetId) => client.readThreads(targetId, undefined, true),
-      readStatus: (targetId, threadId) => client.readStatus(targetId, threadId),
-      readFinalAnswer: (targetId, threadId, turnId) => client.readFinalAnswer(targetId, threadId, turnId),
-    };
-  };
+  const resolveAccess = () => readService.resolveAccess();
 
   const monitor = new CodexBridgeThreadMonitor(chrome.storage.local, chrome.alarms, resolveAccess,
     { notification, onTerminalEventSaved, storage });
