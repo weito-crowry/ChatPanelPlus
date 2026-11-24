@@ -2,14 +2,14 @@
 
 ## 現在地と残工程（2026-11-24）
 
-- Chrome実ロード元はユーザー確認済みのrepo直下`dist/`。C46文書更新はcommit `99defc201541b160b9feb267fd8b18618ac11296`で完了。追加C47は、terminal event保存後のowner限定identity通知、C37確定回答取得、選択範囲を使わない末尾追記、会話別既定OFF設定を実装した。`pnpm test` 784/784、typecheck/lint/size/build/diff check PASS。buildは正式ロード元`dist/`へ生成済み。実Chrome reload/F5とC47手動受入はNOT_RUN。
+- Chrome実ロード元はユーザー確認済みのrepo直下`dist/`。C46文書更新はcommit `99defc201541b160b9feb267fd8b18618ac11296`で完了。追加C47の実装commitは`12d1e6d861349663706bfe7f9a1e886740cd21c8`。terminal event保存後のowner限定identity通知、C37確定回答取得、選択範囲を使わない末尾追記、会話別既定OFF設定を実装した。実装時の`pnpm test` 784/784、typecheck/lint/size/build/diff check PASS。2026-11-24、ユーザー報告によるrepo直下`dist/` reload/F5後のC47主要正常系は部分PASS。詳細は下記。未受入項目は専用手順と最終チェックリストに記録する。
 - 2026-11-24のC46ユーザー実機観測：10:00:42 JSTに回答完了検出、Bridge候補2件、コード装飾付き対象IDの本文照合1件、明示対象1件だけの監視登録。対照候補は未登録。対象終了後はA実行中0、B監視0、設定内監視0、C通知1。これはC46基本正常経路のPASSで、C46全項目やC38/C45全体のPASSではない。
 - C38はC46前後でA件数2→0を表示した部分観測。Aの独立手動更新有無、live schema、mode・target・失敗時の表示等は未確認。C45は対象watchの終了後にB/設定が0、C通知1となった部分観測。技術情報内のnotification identityは直接照合しておらず、厳密poll周期、音声、異常系、worker復旧等は未確認。2026-11-23に記録したC45のFAILと修正経路は履歴として保持し、今回の限定観測を専用C45再受入へ拡張しない。
-- **現時点で追加の機能修正を始める根拠はない。** C47は自動検証済みで既定OFFのため、既存の通常運用を維持できる。C47機能自体のChrome実機受入は未完了なので、実機でONにして使う前に専用手順を確認する。現状を「メインパネルv2全体受入済み」やmerge-readyとは扱わない。残項目は`docs/panel-main-v2-final-acceptance-checklist.md`を参照する。
+- **現時点で追加の機能修正を始める根拠はない。** C47主要正常系は部分PASSだが、OFF/過去event、watch起点、選択範囲、近接/同時完了、owner/SPA、音声/mute、IME/添付、取得失敗などは未受入。現状を「メインパネルv2全体受入済み」やmerge-readyとは扱わない。残項目は`docs/panel-main-v2-final-acceptance-checklist.md`を参照する。
 
 ### 残工程の推奨順
 
-1. **C47の手動受入**：正常な末尾追記・送信なし・既存draft/選択範囲保持から始め、手動/自動watch、OFF・ON前event/reload、owner tab・SPA切替、音声OFF/mute、IME/添付/取得失敗と手動fallbackを専用手順どおり確認する。
+1. **C47の未受入項目**：OFF・ON前event/reload、watch起点（手動/C46自動）、選択範囲、近接/同時完了、owner tab・別会話・SPA切替、音声OFF/mute、IME/添付/editor不可、pending/取得失敗と手動fallbackを専用手順どおり確認する。主要正常系の部分PASSと未確認項目は`docs/c47-terminal-answer-auto-reflect-acceptance.md`に記録。
 2. **C45/C38の未完了受入**：C45はterminal event identity・自動解除・前面約5秒監視を専用ケースで確認。C38はA一覧/件数更新、live schema、実行中/通常mode、Bridge未対応・取得失敗を確認する。今回の限定表示を全体PASSへ広げない。
 3. **その他の手動受入**：修正後未確認のC12/C29/C30、C31–C36、C44、C46の残ケース、C04、C06–C11、C13–C28、C39–C43をチェックリストの優先度に沿って実施。実測した個別ケースだけ更新し、未実施は`NOT_RUN`のままにする。
 4. **merge準備**：行別実機結果と残制約をレビューし、既知FAILの修正後受入とPhase 4 event総保持上限等の判断を整理してmerge可否を決める。C47のChrome受入前は全体merge-readyとしない。この依頼ではmergeしない。

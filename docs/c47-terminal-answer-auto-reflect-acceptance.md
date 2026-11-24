@@ -2,8 +2,9 @@
 
 日付: 2026-11-24
 対象: メインパネル v2 / C47
+実装commit: `12d1e6d861349663706bfe7f9a1e886740cd21c8`
 実装状態: **実装・自動検証PASS**
-Chrome実機受入: **NOT_RUN**
+Chrome実機受入: **主要正常系PASS（部分受入）／残項目NOT_RUN**
 
 ## 仕様と実装経路
 
@@ -51,12 +52,22 @@ Chrome実機受入: **NOT_RUN**
 5. pending/no-final-answer/incomplete/failed、event削除/接続変更では自動挿入されないことを確認する。C欄の手動取得結果を確認する。
 6. 終了前にowner tabを別会話へ切り替えた場合、その別会話へ反映されないことを確認する。event ownerと通知が表示される会話の扱いはC45/C20のowner規則に従う。
 
+## Chrome実機受入結果（2026-11-24 JST）
+
+- ユーザー報告では、登録済みのrepo直下`dist/`をreloadし、ChatGPTをF5した。
+- 初回はC47をONにし忘れたため再試験した。再試験ではC47をONにした。OFFのまま入力欄が不変であることの独立観測は報告されておらず、OFF受入は`NOT_RUN`。
+- 11:23:51.223のBridge live記録で正常終了を確認。空欄へ自動反映された2行の最終回答をユーザーが送信し、送信本文はBridge最終回答と完全一致した。自動反映直後のDOMと、手動送信前の未送信状態を独立観測した記録はない。
+- 11:47:22.660、11:47:46.942の2件のBridge正常終了後、ユーザー報告では未送信の既存手入力文を保持し、異なる2つの検証マーカーを各1回、改行区切りで末尾へ順次追記した状態を送信した。当該試験で重複はなかった。
+- 以上から、空欄への自動反映、既存下書き保持、順次複数反映、本文一致、当該試験での重複なしを主要正常系`PASS`とする。実際の会話ID、回答本文、thread IDは記録しない。
+- watchの起点（手動／C46自動）、選択範囲保持、ほぼ同時終了の競合、手動watch経路、OFF・過去event、別tab/別会話/SPA、mute/音声OFF、IME/添付、取得失敗・手動fallback等は未観測で`NOT_RUN`。
+
 ## 結果記録
 
 | 項目 | 結果 | 証跡/メモ |
 |---|---|---|
 | 自動テスト・typecheck・lint・size・build・diff check | **PASS** | `pnpm test` 784/784、`pnpm typecheck`、`pnpm lint`、`pnpm check:size`（278 files）、`pnpm build`、`git diff --check` がすべて成功。build先は登録済みロード元のrepo直下`dist/`。 |
-| Chrome reload/F5・正常系・未送信 | **NOT_RUN** | build済み。ユーザーのChrome実機確認待ち。 |
-| OFF・過去event・owner tab/別会話・SPA切替 | **NOT_RUN** | 手動fallbackとあわせて確認する。 |
-| audio OFF/mute・manual/auto watch・複数完了 | **NOT_RUN** | C47の独立性と追加順を確認する。 |
-| IME・添付・入力欄不可・C37失敗状態 | **NOT_RUN** | 手動取得導線が維持されることを確認する。 |
+| Chrome reload/F5・空欄への自動反映・本文一致 | **PASS（ユーザー報告）** | 登録済みrepo直下`dist/`をreloadしChatGPTをF5。11:23:51.223の正常終了後、空欄へ自動反映された2行の回答をユーザーが送信し、Bridge最終回答と完全一致。送信前DOM／未送信状態の独立観測はなし。 |
+| 既存下書き・順次複数反映・当該試験での重複なし | **PASS（ユーザー報告）** | 11:47:22.660、11:47:46.942の正常終了後、未送信の手入力文末尾へ異なる検証マーカーを各1回、改行区切りで順次追記した内容をユーザーが送信。本文・会話ID・thread IDは記録しない。 |
+| OFF・過去event | **NOT_RUN** | 初回はC47をONにし忘れて再試験した。OFF時の入力不変、ON前event、reload後の再処理なしは独立観測なし。 |
+| 選択範囲・watch起点・近接/同時完了・owner tab/別会話/SPA | **NOT_RUN** | 手動watchとC46自動watchの起点差、選択範囲復元、競合順序、owner/route分離は未観測。 |
+| audio OFF/mute・IME・添付・入力欄不可・C37取得失敗/手動fallback | **NOT_RUN** | 独立性と非反映時の各状態は未観測。 |
