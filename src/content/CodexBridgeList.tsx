@@ -19,6 +19,7 @@ import { reconcileCodexBridgeThreadSelection } from './codexbridge-thread-select
 import { codexBridgeReadErrorLabel } from './codexbridge-read-error-label.ts';
 import type { ConversationPanelWatchSelection } from '../shared/conversation-panel-state-repository.ts';
 import type { RunningThreadSummary } from './codexbridge-running-summary.ts';
+import type { CodexBridgeWatchSummary } from './codexbridge-watch-summary.ts';
 import { conversationIdFromPath } from '../shared/conversation-route.ts';
 import { CodexBridgeTerminalRefreshCoordinator, type CodexBridgeTerminalEventSignal } from './codexbridge-terminal-refresh.ts';
 import type { CodexBridgeWatchAdditionBatch } from './codexbridge-watch-addition-observer.ts';
@@ -40,6 +41,7 @@ export function CodexBridgeList({
   bridgeWatchSelection = null,
   bridgeEventSelection = null,
   onSummaryChange,
+  onAcknowledgeEvents,
   onRunningSummaryChange,
   onSelectBridgeWatch = () => {},
   onSelectBridgeEvent = () => {},
@@ -54,7 +56,8 @@ export function CodexBridgeList({
   onSelectBridgeEvent?: (eventId: string | null) => void;
   onConnectionChange?: (connection: Readonly<{ state: ConnectionState; targetId: string | null; targetName: string | null }>) => void;
   currentProjectId?: string | null;
-  onSummaryChange?: (summary: Readonly<{ watchingCount: number; unacknowledgedThreadCount: number }> | null) => void;
+  onSummaryChange?: (summary: CodexBridgeWatchSummary | null) => void;
+  onAcknowledgeEvents?: (handler: (() => void) | null) => void;
   onRunningSummaryChange?: (summary: RunningThreadSummary) => void;
 }> = {}) {
   const [connection, setConnection] = useState<ConnectionState>('loading');
@@ -123,7 +126,7 @@ export function CodexBridgeList({
 
   function invalidateRunningSummary(status: RunningThreadSummary['status'], targetId = targetIdRef.current || null) {
     runningSummaryGeneration.current += 1;
-    reportRunningSummary({ targetId, count: null, status });
+    reportRunningSummary({ targetId, threads: null, status });
   }
 
   function invalidateThreadData() {
@@ -236,7 +239,7 @@ export function CodexBridgeList({
           : 'Bridgeから不正な応答が返りました。');
         if (request.mode === 'running' && !loadMore) {
           const reason = isReadResponse(response) && !response.ok ? response.reason : null;
-          reportRunningSummary({ targetId: requestedTargetId, count: null,
+          reportRunningSummary({ targetId: requestedTargetId, threads: null,
             status: reason === 'running-only-unsupported' ? 'unsupported' : 'error' });
         }
         return;
@@ -247,14 +250,14 @@ export function CodexBridgeList({
       setNextCursor(response.data.nextCursor);
       setThreadsLoaded(true);
       if (request.mode === 'running' && !loadMore) {
-        reportRunningSummary({ targetId: requestedTargetId, count: updated.length, status: 'ready' });
+        reportRunningSummary({ targetId: requestedTargetId, threads: updated, status: 'ready' });
       }
       const selectionUpdate = reconcileCodexBridgeThreadSelection(selectedRef.current, updated, loadMore);
       if (selectionUpdate) { updateSelected(selectionUpdate.thread); setSelectedMissing(selectionUpdate.missing); }
     } catch {
       if (requestTracker.current!.isCurrentThreads(request) && (!refreshContext || isWatchRefreshContextCurrent(refreshContext))) {
         setThreadsError('Bridgeへ接続できません。');
-        if (request.mode === 'running' && !loadMore) reportRunningSummary({ targetId: requestedTargetId, count: null, status: 'error' });
+        if (request.mode === 'running' && !loadMore) reportRunningSummary({ targetId: requestedTargetId, threads: null, status: 'error' });
       }
     } finally {
       if (requestTracker.current!.isLatestThreads(request)) {
@@ -273,7 +276,7 @@ export function CodexBridgeList({
   async function loadRunningSummary(requestedTargetId: string, refreshContext?: CodexBridgeWatchRefreshContext) {
     if (refreshContext && !isWatchRefreshContextCurrent(refreshContext)) return;
     const generation = ++runningSummaryGeneration.current;
-    reportRunningSummary({ targetId: requestedTargetId, count: null, status: 'loading' });
+    reportRunningSummary({ targetId: requestedTargetId, threads: null, status: 'loading' });
     try {
       const response: unknown = await chrome.runtime.sendMessage({
         type: CODEX_BRIDGE_MCP_GET_THREADS, targetId: requestedTargetId, runningOnly: true,
@@ -283,15 +286,15 @@ export function CodexBridgeList({
       if (!isReadResponse<CodexBridgeThreadPage>(response) || !response.ok
         || !isRecord(response.data) || !Array.isArray(response.data.threads) || response.data.nextCursor !== null) {
         const reason = isReadResponse(response) && !response.ok ? response.reason : null;
-        reportRunningSummary({ targetId: requestedTargetId, count: null,
+        reportRunningSummary({ targetId: requestedTargetId, threads: null,
           status: reason === 'running-only-unsupported' ? 'unsupported' : 'error' });
         return;
       }
-      reportRunningSummary({ targetId: requestedTargetId, count: response.data.threads.length, status: 'ready' });
+      reportRunningSummary({ targetId: requestedTargetId, threads: response.data.threads, status: 'ready' });
     } catch {
       if (generation === runningSummaryGeneration.current && targetIdRef.current === requestedTargetId
         && (!refreshContext || isWatchRefreshContextCurrent(refreshContext))) {
-        reportRunningSummary({ targetId: requestedTargetId, count: null, status: 'error' });
+        reportRunningSummary({ targetId: requestedTargetId, threads: null, status: 'error' });
       }
     }
   }
@@ -318,7 +321,7 @@ export function CodexBridgeList({
     if (changed) {
       terminalRefresh.current.clearPending();
       runningSummaryGeneration.current += 1;
-      reportRunningSummary({ targetId: targetIdRef.current || null, count: null, status: 'error' });
+      reportRunningSummary({ targetId: targetIdRef.current || null, threads: null, status: 'error' });
     }
     watchSnapshot.current = { ownerConversationId: batch.ownerConversationId, connectionId: batch.connectionId,
       generation: (previous?.generation ?? 0) + Number(changed), routeGeneration };
@@ -477,12 +480,14 @@ export function CodexBridgeList({
         watchFeedbackResetToken={watchFeedbackResetToken}
         foregroundEnabled={foregroundEnabled}
         conversationId={conversationId}
+        routeGeneration={routeIdentity.current.generation}
         bridgeWatchSelection={bridgeWatchSelection}
         bridgeEventSelection={bridgeEventSelection}
         onSelectBridgeWatch={onSelectBridgeWatch}
         onSelectBridgeEvent={onSelectBridgeEvent}
         threadCandidates={threads}
         onSummaryChange={onSummaryChange}
+        onAcknowledgeEvents={onAcknowledgeEvents}
         onTerminalEvents={handleTerminalEvents}
         onWatchAdditions={handleWatchAdditions}
       />

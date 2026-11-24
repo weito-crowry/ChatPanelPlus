@@ -40,6 +40,13 @@ const STORAGE_ERROR_TEXT: Record<StatisticsStorageError, string> = {
 
 function formatCount(value: number): string { return new Intl.NumberFormat('ja-JP').format(value); }
 
+function syncCodexUnreadTitle(indicator: TabCompletionIndicator, summaryConversationId: string | null, count: number | null): void {
+  const routeConversationId = conversationIdFromPath(window.location.pathname);
+  const ownerConversationId = summaryConversationId === routeConversationId ? summaryConversationId : routeConversationId;
+  indicator.setCodexUnreadNotifications(ownerConversationId,
+    ownerConversationId === summaryConversationId ? count : null);
+}
+
 function soundOutputErrorMessage(reason: string): string {
   if (reason === 'mute-unavailable') return '会話別ミュート状態を確認できません。確認できるまで回答完了音を再生しません。';
   if (reason === 'device-unavailable') return '選択した出力デバイスが見つかりません。Optionsで接続状態を確認してください。既定の出力へは切り替えていません。';
@@ -63,6 +70,8 @@ function scanMessage(state: ConversationStatisticsViewState): string | null {
 
 export interface ConversationStatisticsProps {
   readonly conversationId?: string | null;
+  readonly codexUnreadConversationId?: string | null;
+  readonly codexUnreadCount?: number | null;
   readonly conversationMuted?: boolean;
   readonly conversationMuteLoaded?: boolean;
   readonly conversationMutePending?: boolean;
@@ -76,6 +85,8 @@ export interface ConversationStatisticsProps {
 
 export function ConversationStatistics({
   conversationId = null,
+  codexUnreadConversationId = null,
+  codexUnreadCount = null,
   conversationMuted = false,
   conversationMuteLoaded = false,
   conversationMutePending = false,
@@ -90,6 +101,7 @@ export function ConversationStatistics({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [placement, setPlacement] = useState<StatisticsPopoverPlacement | null>(null);
   const controller = useRef<ConversationStatisticsController | null>(null);
+  const tabCompletionIndicator = useRef<TabCompletionIndicator | null>(null);
   const soundPlayer = useRef<AnswerCompletionSoundPlayer | null>(null);
   const soundEnabled = useRef(answerCompletionSoundEnabled);
   soundEnabled.current = answerCompletionSoundEnabled;
@@ -117,7 +129,9 @@ export function ConversationStatistics({
     player.setSoundId(soundId.current);
     player.setVolumePercent(soundVolumePercent.current);
     player.setEnabled(soundEnabled.current);
-    const tabCompletionIndicator = new TabCompletionIndicator({ document, window });
+    const indicator = new TabCompletionIndicator({ document, window });
+    tabCompletionIndicator.current = indicator;
+    syncCodexUnreadTitle(indicator, codexUnreadConversationId, codexUnreadCount);
     const active = new ConversationStatisticsController({
       document,
       window,
@@ -140,7 +154,7 @@ export function ConversationStatistics({
           console.debug('[ChatPanelPlus] 回答完了時の自動監視登録を判定できませんでした。');
         }
         dispatchAnswerCompletionNotifications({
-          notifyTab: () => tabCompletionIndicator.onAnswerCompleted(),
+          notifyTab: () => tabCompletionIndicator.current?.onAnswerCompleted(),
           soundEnabled: soundEnabled.current,
           soundVolumePercent: soundVolumePercent.current,
           playSound: () => {
@@ -173,12 +187,18 @@ export function ConversationStatistics({
     active.start();
     return () => {
       active.stop();
-      tabCompletionIndicator.dispose();
+      indicator.dispose();
+      if (tabCompletionIndicator.current === indicator) tabCompletionIndicator.current = null;
       player.dispose();
       soundPlayer.current = null;
       controller.current = null;
     };
   }, []);
+
+  useLayoutEffect(() => {
+    if (tabCompletionIndicator.current) syncCodexUnreadTitle(tabCompletionIndicator.current,
+      codexUnreadConversationId, codexUnreadCount);
+  }, [codexUnreadConversationId, codexUnreadCount]);
 
   useEffect(() => {
     soundPlayer.current?.setEnabled(answerCompletionSoundEnabled);

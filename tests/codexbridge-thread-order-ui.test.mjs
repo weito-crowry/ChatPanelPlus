@@ -35,7 +35,7 @@ test('running_onlyと通常cursor要求を分け、切替は選択と監視を�
   assert.match(source, /function changeListMode\(mode: CodexBridgeThreadListMode\)/);
   assert.match(source, /onTerminalEvents=\{handleTerminalEvents\}/);
   assert.match(source, /if \(action === 'threads' && context\) void loadThreads\(false, false, context\);[\s\S]*?else if \(action === 'summary' && requestedTargetId && context\) void loadRunningSummary\(requestedTargetId, context\)/);
-  assert.match(source, /setThreads\(updated\);[\s\S]*?reportRunningSummary\(\{ targetId: requestedTargetId, count: updated\.length, status: 'ready' \}\)/);
+  assert.match(source, /setThreads\(updated\);[\s\S]*?reportRunningSummary\(\{ targetId: requestedTargetId, threads: updated, status: 'ready' \}\)/);
   assert.match(source, /reconcileCodexBridgeThreadSelection\(selectedRef\.current, updated, loadMore\)/);
   assert.match(source, /if \(selectionUpdate\) \{ updateSelected\(selectionUpdate\.thread\); setSelectedMissing\(selectionUpdate\.missing\); \}/);
 });

@@ -23,7 +23,8 @@ test('本文スクロールはページのスクロール連鎖を阻害せず�
     read('../src/content/panel-phase6.css'),
     read('../src/content/panel.css'),
   ]);
-  assert.doesNotMatch(styles, /overscroll-behavior\s*:\s*contain|position\s*:\s*fixed/);
+  assert.doesNotMatch(styles, /\.panel-content\s*\{[^}]*overscroll-behavior\s*:\s*contain/s);
+  assert.doesNotMatch(styles, /\.codex-bridge-answer-text\s*\{[^}]*position\s*:\s*fixed/s);
   assert.match(styles, /\.panel\.is-minimized\s*\{[^}]*height:\s*auto;[^}]*min-height:\s*0/);
   assert.match(baseStyles, /\.panel-content\[hidden\]\s*\{\s*display:\s*none;/);
 });

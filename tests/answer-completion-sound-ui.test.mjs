@@ -97,7 +97,7 @@ test('Optionsの音量rangeは値を表示し、previewにdraft値を渡し、0%
 
 test('音声プレイヤー・完了Tracker・タブ表示通知は統計UIの再マウント時に破棄され、二重登録しない', async () => {
   const component = await read('../src/content/ConversationStatistics.tsx');
-  assert.match(component, /active.stop\(\);\s*tabCompletionIndicator\.dispose\(\);\s*player\.dispose\(\);/);
+  assert.match(component, /active.stop\(\);\s*indicator\.dispose\(\);[\s\S]*?if \(tabCompletionIndicator\.current === indicator\) tabCompletionIndicator\.current = null;[\s\S]*?player\.dispose\(\);/);
   assert.match(component, /new ConversationStatisticsController/);
   assert.match(component, /player\.setSoundId\(soundId\.current\)/);
   assert.ok(component.includes('player.setVolumePercent(soundVolumePercent.current)'));
@@ -111,7 +111,7 @@ test('音声プレイヤー・完了Tracker・タブ表示通知は統計UIの�
   const soundDispatch = component.indexOf('dispatchAnswerCompletionNotifications({', completionCallback);
   assert.ok(completionCheck >= 0 && publishedCheck > completionCheck);
   assert.ok(completionCallback >= 0 && autoWatchCompletion > completionCallback && soundDispatch > autoWatchCompletion);
-  assert.ok(component.includes('notifyTab: () => tabCompletionIndicator.onAnswerCompleted()'));
+  assert.ok(component.includes('notifyTab: () => tabCompletionIndicator.current?.onAnswerCompleted()'));
   assert.ok(component.includes('soundEnabled: soundEnabled.current'));
   assert.ok(component.includes('soundVolumePercent: soundVolumePercent.current'));
 });

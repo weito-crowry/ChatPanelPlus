@@ -3,6 +3,7 @@ import test from 'node:test';
 import { createCodexBridgeThreadMonitorMessageHandler } from '../src/background/codexbridge-thread-monitor.ts';
 import { CODEX_BRIDGE_WATCH_ACK_EVENTS } from '../src/shared/codexbridge-thread-monitor-protocol.ts';
 import { acknowledgeCodexBridgeEventIds } from '../src/content/codexbridge-event-ack.ts';
+import { CodexBridgeEventAcknowledger } from '../src/content/codexbridge-event-ack.ts';
 
 function eventIds(count: number): string[] {
   return Array.from({ length: count }, (_, index) => `event-${index}`);
@@ -107,4 +108,68 @@ test('256-ID snapshot traverses the real owner-authenticated handler in accepted
   assert.deepEqual(await handle({
     type: CODEX_BRIDGE_WATCH_ACK_EVENTS, conversationId: 'test', eventIds: ids.slice(0, 129),
   }, sender), { ok: false, reason: 'invalid-request' });
+});
+
+test('共通ack controllerはクリック時snapshotの未確認eventだけを同一ownerへ送り、新規通知を含めない', async () => {
+  const events = [
+    { eventId: 'event-a', ownerConversationId: 'conversation-a', acknowledgedAt: null },
+    { eventId: 'event-b', ownerConversationId: 'conversation-b', acknowledgedAt: null },
+    { eventId: 'event-done', ownerConversationId: 'conversation-a', acknowledgedAt: '2026-11-24T00:00:00Z' },
+  ];
+  const controller = new CodexBridgeEventAcknowledger();
+  const batches: string[][] = [];
+  const result = await controller.acknowledge({
+    events,
+    ownerConversationId: 'conversation-a',
+    ownerGeneration: 3,
+    getCurrentOwner: () => ({ conversationId: 'conversation-a', generation: 3 }),
+    async sendBatch(batch) { batches.push([...batch]); events.push({ eventId: 'event-new', ownerConversationId: 'conversation-a', acknowledgedAt: null }); return true; },
+  });
+  assert.deepEqual(batches, [['event-a']]);
+  assert.equal(result.status, 'complete');
+  assert.equal(controller.isBusy, false);
+});
+
+test('共通ack controllerは同時操作を抑止し、conversation世代変更後の次batchを送らない', async () => {
+  const controller = new CodexBridgeEventAcknowledger();
+  const oneEvent = [{ eventId: 'event-a', ownerConversationId: 'conversation-a', acknowledgedAt: null }];
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const batches: string[][] = [];
+  const first = controller.acknowledge({
+    events: oneEvent, ownerConversationId: 'conversation-a', ownerGeneration: 1,
+    getCurrentOwner: () => ({ conversationId: 'conversation-a', generation: 1 }),
+    async sendBatch(batch) { batches.push([...batch]); await gate; return true; },
+  });
+  const duplicate = await controller.acknowledge({
+    events: oneEvent, ownerConversationId: 'conversation-a', ownerGeneration: 1,
+    getCurrentOwner: () => ({ conversationId: 'conversation-a', generation: 1 }), async sendBatch() { assert.fail('重複送信'); },
+  });
+  assert.equal(duplicate.status, 'busy');
+  release?.();
+  assert.equal((await first).status, 'complete');
+  assert.deepEqual(batches, [['event-a']]);
+
+  let owner = { conversationId: 'conversation-a', generation: 4 };
+  const many = eventIds(129).map((eventId) => ({ eventId, ownerConversationId: 'conversation-a', acknowledgedAt: null }));
+  const raceBatches: string[][] = [];
+  const raced = await controller.acknowledge({
+    events: many, ownerConversationId: 'conversation-a', ownerGeneration: 4, getCurrentOwner: () => owner,
+    async sendBatch(batch) { raceBatches.push([...batch]); owner = { conversationId: 'conversation-a', generation: 6 }; return true; },
+  });
+  assert.equal(raced.status, 'partial');
+  assert.deepEqual(raceBatches.map((batch) => batch.length), [128]);
+});
+
+test('共通ack controllerは部分失敗を返し、未確認snapshotの残りを個別確認可能にする', async () => {
+  const controller = new CodexBridgeEventAcknowledger();
+  const batches: number[] = [];
+  const result = await controller.acknowledge({
+    events: eventIds(129).map((eventId) => ({ eventId, ownerConversationId: 'conversation-a', acknowledgedAt: null })),
+    ownerConversationId: 'conversation-a', ownerGeneration: 1,
+    getCurrentOwner: () => ({ conversationId: 'conversation-a', generation: 1 }),
+    async sendBatch(batch) { batches.push(batch.length); return batches.length === 1; },
+  });
+  assert.deepEqual(batches, [128, 1]);
+  assert.deepEqual(result, { status: 'partial', totalCount: 129, confirmedCount: 128 });
 });

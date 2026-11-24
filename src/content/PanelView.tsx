@@ -6,6 +6,7 @@ import { ProjectPanelTitle } from './ProjectPanelTitle';
 import { BridgeSummaryBar } from './BridgeSummaryBar';
 import type { PanelControllerState } from './usePanelController';
 import type { RunningThreadSummary } from './codexbridge-running-summary.ts';
+import type { CodexBridgeWatchSummary } from './codexbridge-watch-summary.ts';
 import { conversationIdFromPath } from '../shared/conversation-route.ts';
 import { projectIdFromPathname } from '../shared/project-route.ts';
 
@@ -49,17 +50,16 @@ export function PanelView({
   onCancelManualPaste,
 }: PanelControllerState) {
   const [bridgeConnection, setBridgeConnection] = useState<BridgeConnection>({ state: 'loading', targetId: null, targetName: null });
-  const [runningSummary, setRunningSummary] = useState<RunningThreadSummary>({ targetId: null, count: null, status: 'loading' });
-  const [bridgeSummary, setBridgeSummary] = useState<Readonly<{
-    conversationId: string;
-    watchingCount: number;
-    unacknowledgedThreadCount: number;
-  }> | null>(null);
-  const currentBridgeSummary = bridgeSummary?.conversationId === conversationId && conversationId
-    && conversationIdFromPath(window.location.pathname) === conversationId ? bridgeSummary : null;
-  const updateBridgeSummary = useCallback((summary: Readonly<{ watchingCount: number; unacknowledgedThreadCount: number }> | null) => {
-    setBridgeSummary(summary && conversationId ? { ...summary, conversationId } : null);
-  }, [conversationId]);
+  const [runningSummary, setRunningSummary] = useState<RunningThreadSummary>({ targetId: null, threads: null, status: 'loading' });
+  const [bridgeSummary, setBridgeSummary] = useState<CodexBridgeWatchSummary | null>(null);
+  const [acknowledgeEvents, setAcknowledgeEvents] = useState<(() => void) | null>(null);
+  const routeConversationId = conversationIdFromPath(window.location.pathname);
+  const currentBridgeSummary = bridgeSummary?.conversationId === routeConversationId && routeConversationId ? bridgeSummary : null;
+  const codexUnreadCount = currentBridgeSummary?.status === 'ready' ? currentBridgeSummary.unacknowledgedThreadCount : null;
+  const updateBridgeSummary = useCallback((summary: CodexBridgeWatchSummary | null) => setBridgeSummary(summary), []);
+  const updateAcknowledgeHandler = useCallback((handler: (() => void) | null) => {
+    setAcknowledgeEvents(() => handler);
+  }, []);
   const updateBridgeConnection = useCallback((connection: BridgeConnection) => setBridgeConnection(connection), []);
   const updateRunningSummary = useCallback((summary: RunningThreadSummary) => setRunningSummary(summary), []);
   return (
@@ -83,6 +83,8 @@ export function PanelView({
               answerCompletionSoundId={answerCompletionSoundId}
               answerCompletionSoundVolumePercent={answerCompletionSoundVolumePercent}
               conversationId={conversationId}
+              codexUnreadConversationId={routeConversationId}
+              codexUnreadCount={codexUnreadCount}
               conversationMuted={conversationMuted}
               conversationMuteLoaded={muteLoaded}
               conversationMutePending={mutePending}
@@ -100,8 +102,9 @@ export function PanelView({
             {MIN_ICON_SVG}
           </button>
         </div>
-        {currentViewState.minimized && <BridgeSummaryBar compact conversationId={conversationId}
-          summary={currentBridgeSummary} connection={bridgeConnection} runningSummary={runningSummary} />}
+        {currentViewState.minimized && <BridgeSummaryBar compact conversationId={routeConversationId}
+          watchSummary={currentBridgeSummary} connection={bridgeConnection} runningSummary={runningSummary}
+          onAcknowledgeEvents={acknowledgeEvents ?? undefined} />}
       </header>
       <div className="panel-content" hidden={currentViewState.minimized}>
         <div className="utility-row" aria-label="常時表示操作">
@@ -159,15 +162,17 @@ export function PanelView({
             ))}
           </div>
         )}
-        <BridgeSummaryBar conversationId={conversationId} summary={currentBridgeSummary} connection={bridgeConnection}
-          runningSummary={runningSummary} expanded={bridgeExpanded} onToggle={onToggleBridgeExpanded} />
+        <BridgeSummaryBar conversationId={routeConversationId} watchSummary={currentBridgeSummary} connection={bridgeConnection}
+          runningSummary={runningSummary} onAcknowledgeEvents={acknowledgeEvents ?? undefined}
+          expanded={bridgeExpanded} onToggle={onToggleBridgeExpanded} />
         <div id="panel-bridge-details" className="panel-bridge-details" hidden={!bridgeExpanded}>
           <CodexBridgeList
             foregroundEnabled={!currentViewState.minimized} conversationId={conversationId}
             currentProjectId={projectIdFromPathname(window.location.pathname)}
             bridgeWatchSelection={bridgeWatchSelection} bridgeEventSelection={bridgeEventSelection}
             onSelectBridgeWatch={onSelectBridgeWatch} onSelectBridgeEvent={onSelectBridgeEvent}
-            onSummaryChange={updateBridgeSummary} onConnectionChange={updateBridgeConnection}
+            onSummaryChange={updateBridgeSummary} onAcknowledgeEvents={updateAcknowledgeHandler}
+            onConnectionChange={updateBridgeConnection}
             onRunningSummaryChange={updateRunningSummary}
           />
         </div>

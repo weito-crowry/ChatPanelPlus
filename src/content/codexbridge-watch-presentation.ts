@@ -86,9 +86,33 @@ export function filterOwnedWatchData(
 ) {
   const items = data.items.filter((item) => item.ownerConversationId === ownerConversationId);
   const events = data.events.filter((event) => event.ownerConversationId === ownerConversationId);
-  const unacknowledgedThreads = new Set(events.filter((event) => !event.acknowledgedAt)
-    .map((event) => JSON.stringify([event.connectionId, event.targetId, event.threadId])));
-  return { items, events, summary: { watchingCount: items.length, unacknowledgedThreadCount: unacknowledgedThreads.size } };
+  const unacknowledgedGroups = groupUnacknowledgedCodexBridgeEvents(events, ownerConversationId);
+  return { items, events, unacknowledgedGroups,
+    summary: { watchingCount: items.length, unacknowledgedThreadCount: unacknowledgedGroups.length } };
+}
+
+export type CodexBridgeUnacknowledgedEventGroup = Readonly<{
+  connectionId: string;
+  targetId: string;
+  threadId: string;
+  events: readonly CodexBridgeTerminalEvent[];
+}>;
+
+export function groupUnacknowledgedCodexBridgeEvents(
+  events: readonly CodexBridgeTerminalEvent[], ownerConversationId: string,
+): readonly CodexBridgeUnacknowledgedEventGroup[] {
+  const groups = new Map<string, { connectionId: string; targetId: string; threadId: string; events: CodexBridgeTerminalEvent[] }>();
+  for (const event of events) {
+    if (event.ownerConversationId !== ownerConversationId || event.acknowledgedAt) continue;
+    const key = JSON.stringify([event.connectionId, event.targetId, event.threadId]);
+    let group = groups.get(key);
+    if (!group) {
+      group = { connectionId: event.connectionId, targetId: event.targetId, threadId: event.threadId, events: [] };
+      groups.set(key, group);
+    }
+    group.events.push(event);
+  }
+  return [...groups.values()];
 }
 
 export function countCurrentOwnerTargetWatches(input: Readonly<{

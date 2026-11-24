@@ -10,6 +10,7 @@ const stylePath = fileURLToPath(new URL('../src/content/codexbridge-watch.css', 
 const presentationPath = fileURLToPath(new URL('../src/content/codexbridge-watch-presentation.ts', import.meta.url));
 const feedbackPath = fileURLToPath(new URL('../src/content/codexbridge-watch-start-feedback.ts', import.meta.url));
 const autoWatchControlPath = fileURLToPath(new URL('../src/content/CodexBridgeAutoWatchControl.tsx', import.meta.url));
+const acknowledgerPath = fileURLToPath(new URL('../src/content/useCodexBridgeEventAcknowledger.ts', import.meta.url));
 
 test('watch UI selects terminal events and fetches only after an explicit click', async () => {
   const [source, card] = await Promise.all([readFile(sourcePath, 'utf8'), readFile(cardPath, 'utf8')]);
@@ -49,7 +50,7 @@ test('copy and insertion are independent user actions and the answer is rendered
 
 test('answer retrieval leaves the composer draft untouched and never sends automatically', async () => {
   const [source, card] = await Promise.all([readFile(sourcePath, 'utf8'), readFile(cardPath, 'utf8')]);
-  const retrieval = source.slice(source.indexOf('async function fetchSelectedAnswer'), source.indexOf('async function acknowledgeVisibleEvents'));
+  const retrieval = source.slice(source.indexOf('async function fetchSelectedAnswer'), source.indexOf('async function clearVisibleEvents'));
   assert.doesNotMatch(retrieval, /insertAtCaret|clearComposer|requestSubmit|\.submit\(/);
   assert.doesNotMatch(card, /type="submit"/);
   assert.match(card, /onClick=\{\(\) => onInsertAnswer\(selectedEvent, displayedAnswer\.text\)\}/);
@@ -60,9 +61,10 @@ test('conversation owner is required for watch data, final-answer actions, and A
   const source = await readFile(sourcePath, 'utf8');
   assert.match(source, /conversationIdFromPath\(window\.location\.pathname\) !== requestConversationId/);
   assert.match(source, /conversationIdFromPath\(window\.location\.pathname\) !== event\.ownerConversationId/);
-  assert.match(source, /type: CODEX_BRIDGE_WATCH_ACK_EVENTS,[\s\S]*?conversationId: currentConversationId,[\s\S]*?eventIds/);
+  const acknowledger = await readFile(acknowledgerPath, 'utf8');
+  assert.match(acknowledger, /type: CODEX_BRIDGE_WATCH_ACK_EVENTS,[\s\S]*?conversationId,[\s\S]*?eventIds/);
   assert.match(source, /filterOwnedWatchData\(data, ownerConversationId\)/);
-  assert.match(source, /summaryCallbackRef\.current\?\.\(owned\.summary\)/);
+  assert.match(source, /useCodexBridgeWatchSummary\(/);
   assert.doesNotMatch(source, /acceptStoredItems|setEvents\(.*newValue/);
 });
 
@@ -77,14 +79,20 @@ test('通知クリアは確認後、現在会話のevent ID snapshotだけを削
   assert.match(source, /clearCodexBridgeEventIds\(eventIds/);
   assert.match(source, /clearInFlight\.current/);
   assert.match(source, /setEventOperationMessage\(`現在の会話の終了通知/);
-  assert.match(source, /CODEX_BRIDGE_WATCH_ACK_EVENTS/);
+  const acknowledger = await readFile(acknowledgerPath, 'utf8');
+  assert.match(acknowledger, /CODEX_BRIDGE_WATCH_ACK_EVENTS/);
 });
 
 test('ACK snapshots visible IDs and uses bounded serial batches with a partial-failure result', async () => {
-  const source = await readFile(sourcePath, 'utf8');
-  assert.match(source, /acknowledgeCodexBridgeEventIds\(/);
-  assert.match(source, /confirmedCount/);
-  assert.match(source, /未確認分は再試行できます/);
+  const [source, acknowledger, controller] = await Promise.all([
+    readFile(sourcePath, 'utf8'), readFile(acknowledgerPath, 'utf8'),
+    readFile(fileURLToPath(new URL('../src/content/codexbridge-event-ack.ts', import.meta.url)), 'utf8'),
+  ]);
+  assert.match(source, /useCodexBridgeEventAcknowledger\(/);
+  assert.match(acknowledger, /controller\.current\.acknowledge\(/);
+  assert.match(controller, /acknowledgeCodexBridgeEventIds\(snapshot/);
+  assert.match(acknowledger, /confirmedCount/);
+  assert.match(acknowledger, /未確認分は再試行できます/);
 });
 
 test('watch and event selection are conversation-owned persisted props and only owner items can select', async () => {
@@ -163,7 +171,7 @@ test('B監視一覧は要求を調停・timeoutし、未取得/失敗を空一�
   assert.match(source, /listConversationId !== ownerConversationId \|\| listLoading \|\| listFailure[\s\S]*?\|\| !currentConnectionId/);
   assert.match(source, /currentItems\.length === 0 && listIsCurrent && !listLoading && !listFailure/);
   assert.match(source, /listIsCurrent && !listFailure \? `\$\{currentItems\.length\}件` : '—'/);
-  assert.match(source, /summaryCallbackRef\.current\?\.\(null\)/);
+  assert.match(source, /listFailureConversationId/);
   assert.match(coordinator, /CODEX_BRIDGE_WATCH_LIST_TIMEOUT_MS = 25_000/);
   assert.match(coordinator, /this\.automaticPaused \|\| this\.active !== null/);
   assert.match(response, /'sender-unverified' \| 'storage-error' \| 'invalid-response' \| 'timeout'/);

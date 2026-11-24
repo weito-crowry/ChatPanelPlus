@@ -1,7 +1,9 @@
+import type { CodexBridgeThread } from '../shared/codexbridge-mcp-protocol.ts';
+
 export type RunningThreadSummaryStatus = 'loading' | 'ready' | 'unsupported' | 'error';
 export type RunningThreadSummary = Readonly<{
   targetId: string | null;
-  count: number | null;
+  threads: readonly CodexBridgeThread[] | null;
   status: RunningThreadSummaryStatus;
 }>;
 export type BridgeConnectionState = 'loading' | 'connected' | 'error';
@@ -17,8 +19,8 @@ export function formatRunningThreadCount(
   if (connectionState !== 'connected') return { value: '—', title: 'Bridge接続を確認できていません。' };
   if (!targetId) return { value: '—', title: '対象マシンが選択されていません。' };
   if (summary.targetId !== targetId) return { value: '—', title: '対象マシン切替後の実行中一覧を取得中です。' };
-  if (summary.status === 'ready' && Number.isSafeInteger(summary.count) && (summary.count ?? -1) >= 0) {
-    return { value: summary.count as number, title: RUNNING_COUNT_TITLE };
+  if (summary.status === 'ready' && summary.threads) {
+    return { value: summary.threads.length, title: RUNNING_COUNT_TITLE };
   }
   if (summary.status === 'unsupported') return { value: '—', title: 'Bridge更新待ちです。running_onlyに未対応です。' };
   if (summary.status === 'error') return { value: '—', title: 'Bridgeの実行中一覧を取得できませんでした。' };

@@ -36,11 +36,26 @@
 .phase6-bridge-status.is-connected .phase6-bridge-status-dot { background: #188f69; }
 .phase6-bridge-status.is-error .phase6-bridge-status-dot { background: #b42318; }
 .phase6-bridge-counters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; min-width: 0; margin: 0; }
-.phase6-bridge-counters > div { display: flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; padding: 4px 7px; border: 1px solid var(--border-light, #d9dadd); border-radius: 8px; }
-.phase6-bridge-counters dt { overflow: hidden; color: var(--text-secondary, #565869); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.phase6-bridge-counters dd { margin: 0; font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.phase6-bridge-counter { min-width: 0; border: 1px solid var(--border-light, #d9dadd); border-radius: 8px; }
+.phase6-counter-trigger { display: flex; width: 100%; min-height: 30px; align-items: center; justify-content: center; gap: 6px; padding: 4px 7px; border: 0; border-radius: inherit; background: transparent; color: inherit; font: inherit; cursor: default; }
+.phase6-counter-trigger[type="button"] { cursor: pointer; }
+.phase6-counter-trigger[aria-disabled="true"] { cursor: not-allowed; opacity: .62; }
+.phase6-counter-trigger:focus-visible { outline: 2px solid #3157a4; outline-offset: 2px; }
+.phase6-counter-trigger[aria-disabled="true"]:focus-visible { cursor: not-allowed; }
+.phase6-counter-trigger > strong { flex: 0 0 auto; font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.phase6-counter-label { overflow: hidden; color: var(--text-secondary, #565869); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.phase6-counter-popover { position: fixed; z-index: 10000; display: flex; flex-direction: column; width: min(320px, calc(100vw - 24px)); max-height: min(360px, calc(100vh - 24px)); overflow: hidden; padding: 10px; border: 1px solid var(--border-light, #d9dadd); border-radius: 10px; background: var(--main-surface-primary, #fff); color: var(--text-primary, #202123); box-shadow: 0 8px 28px rgb(0 0 0 / 22%); font-size: 12px; }
+@supports (height: 100dvh) { .phase6-counter-popover { max-height: min(360px, calc(100dvh - 24px)); } }
+.phase6-counter-popover-heading { flex: 0 0 auto; padding-bottom: 5px; }
+.phase6-counter-popover-body { min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.phase6-counter-popover-body > p { margin: 2px 0; color: var(--text-secondary, #565869); }
+.phase6-counter-list, .phase6-counter-events { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.phase6-counter-list > li { display: grid; gap: 2px; min-width: 0; padding: 5px 6px; border: 1px solid var(--border-light, #d9dadd); border-radius: 7px; overflow-wrap: anywhere; }
+.phase6-counter-list small { color: var(--text-secondary, #565869); }
+.phase6-counter-events { padding-top: 3px; font-size: 11px; }
 .phase6-details-toggle { min-height: 28px; padding: 4px 8px; border: 0; border-radius: 7px; background: transparent; color: #3157a4; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
 .phase6-bridge-note { grid-column: 1 / -1; margin: 0; color: var(--text-secondary, #565869); font-size: 11px; }
+.phase6-bridge-ack-error { grid-column: 1 / -1; margin: 0; color: #b42318; font-size: 11px; }
 .panel-bridge-details { min-width: 0; }
 .panel-bridge-details[hidden] { display: none; }
 .phase6-bridge-columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: stretch; gap: 8px; min-width: 0; padding: 0; border: 0; background: transparent; font-size: 12px; }
@@ -81,7 +96,7 @@
 .panel.is-minimized .phase6-bridge-bar.is-compact { display: block; order: 1; flex: 1 1 auto; min-width: 0; padding: 0; border: 0; background: transparent; }
 .panel.is-minimized .phase6-bridge-status, .panel.is-minimized .panel-header-statistics, .panel.is-minimized .panel-options-toggle { display: none; }
 .panel.is-minimized .phase6-bridge-counters { width: 100%; }
-.panel.is-minimized .phase6-bridge-counters > div { padding: 3px 5px; }
+.panel.is-minimized .phase6-counter-trigger { min-height: 28px; padding: 3px 5px; }
 .panel.is-minimized .panel-project-title { max-width: 20vw; }
 .panel.is-minimized .codex-work-mode-control { position: static; display: block; width: auto; pointer-events: auto; }
 .panel.is-minimized .codex-work-mode-toggle { width: auto; min-height: 28px; padding: 4px 7px; }
@@ -108,13 +123,14 @@
   .panel.is-minimized .panel-brand-icon { width: 20px; height: 20px; flex-basis: 20px; }
   .panel.is-minimized .panel-project-divider, .panel.is-minimized .panel-project-title { display: none; }
   .panel.is-minimized .panel-header-actions { width: auto; flex-wrap: nowrap; }
-  .panel.is-minimized .phase6-bridge-counters dt { font-size: 10px; }
+  .panel.is-minimized .phase6-counter-label { font-size: 10px; }
   .panel.is-minimized .panel-minimize-toggle { flex-basis: 28px; width: 28px; }
 }
 
 @media (prefers-color-scheme: dark) {
   .phase6-card, .phase6-bridge-bar { border-color: var(--border-light, #424242); background: var(--main-surface-secondary, #303030); }
-  .phase6-bridge-counters > div { border-color: var(--border-light, #424242); }
+  .phase6-bridge-counter, .phase6-counter-popover, .phase6-counter-list > li { border-color: var(--border-light, #424242); }
+  .phase6-counter-popover { background: var(--main-surface-primary, #202123); }
   .tab-button.is-active { background: #3157a4; color: #fff; }
   .phase6-thread-state.is-estimated { color: #e3c36c; }
 }

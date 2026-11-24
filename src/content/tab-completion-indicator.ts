@@ -18,7 +18,9 @@ export interface TabCompletionIndicatorOptions {
 
 export class TabCompletionIndicator {
   private readonly options: TabCompletionIndicatorOptions;
-  private unread = false;
+  private answerUnread = false;
+  private codexUnread = false;
+  private codexConversationId: string | null = null;
   private disposed = false;
   private baseTitle = '';
   private lastWrittenTitle: string | null = null;
@@ -37,34 +39,56 @@ export class TabCompletionIndicator {
   }
 
   onAnswerCompleted(): void {
-    if (this.disposed || this.options.document.visibilityState !== 'hidden' || this.unread) return;
-    this.unread = true;
-    this.baseTitle = this.options.document.title;
+    if (this.disposed || this.options.document.visibilityState !== 'hidden' || this.answerUnread) return;
+    const alreadyMarked = this.hasUnreadMarker();
+    this.answerUnread = true;
+    if (!alreadyMarked) this.baseTitle = this.options.document.title;
     this.blinkPhase = 0;
     this.blinkTogglesRemaining = BLINK_TOGGLE_COUNT;
-    this.attachLifecycleListeners();
-    this.attachObservers();
+    this.activate();
     this.writeMarkedTitle();
     this.ensureAttentionIcon();
     this.scheduleBlink();
   }
 
+  setCodexUnreadNotifications(conversationId: string | null, count: number | null): void {
+    if (this.disposed) return;
+    const alreadyMarked = this.hasUnreadMarker();
+    if (conversationId !== this.codexConversationId) {
+      this.codexConversationId = conversationId;
+      this.codexUnread = false;
+    }
+    if (conversationId && Number.isSafeInteger(count) && (count ?? -1) >= 0) this.codexUnread = count! > 0;
+    if (this.hasUnreadMarker()) {
+      if (!alreadyMarked) this.baseTitle = this.options.document.title;
+      this.activate();
+      this.writeMarkedTitle();
+      if (this.answerUnread) this.ensureAttentionIcon();
+      else this.removeAttentionIcon();
+      return;
+    }
+    this.deactivateAndRestore();
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.clearUnreadState();
+    this.answerUnread = false;
+    this.codexUnread = false;
+    this.codexConversationId = null;
+    this.deactivateAndRestore();
   }
 
   private readonly onVisibilityChange = (): void => {
-    if (this.options.document.visibilityState === 'visible') this.clearUnreadState();
+    if (this.options.document.visibilityState === 'visible') this.clearAnswerUnreadState();
   };
 
   private readonly onFocus = (): void => {
-    if (this.options.document.visibilityState === 'visible') this.clearUnreadState();
+    if (this.options.document.visibilityState === 'visible') this.clearAnswerUnreadState();
   };
 
   private readonly onPageShow = (): void => {
-    if (this.options.document.visibilityState === 'visible') this.clearUnreadState();
+    if (this.options.document.visibilityState === 'visible') this.clearAnswerUnreadState();
   };
 
   private readonly onPageHide = (event: Event): void => {
@@ -81,7 +105,7 @@ export class TabCompletionIndicator {
   private attachObservers(): void {
     try {
       const root = this.options.document.documentElement;
-      if (root) {
+      if (root && !this.documentElementObserver) {
         this.documentElementObserver = this.createObserver(() => this.onHeadStructureChanged());
         this.documentElementObserver.observe(root, { childList: true });
       }
@@ -115,16 +139,16 @@ export class TabCompletionIndicator {
   }
 
   private onHeadStructureChanged(): void {
-    if (!this.unread) return;
+    if (!this.hasUnreadMarker()) return;
     this.connectHeadObserver();
     this.syncTitleFromSite();
-    this.ensureAttentionIcon();
+    if (this.answerUnread) this.ensureAttentionIcon();
   }
 
   private onHeadMutated(): void {
-    if (!this.unread) return;
+    if (!this.hasUnreadMarker()) return;
     this.syncTitleFromSite();
-    this.ensureAttentionIcon();
+    if (this.answerUnread) this.ensureAttentionIcon();
   }
 
   private syncTitleFromSite(): void {
@@ -153,6 +177,7 @@ export class TabCompletionIndicator {
   }
 
   private ensureAttentionIcon(): void {
+    if (!this.answerUnread) return;
     const head = this.options.document.head;
     if (!head) return;
     const icon = this.iconLink ?? this.options.document.createElement('link') as HTMLLinkElement;
@@ -171,7 +196,7 @@ export class TabCompletionIndicator {
   private scheduleBlink(): void {
     this.blinkTimer = this.options.window.setTimeout(() => {
       this.blinkTimer = undefined;
-      if (!this.unread || this.disposed) return;
+      if (!this.answerUnread || this.disposed) return;
       this.blinkTogglesRemaining -= 1;
       this.blinkPhase = this.blinkPhase === 0 ? 1 : 0;
       if (this.blinkTogglesRemaining === 0) this.blinkPhase = 0;
@@ -180,9 +205,28 @@ export class TabCompletionIndicator {
     }, BLINK_INTERVAL_MS);
   }
 
-  private clearUnreadState(): void {
-    if (!this.unread) return;
-    this.unread = false;
+  private hasUnreadMarker(): boolean { return this.answerUnread || this.codexUnread; }
+
+  private activate(): void {
+    this.attachLifecycleListeners();
+    this.attachObservers();
+  }
+
+  private clearAnswerUnreadState(): void {
+    if (!this.answerUnread) return;
+    this.answerUnread = false;
+    if (this.blinkTimer !== undefined) this.options.window.clearTimeout(this.blinkTimer);
+    this.blinkTimer = undefined;
+    this.removeAttentionIcon();
+    if (this.hasUnreadMarker()) {
+      this.writeMarkedTitle();
+      this.activate();
+      return;
+    }
+    this.deactivateAndRestore();
+  }
+
+  private deactivateAndRestore(): void {
     if (this.blinkTimer !== undefined) this.options.window.clearTimeout(this.blinkTimer);
     this.blinkTimer = undefined;
     this.headObserver?.disconnect();
@@ -194,8 +238,7 @@ export class TabCompletionIndicator {
     this.options.window.removeEventListener('focus', this.onFocus);
     this.options.window.removeEventListener('pageshow', this.onPageShow);
     this.options.window.removeEventListener('pagehide', this.onPageHide);
-    this.iconLink?.remove();
-    this.iconLink = null;
+    this.removeAttentionIcon();
     this.restoreTitleIfOwnedValueIsStillCurrent();
     this.baseTitle = '';
     this.lastWrittenTitle = null;
@@ -203,6 +246,11 @@ export class TabCompletionIndicator {
     this.titleElementCreatedByIndicator = false;
     this.blinkPhase = 0;
     this.blinkTogglesRemaining = 0;
+  }
+
+  private removeAttentionIcon(): void {
+    this.iconLink?.remove();
+    this.iconLink = null;
   }
 
   private restoreTitleIfOwnedValueIsStillCurrent(): void {

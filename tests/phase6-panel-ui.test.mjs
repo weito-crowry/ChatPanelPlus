@@ -19,7 +19,7 @@ test('Phase6ヘッダーは設定操作を維持し、最小化時も3件数を�
   assert.match(view, /panel-content" hidden=\{currentViewState\.minimized\}/);
   assert.match(view, /<BridgeSummaryBar[\s\S]*?compact/);
   assert.match(view, /<BridgeSummaryBar compact[\s\S]*?runningSummary=\{runningSummary\}/);
-  assert.match(view, /<BridgeSummaryBar conversationId=\{conversationId\}[\s\S]*?runningSummary=\{runningSummary\}/);
+  assert.match(view, /<BridgeSummaryBar conversationId=\{routeConversationId\}[\s\S]*?runningSummary=\{runningSummary\}/);
   assert.match(summary, /実行中/);
   assert.match(summary, /監視中/);
   assert.match(summary, /通知/);
@@ -44,7 +44,7 @@ test('A/B/Cカードは既存のowner・ACK・最終回答契約を保つ', asyn
   assert.match(list, /connection !== 'connected' \|\| !targetId/);
   assert.match(watch, /phase6-card-b/);
   assert.match(notifications, /phase6-card-c/);
-  assert.match(watch, /CODEX_BRIDGE_WATCH_ACK_EVENTS/);
+  assert.match(await read('../src/content/useCodexBridgeEventAcknowledger.ts'), /CODEX_BRIDGE_WATCH_ACK_EVENTS/);
   assert.match(watch, /CODEX_BRIDGE_WATCH_READ_FINAL_ANSWER/);
   assert.match(watch, /event\.ownerConversationId !== currentConversationId/);
   assert.match(watch, /選択threadの監視を開始/);
@@ -68,7 +68,7 @@ test('新規watch snapshotだけがAの対象connectionを更新し、running行
   assert.match(list, /observeWatchAdditions\(batch\.additions/);
   assert.match(list, /loadThreads\(false, false, context\)/);
   assert.match(list, /loadRunningSummary\(context\.targetId, context\)/);
-  assert.match(list, /reportRunningSummary\(\{ targetId: requestedTargetId, count: updated\.length, status: 'ready' \}\)/);
+  assert.match(list, /reportRunningSummary\(\{ targetId: requestedTargetId, threads: updated, status: 'ready' \}\)/);
   assert.doesNotMatch(list, /setInterval\(/);
 });
 

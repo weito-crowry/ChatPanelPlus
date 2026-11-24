@@ -61,6 +61,7 @@
 | C45 5秒foreground監視・終端後の自動解除 | 前面ChatGPTタブの監視周期を確認する。専用threadで`completed`、`failed`、`interrupted`を一件ずつ発生させ、event・通知・watch一覧・alarmを確認する。他watch併存、baselineが既終端、gap/unknown/inferred、event保存失敗も確認する。 | 前面pollは約5秒、Chrome alarmは30秒のまま。確実な新規終端遷移では一件のeventを保存して対象watchだけを解除し、別watchとevent ownerを保つ。音声の成功/失敗/muteにかかわらず解除し、保存失敗・不確実状態・初期baselineでは解除しない。最終watch解除時alarmを消し、他watchがあれば維持する。安全条件を満たさずwatchが残る終端状態は「通知判定保留」と理由を表示し、新規event成立と混同しない。 | PARTIAL（C46連続試験で終端後B0/C1を表示） | 2026-11-24の連続観測で対象終了後にB/設定内監視0、C通知1。通知検出10:05:09 JSTだが技術情報が折りたたまれidentityは直接照合していない。2026-11-23の実機FAILとその後の修正は履歴に保持。厳密poll周期、音声、failed/interrupted、保存失敗、alarm、他watch、worker復旧等の専用C45再受入は未実施。 |
 | C46 回答完了時のBridge ID先行照合・自動監視登録 | 専用会話/targetで明示ONにし、回答完了前は登録されないことを確認する。回答完了後にBridge `running_only=true`を取得し、応答時点と登録要求直前の現在DOMから対象turnを一意に再特定する。main/turn再描画・再配置、Bridge待ち中の非ID本文編集後でも、現在の同一会話・同assistant message ID・complete・現在可視本文内の候補ID一致を満たせば通す。2 live候補のうち本文に一つだけ含め、対象のみ登録されることを確認する。IDなし、過去turnだけ、ID部分一致/URL埋込、assistant ID不一致/不明/未完了、duplicate turn、別route/owner/target/connection、候補外ID、Bridge失敗/未対応、SPA race、音声状態、manual解除、worker restore、watch上限、C45通知/自動解除も確認する。 | (1)現在会話route/owner/target/connectionが一致。(2)現在DOMでevent turnが一意、assistant message ID一致、state=`complete`。(3)現在の可視本文にBridge live候補IDの完全一致token。候補照会は完了イベント後だけ。開始時HTMLElement同一性、時点間本文snapshot、安定化wait/本文同一性比較は登録ゲートにしない。既存token境界、URL/embedded ID拒否、同target alias、2候補中1候補のみ照合、最大32件の一致IDのみcontentから送信を維持する。本文/DOMはbackgroundへ渡さず、backgroundはsender/owner/target/connection/latest liveを再検証する。明示ON、重複event抑止、周期的な全件探索禁止、短命thread見逃し許容、manual watch、C45通知/自動解除、watch/event保持は維持する。 | PARTIAL（基本正常経路PASS） | 2026-11-24 10:00:42 JST、回答完了検出、Bridge候補2件、コード装飾付き対象IDの本文照合1件、対象1件のみ監視登録。対照候補は非登録。登録前A実行中2/B監視1/設定内監視1/C通知0。Bridge実測は対照正常終了10:04:34.514、対象正常終了10:05:00.631、実行中0。10:07頃A/B/設定内監視0、C通知1、検出10:05:09。10:06:05の候補0/no-running-candidates診断は終了後として正常。通知identityは直接照合していない。音声、手動更新の有無、厳密poll周期、別会話、worker復旧、異常系等は未確認。 |
 | C47 監視終了時の最終回答自動下書き反映 | C欄で会話別の既定OFFを確認し、専用会話でONにする。手動watchとC46自動watchから新eventを発生させ、空欄・既存draft・選択範囲の各状態を確認する。OFF、ON前event/reload、owner tab別会話/同会話別tab、SPA切替、audio OFF/mute、IME/添付/editor不可、pending・取得失敗、複数同時完了も確認する。詳細は`docs/c47-terminal-answer-auto-reflect-acceptance.md`。 | 新規保存後、ON時刻より後のeventだけをowner会話の入力欄末尾へ一度だけ追記し、空欄には本文をそのまま入れる。既存draft・選択・添付を壊さない。C37で`retrieved`かつ`confirmed`の回答だけを使い、pendingは最大2回再試行。未反映時はC欄状態と手動取得を残す。送信/Enter/送信ボタン/clipboardは呼ばず、C46 auto-watch・音声・muteは独立する。 | **PARTIAL（主要正常系PASS／残項目NOT_RUN）** | 実装commit `12d1e6d861349663706bfe7f9a1e886740cd21c8`。ユーザー報告：登録済みrepo直下`dist/` reload/F5後、C47 ONで11:23:51.223の正常終了時に空欄へ反映された2行の最終回答を送信し、Bridge最終回答と完全一致。11:47:22.660、11:47:46.942の正常終了後、未送信の既存手入力文末尾へ異なる検証マーカーを各1回、改行区切りで追記した内容を送信。当該試験で重複なし。初回はC47 ON忘れで再試験。送信前DOM／未送信状態の独立観測、OFF、過去event、watch起点、選択範囲、近接/同時完了、owner/SPA、音声/mute、IME/添付、取得失敗等はNOT_RUN。会話ID・回答本文・thread IDは記録しない。 |
+| C48 メインパネル通知リセット・詳細ポップオーバー・タイトル● | 専用会話で通常/最小化barを確認。3カウンタのラベル/数値へ約200ms hover、keyboard focus、Escape、離脱、長い一覧の内部scrollとviewport端を確認する。複数thread・同一thread複数event、真の0、loading/error、target/会話切替、ACK中の新event、部分失敗、履歴/最終回答/watch/auto-reflect維持を試す。hidden tabの新通知、別tab ACK、reload、SPA遷移、サイトtitle変更、ChatGPT回答未読との組合せも確認する。 | 件数と詳細が同じ正規snapshotで一致し、owner外の情報を出さない。通知クリックは確認ダイアログなしでクリック時snapshotだけをACKし、新eventは未確認のまま残る。部分失敗は最新件数と可視エラーを示す。回答未読とCodex通知のどちらかが残る間だけタイトル先頭に`● `が一つあり、Codex通知はfocusで解除されず正規件数0で解除される。faviconは回答完了挙動だけを保つ。 | **NOT_RUN（Chrome実機受入をユーザー実施）** | 2026-11-24 automated suite 801/801 PASS、production build・typecheck・lint/size・diff check PASS。Chrome reload/F5と実機受入は未実施。C46/C47等の既存Chrome記録は本項の証跡として流用しない。 |
 
 ## 残工程（重要度別、2026-11-24）
 
@@ -68,6 +69,7 @@
 
 ### P0 — 受入判定前に優先する
 
+- **C48 新規受入**：通知ACK、通常/最小化counter、popover/keyboard操作、タイトル●のcombined state、reload・SPA・別tab同期を本書C48手順で確認する。自動検証は801/801 PASSだが、Chrome受入はNOT_RUN。
 - **C47の未受入項目**：空欄への自動反映・本文一致、既存draft保持、順次複数反映、当該試験での重複なしはユーザー報告で部分PASS。OFF・過去event、watch起点、選択範囲、近接/同時完了、owner/SPA、audio/mute、IME/添付、取得失敗・手動fallbackはNOT_RUN。送信前DOM／未送信状態も独立観測していない。詳細はC47行と`docs/c47-terminal-answer-auto-reflect-acceptance.md`を参照。
 - C45専用の終端確認：対象event identity、監視自動解除、前面poll周期を対応付けて確認する。2026-11-24 C46連続観測ではB/設定0・C通知1まで確認したが、技術情報内identityは未照合。failed/interrupted、通知保存失敗、alarm、他watch、worker復旧は未確認。
 - C38実機確認：A実行中件数/一覧の更新契機、running_only live schema、実行中/通常mode、未対応・取得失敗表示を確認する。件数2→0は観測済みだが、独立した手動更新の有無は未確認。
@@ -140,6 +142,19 @@
 6. OFF後も既存watchと通知履歴が残ることを確認する。既存の無関係なwatch/eventやBridgeの本番状態は変更せず、C46専用の結果だけを記録する。
 7. Aの実行中件数が2と表示された状態について、手動更新をせずに自動更新されたかを別項目として観測する。09:35:09 JSTの「2」表示だけでは自動更新の有無は未確認。
 8. 今回は対象終了後にB/設定内監視0、C通知1、検出10:05:09 JSTを表示した。技術情報が折りたたまれ通知identityは直接照合していないため、C46正常系の部分証拠として記録済み。C45専用の通知identity確認、厳密poll周期、音声・異常系は別項目として受け入れる。
+
+## C48 配備後の手動確認
+
+今回のソース変更を含むbuildを、ユーザーが登録済みChromeロード元へ反映した後に実施する。現在の受入状態は**NOT_RUN**。
+
+1. 専用のテスト会話・threadを使い、既存の監視recordと通知履歴は操作しない。拡張を`chrome://extensions`で再読み込みしChatGPTページをF5する。通常表示と最小化表示の両方で「実行中」「監視中」「通知」のラベルと数値に約200ms hoverし、同じ一覧が出ること、keyboard focusで開くこと、Escapeと離脱で閉じることを確認する。長い一覧はポップオーバー内だけscrollし、上下左右のviewport端で切れないことも確認する。
+2. 実行中一覧のthread名と確定/推定状態、監視一覧のthread名と状態、通知一覧のthread名・終了時刻・終了状態を確認する。名前がない対象は「不明」と表示しIDは表示しない。複数通知が同じthreadにある場合、個々の通知を番号・時刻・状態で識別でき、件数は`connectionId/targetId/threadId`単位の表示group数と一致することを確認する。対象Bridge切替・会話SPA遷移後に旧一覧/旧件数/旧タイトル印が残らないことを確認する。
+3. 初回読込中・一覧取得失敗・0件を確認する。未取得は`—`と説明され、真の0件は0と空一覧として出る。通知0/未取得/処理中ではACK操作が起きず、他2カウンタは読み取り専用であることを確認する。
+4. 専用会話で異なるthreadと同一threadに複数の終了eventを作る。通知のラベルまたは数値をクリックし、確認ダイアログなしで既存eventが確認済みになることを確認する。履歴、最終回答、監視登録、auto-reflect設定・処理は保持し、削除操作と混同しないことを確認する。
+5. ACK要求中に同ownerの新eventを発生させ、クリック時に存在したeventだけが確認済みで、新eventは未確認のまま件数へ反映されることを確認する。同時の二重クリックで二重操作しないこと、別会話のeventは変わらないことを確認する。ACK部分失敗を再現可能な環境では、可視エラーと再取得後の正規件数を確認する。未確認分を再試行しても削除にならないことを確認する。
+6. 通知のある会話をhidden tabにし、ChatGPT回答完了未読とCodex通知をそれぞれ単独・同時に確認する。Codex通知だけはtabをvisible/focusにしても印が残り、同会話の未確認件数が正規一覧で0になれば消える。ChatGPT回答未読が残る間はタイトル印が一つ維持され、ChatGPT側だけfocusで解除されてもCodex通知印は残る。Codex通知だけではfaviconが変更されないことを確認する。
+7. reload後に未確認状態から印が復元されること、別tabからACKしたとき正規件数と印が同期して消えること、hidden tabで新通知が来たとき印が現れることを確認する。Codex印がある間にChatGPT側がdocument titleを変更した場合、新しいtitleの先頭に印が一つ追従し、未確認0件で元の最新titleへ戻ることを確認する。
+8. 会話本文やthread IDを記録へ含めず、各項目をPASS/FAIL/NOT_RUNでC48行へ追記する。複数ChatGPT会話の自動監視排他に関する動作は今回の受入対象外とする。
 
 ## 未決事項・実装上の保留
 
