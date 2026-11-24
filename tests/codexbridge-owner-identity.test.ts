@@ -112,10 +112,12 @@ test('content responderは同一extensionからの厳密なpingにだけChatGPT 
   });
 });
 
-test('owner確認失敗の説明は自動登録と保持データを正確に示す', async () => {
+test('owner確認失敗と同一会話別tab競合を区別し、保持データを示す', async () => {
   const presentation = await import('../src/content/codexbridge-auto-watch-presentation.ts') as Record<string, unknown>;
   const label = presentation.codexBridgeAutoWatchFailureLabel as ((failure: string | null) => string) | undefined;
   assert.equal(typeof label, 'function');
   assert.equal(label!('owner-tab-unavailable'),
-    'ownerタブの会話を確認できず、自動登録を保留しています。設定と既存の監視・通知履歴は保持されています。');
+    'この会話の自動登録は別タブが所有中か、ownerタブを確認できません。設定と監視・通知履歴は保持されています。');
+  assert.equal(label!('auto-owner-conflict'),
+    '同じ会話の別タブが自動登録を所有中です。旧タブの確認が取れるまで設定を引き継ぎません。');
 });

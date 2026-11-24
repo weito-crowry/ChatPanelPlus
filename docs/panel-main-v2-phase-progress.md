@@ -131,6 +131,14 @@
 - 17:22/18:51の当時のsource検証結果（713/713、716/716等）は旧定期探索およびBridge候補本文照合前の順序の履歴として保持する。今回のBridge-first順序へ変更後、`pnpm test` 732/732 PASS、`pnpm typecheck`・`pnpm lint` PASS、`pnpm check:size` PASS（264 files、500行/32768 bytes以下）、`pnpm build` exit 0。Chrome実ロード元は`dist/`。今回Chrome reload・ChatGPT F5・Bridge/既存storage操作は行わず、訂正後Chrome実機受入はNOT_RUN。C37主要正常系PASS、C38 Chrome NOT_RUN、C45の既存FAIL/再受入待ちは独立して維持する。
 - Chromeの実ロード元はユーザー明示のrepo直下`D:\weito\Documents\src\codexapp\ChatPanelPlus\dist`。この作業ではChrome reload、ChatGPT F5、Bridge操作、既存watch/event/storage変更を行わない。
 
+## C49 同一Bridge/target上の会話別自動監視（2026-11-24）
+
+- 永続設定entryの一意性を`connectionId + targetId + ownerConversationId`へ変更し、同じBridge/targetでも異なる会話のON/OFF・owner tab・mute revision・skip・failureを独立させた。保存fieldはすでにownerConversationIdを含むため、storage keyと`version: 1`の形は維持し、既存v1 entryをそのまま読み書きできる。version bumpや別キーmigrationは不要と判断。v1内の同一triple重複、異常entry、上限超過は従来どおり拒否し、disabled entry・watch・eventを消さない。
+- 有効設定の照会はcurrent connection/target/conversationに限定し、他会話がONでもOFF側を競合errorにしない。別connectionの古いentryをcurrent connectionとして選ばず、不一致中は登録を見送る。同一会話の複数tabは従来の単一owner tab制約とstale tabの再bind条件を保つ。ON/OFFをentry単位で直列化し、running_only待ちのroute変更後は保存しない。
+- 回答完了候補は従来どおり当該会話の確定済assistant回答内に存在するBridge live IDのみ。候補ID一致は起動turn/threadを暗号学的に証明しない制約をC49受入手順へ明記。running全件の周期探索は追加していない。
+- watch所有権は既存の`CodexBridgeThreadMonitorStorage.mutate` read-modify-write直列化と`allowOwnerTransfer: false`でconnection/target/canonical thread単位に保つ。異なる会話が同一threadへ同時要求しても一人だけが作成し、競合failureはその会話に記録して別候補は続行する。同一会話の完了登録とstop/skipを同じentry lockに揃え、登録中のstop競合でwatchが残る回帰も修正した。
+- 受入手順は`docs/c49-parallel-auto-watch-acceptance.md`、最終項目は本書C49行。自動検証は`pnpm test` 814/814、`pnpm typecheck` PASS、`pnpm lint` PASS（check:size 289 files、最大500行/32768 bytes）、`pnpm build` PASS、`git diff --check` PASS。これはsource/build検証でChrome受入ではない。Chrome reload/F5・Bridge操作・既存storage変更は未実施、C49 Chrome受入はNOT_RUN。C48は従来記録の801/801 automated PASS・Chrome NOT_RUNを維持する。
+
 ## C46 semantic guard correction（2026-11-24）
 
 - 08:09:15 JSTのユーザー提示スクリーンショットでは、イベント検出、Bridge候補取得OK・2件、本文照合`dom-changed`、監視登録未実行、B監視0、自動登録ON。Bridge側候補は2件とも`live/in_progress`。実機からIDや回答本文は記録しない。

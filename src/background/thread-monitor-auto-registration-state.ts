@@ -72,13 +72,10 @@ export function readAutoWatchState(value: unknown): AutoState | null {
   if (entries.some((entry) => entry === null)) return null;
   const validated = entries as AutoEntry[];
   const identities = new Set<string>();
-  const owners = new Set<string>();
   for (const entry of validated) {
-    const key = `${entry.connectionId}\u0000${entry.targetId}`;
+    const key = `${entry.connectionId}\u0000${entry.targetId}\u0000${entry.ownerConversationId}`;
     if (identities.has(key)) return null;
     identities.add(key);
-    if (entry.enabled && owners.has(key)) return null;
-    if (entry.enabled) owners.add(key);
   }
   return { version: 1, entries: validated };
 }

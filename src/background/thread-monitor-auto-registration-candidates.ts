@@ -44,10 +44,10 @@ function isLiveCandidate(thread: CodexBridgeThread, targetId: string): boolean {
     && execution.evidence?.toLowerCase() === 'live' && isCodexBridgeWatchIdentifier(execution.turnId);
 }
 
-function ownerEntry(value: unknown, targetId: string, ownerTabId: number, conversationId: string) {
+function ownerEntries(value: unknown, targetId: string, ownerTabId: number, conversationId: string) {
   const state = readAutoWatchState(value);
-  return state ? state.entries.find((entry) => entry.enabled && entry.targetId === targetId
-    && entry.ownerTabId === ownerTabId && entry.ownerConversationId === conversationId) ?? null : undefined;
+  return state ? state.entries.filter((entry) => entry.enabled && entry.targetId === targetId
+    && entry.ownerTabId === ownerTabId && entry.ownerConversationId === conversationId) : undefined;
 }
 
 export class CodexBridgeAutoWatchCandidates {
@@ -74,14 +74,15 @@ export class CodexBridgeAutoWatchCandidates {
     let stateValue: unknown;
     try { stateValue = (await this.storage.get([CODEX_BRIDGE_AUTO_WATCH_STORAGE_KEY]))[CODEX_BRIDGE_AUTO_WATCH_STORAGE_KEY]; }
     catch { return { ok: false, reason: 'storage-error' }; }
-    const entry = ownerEntry(stateValue, targetId, ownerTabId, conversationId);
-    if (entry === undefined) return { ok: false, reason: 'storage-error' };
-    if (!entry) return { ok: true, data: { connectionId: null, threadIds: [] } };
+    const configuredEntries = ownerEntries(stateValue, targetId, ownerTabId, conversationId);
+    if (configuredEntries === undefined) return { ok: false, reason: 'storage-error' };
+    if (!configuredEntries.length) return { ok: true, data: { connectionId: null, threadIds: [] } };
 
     let access: CodexBridgeMonitorAccess;
     try { access = await this.resolveAccess(); } catch (error) { return { ok: false, reason: failureFor(error) }; }
     if (!access.connectionId) return { ok: false, reason: access.failure ?? 'connection-unavailable' };
-    if (access.connectionId !== entry.connectionId) return { ok: false, reason: 'connection-changed' };
+    const entry = configuredEntries.find((candidate) => candidate.connectionId === access.connectionId);
+    if (!entry) return { ok: false, reason: 'connection-changed' };
     if (!await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false)) {
       return { ok: false, reason: 'owner-tab-unavailable' };
     }
@@ -106,10 +107,10 @@ export class CodexBridgeAutoWatchCandidates {
 
     try { stateValue = (await this.storage.get([CODEX_BRIDGE_AUTO_WATCH_STORAGE_KEY]))[CODEX_BRIDGE_AUTO_WATCH_STORAGE_KEY]; }
     catch { return { ok: false, reason: 'storage-error' }; }
-    const latestEntry = ownerEntry(stateValue, targetId, ownerTabId, conversationId);
-    if (latestEntry === undefined) return { ok: false, reason: 'storage-error' };
+    const latestEntries = ownerEntries(stateValue, targetId, ownerTabId, conversationId);
+    if (latestEntries === undefined) return { ok: false, reason: 'storage-error' };
+    const latestEntry = latestEntries.find((candidate) => candidate.connectionId === entry.connectionId);
     if (!latestEntry) return { ok: true, data: { connectionId: null, threadIds: [] } };
-    if (latestEntry.connectionId !== entry.connectionId) return { ok: false, reason: 'connection-changed' };
     if (!await this.ownerTabMatches(ownerTabId, conversationId).catch(() => false)) {
       return { ok: false, reason: 'owner-tab-unavailable' };
     }

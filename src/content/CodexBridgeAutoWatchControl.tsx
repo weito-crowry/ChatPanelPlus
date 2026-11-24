@@ -320,7 +320,7 @@ export function CodexBridgeAutoWatchControl({ targetId, targetName, conversation
 
   const visibleFailure = failure ?? currentStatus?.failure ?? null;
   const stateLabel = !currentStatus ? '状態を確認できません' : currentStatus.state === 'conflict'
-    ? '別会話が自動監視登録中' : currentStatus.enabled ? currentStatus.state === 'error' ? '有効・登録エラー' : '有効' : 'OFF';
+    ? 'ownerタブを確認できません' : currentStatus.enabled ? currentStatus.state === 'error' ? '有効・登録エラー' : '有効' : 'OFF';
   const displayedOwner = currentStatus?.ownerConversationId ?? conversationId;
   const diagnosticSummary = currentDiagnostic
     ? `${diagnosticTime(currentDiagnostic.checkedAt)} · ${currentDiagnostic.eventDetected ? 'イベント検出' : 'イベント未検出'}`
@@ -329,7 +329,7 @@ export function CodexBridgeAutoWatchControl({ targetId, targetName, conversation
     <div className="codex-bridge-auto-watch" aria-label="回答完了時の自動監視登録">
       <strong>回答完了時の自動監視登録</strong>
       <p className="codex-bridge-note">状態: {stateLabel} · 対象マシン: {targetName || targetId || '未選択'}</p>
-      <p className="codex-bridge-note">owner ChatGPT会話: {currentStatus?.state === 'conflict' ? '別会話 (ID非表示)' : displayedOwner ?? '確認できません'}</p>
+      <p className="codex-bridge-note">owner ChatGPT会話: {currentStatus?.state === 'conflict' ? '確認できません' : displayedOwner ?? '確認できません'}</p>
       {currentStatus?.enabled && <p className="codex-bridge-note">
         この会話の監視: {watchingThreadCount === null ? '未確認' : `${watchingThreadCount}件`}
       </p>}
