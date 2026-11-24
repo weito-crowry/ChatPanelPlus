@@ -13,6 +13,7 @@ import {
   type CodexBridgeAutoWatchCompletionProgress,
   createCodexBridgeAutoWatchCandidatesMessage,
   createCodexBridgeAutoWatchCompletionMessage,
+  matchCurrentCompletedAssistantMessage,
   matchCompletedAnswerAfterBridgeCandidates,
   subscribeCodexBridgeAutoWatchCompletionCheck,
   subscribeCodexBridgeAutoWatchCompletion,
@@ -45,7 +46,7 @@ type AutoWatchCompletionDiagnostic = Readonly<{
 const DIAGNOSTIC_REASONS = new Set([
   ...AUTO_FAILURES,
   'invalid-route', 'candidate-response-invalid', 'no-running-candidates', 'dom-unavailable', 'turn-not-unique',
-  'dom-changed', 'answer-not-confirmed', 'answer-too-large', 'no-matching-ids', 'ambiguous-match', 'too-many-matches',
+  'answer-not-confirmed', 'answer-too-large', 'no-matching-ids', 'ambiguous-match', 'too-many-matches',
   'no-active-cycle', 'assistant-message-unavailable', 'answer-completion-event-not-fired', 'invalid-request',
   'no-thread-registered',
 ]);
@@ -188,8 +189,9 @@ export function CodexBridgeAutoWatchControl({ targetId, targetName, conversation
         scope, run, checkedAt: Date.now(), eventDetected: true, eventReason: null,
         candidates: diagnosticStage('pending'), match: diagnosticStage('pending'), registration: diagnosticStage('not-run'),
       });
+      const expectedPathname = window.location.pathname;
       const request = createCodexBridgeAutoWatchCandidatesMessage(
-        current.targetId, current.conversationId, window.location.pathname, notice,
+        current.targetId, current.conversationId, expectedPathname, notice,
       );
       if (!request || !expectedTarget || !expectedConversation) {
         updateDiagnostic({ candidates: diagnosticStage('skipped', null,
@@ -209,6 +211,7 @@ export function CodexBridgeAutoWatchControl({ targetId, targetName, conversation
               if (progress.stage === 'candidates') updateDiagnostic({ candidates: progressStage(progress) });
               else updateDiagnostic({ match: progressStage(progress) });
             },
+            expectedPathname,
           );
           if (!isCurrentRun()) return;
           if (match.status === 'failed') { setFailure(match.reason); return; }
@@ -218,8 +221,19 @@ export function CodexBridgeAutoWatchControl({ targetId, targetName, conversation
             }
             return;
           }
+          const currentMatch = matchCurrentCompletedAssistantMessage(
+            isCurrentRun()
+              ? { document, pathname: window.location.pathname, targetId: expectedTarget, conversationId: expectedConversation }
+              : null,
+            expectedTarget, expectedConversation, expectedPathname, notice, match.candidateThreadIds,
+          );
+          if (currentMatch.status !== 'ready') {
+            updateDiagnostic({ match: diagnosticStage('skipped', null, safeDiagnosticReason(currentMatch.reason)) });
+            return;
+          }
+          updateDiagnostic({ match: diagnosticStage('ok', currentMatch.threadIds.length) });
           const message = createCodexBridgeAutoWatchCompletionMessage(
-            expectedTarget, match.connectionId, expectedConversation, window.location.pathname, notice, match.threadIds,
+            expectedTarget, match.connectionId, expectedConversation, expectedPathname, notice, currentMatch.threadIds,
           );
           if (!message) {
             updateDiagnostic({ registration: diagnosticStage('skipped', null, 'invalid-request') });

@@ -71,7 +71,7 @@ test('句読点がBridge IDの末尾にもなる重複境界は曖昧として�
   });
 });
 
-test('Bridge要求開始後にcontent内snapshotを取り、候補応答後だけID照合する', async () => {
+test('Bridge応答後に現在の本文だけを照合し、候補なしなら本文を読まない', async () => {
   const api = await import('../src/content/codexbridge-auto-watch-completion.ts') as Record<string, unknown>;
   const matchAfterBridge = api.matchCompletedAnswerAfterBridgeCandidates as
     ((request: () => Promise<unknown>, getPage: () => unknown, targetId: string, conversationId: string,
@@ -84,20 +84,24 @@ test('Bridge要求開始後にcontent内snapshotを取り、候補応答後だ�
   const cloneAnswerBody = answerBody.cloneNode.bind(answerBody);
   answerBody.cloneNode = (deep = false) => { order.push('body-read'); return cloneAnswerBody(deep); };
   const page = { document: h.document, pathname: h.window.location.pathname, targetId: 'target-1', conversationId: 'owner' };
-  const matched = await matchAfterBridge!(async () => {
+  let resolveCandidates!: (value: unknown) => void;
+  const candidates = new Promise<unknown>((resolve) => { resolveCandidates = resolve; });
+  const matching = matchAfterBridge!(() => {
     order.push('bridge-read');
-    return { ok: true, data: { connectionId: 'connection-A', threadIds: [THREAD_A] } };
-  }, () => page,
-  'target-1', 'owner', notice);
-  assert.deepEqual(order, ['bridge-read', 'body-read', 'body-read', 'body-read', 'body-read']);
-  assert.deepEqual(matched, { status: 'ready', connectionId: 'connection-A', threadIds: [THREAD_A] });
+    return candidates;
+  }, () => page, 'target-1', 'owner', notice);
+  assert.deepEqual(order, ['bridge-read']);
+  resolveCandidates({ ok: true, data: { connectionId: 'connection-A', threadIds: [THREAD_A] } });
+  const matched = await matching;
+  assert.deepEqual(order, ['bridge-read', 'body-read']);
+  assert.deepEqual(matched, { status: 'ready', connectionId: 'connection-A', threadIds: [THREAD_A], candidateThreadIds: [THREAD_A] });
 
   order.length = 0;
   const noCandidates = await matchAfterBridge!(async () => {
     order.push('bridge-read');
     return { ok: true, data: { connectionId: null, threadIds: [] } };
   }, () => page, 'target-1', 'owner', notice);
-  assert.deepEqual(order, ['bridge-read', 'body-read']);
+  assert.deepEqual(order, ['bridge-read']);
   assert.deepEqual(noCandidates, { status: 'skipped', reason: 'no-running-candidates' });
 });
 
@@ -114,7 +118,7 @@ test('照合進捗は候補数と一致数だけを通知しthread IDや本文�
     ok: true, data: { connectionId: 'connection-A', threadIds: [THREAD_A, THREAD_B] },
   }), () => ({ document: h.document, pathname: h.window.location.pathname, targetId: 'target-1', conversationId: 'owner' }),
   'target-1', 'owner', notice, (entry) => progress.push(entry));
-  assert.deepEqual(matched, { status: 'ready', connectionId: 'connection-A', threadIds: [THREAD_A] });
+  assert.deepEqual(matched, { status: 'ready', connectionId: 'connection-A', threadIds: [THREAD_A], candidateThreadIds: [THREAD_A, THREAD_B] });
   assert.deepEqual(progress, [
     { stage: 'candidates', status: 'ok', count: 2 },
     { stage: 'match', status: 'ok', count: 1 },
@@ -193,7 +197,7 @@ test('候補取得中の属性・非本文UI・同一semantic textの再描画�
     }
     resolveCandidates({ ok: true, data: { connectionId: 'connection-A', threadIds: [THREAD_A, THREAD_B] } });
     assert.deepEqual(await matching,
-      { status: 'ready', connectionId: 'connection-A', threadIds: [THREAD_A] }, change);
+      { status: 'ready', connectionId: 'connection-A', threadIds: [THREAD_A], candidateThreadIds: [THREAD_A, THREAD_B] }, change);
   }
 });
 
@@ -212,17 +216,17 @@ test('候補取得待ちのmain配下にある無関係な属性・子要素・�
     return { ok: true, data: { connectionId: 'connection-A', threadIds: [THREAD_A] } };
   }, () => ({ document: h.document, pathname: h.window.location.pathname, targetId: 'target-1', conversationId: 'owner' }),
   'target-1', 'owner', notice);
-  assert.deepEqual(matched, { status: 'ready', connectionId: 'connection-A', threadIds: [THREAD_A] });
+  assert.deepEqual(matched, { status: 'ready', connectionId: 'connection-A', threadIds: [THREAD_A], candidateThreadIds: [THREAD_A] });
 });
 
-test('候補取得中の本文差分・assistant identity/state変更・turn/root変更は拒否する', async () => {
+test('Bridge応答時の現在本文・assistant identity/state・turn一意性で照合を判定する', async () => {
   const api = await import('../src/content/codexbridge-auto-watch-completion.ts') as Record<string, unknown>;
   const matchAfterBridge = api.matchCompletedAnswerAfterBridgeCandidates as
     ((request: () => Promise<unknown>, getPage: () => unknown, targetId: string, conversationId: string,
       event: typeof notice) => Promise<unknown>) | undefined;
   assert.equal(typeof matchAfterBridge, 'function');
 
-  for (const change of ['text', 'clear', 'message-id', 'in-progress', 'move-out', 'remove', 'replace', 'root'] as const) {
+  for (const change of ['text', 'unmatched', 'clear', 'message-id', 'in-progress', 'move-out', 'remove', 'past-only', 'replace', 'root', 'duplicate'] as const) {
     const h = statisticsHarness('/c/owner');
     const completedTurn = turn(notice.turnKey, '質問', `ID ${THREAD_A}`, notice.assistantMessageId);
     h.document.root.append(completedTurn);
@@ -236,6 +240,9 @@ test('候補取得中の本文差分・assistant identity/state変更・turn/roo
     const assistant = completedTurn.querySelectorAll('[data-chatgpt-selection-message-id]')[0]!;
     if (change === 'text') {
       body.text = `ID ${THREAD_B}`;
+      latestMutationObserver()?.notify(body, body);
+    } else if (change === 'unmatched') {
+      body.text = `ID ${UNRELATED_UUID}`;
       latestMutationObserver()?.notify(body, body);
     } else if (change === 'clear') {
       body.text = '';
@@ -255,26 +262,38 @@ test('候補取得中の本文差分・assistant identity/state変更・turn/roo
       completedTurn.remove();
       holder.append(completedTurn);
       latestMutationObserver()?.notify(h.document.root, holder, [completedTurn]);
+    } else if (change === 'past-only') {
+      completedTurn.remove();
+      h.document.root.append(turn('previous-turn', '質問', `過去の回答 ${THREAD_A}`, notice.assistantMessageId));
     } else if (change === 'replace') {
       const replacement = turn(notice.turnKey, '質問', `ID ${THREAD_A}`, notice.assistantMessageId);
       completedTurn.remove();
       h.document.root.append(replacement);
       latestMutationObserver()?.notify(h.document.root, replacement, [completedTurn]);
-    } else {
+    } else if (change === 'root') {
       const replacementRoot = new FakeElement('main');
       replacementRoot.append(turn(notice.turnKey, '質問', `ID ${THREAD_A}`, notice.assistantMessageId));
       replacementRoot.setOwnerDocument(h.document);
       h.document.root = replacementRoot;
+    } else {
+      h.document.root.append(turn(notice.turnKey, '質問', `ID ${THREAD_A}`, notice.assistantMessageId));
     }
     resolveCandidates({ ok: true, data: { connectionId: 'connection-A', threadIds: [THREAD_A, THREAD_B] } });
     const matched = await matching as CodexBridgeAutoWatchMatchResult;
-    assert.equal(matched.status, 'skipped', change);
-    if (matched.status !== 'skipped') assert.fail(`Expected a skip for ${change}`);
-    assert.ok(matched.reason === 'dom-changed' || matched.reason === 'answer-not-confirmed', change);
+    if (change === 'text' || change === 'replace' || change === 'root') {
+      assert.deepEqual(matched, { status: 'ready', connectionId: 'connection-A',
+        threadIds: [change === 'text' ? THREAD_B : THREAD_A], candidateThreadIds: [THREAD_A, THREAD_B] }, change);
+    } else {
+      assert.equal(matched.status, 'skipped', change);
+      if (matched.status !== 'skipped') assert.fail(`Expected a skip for ${change}`);
+      assert.equal(matched.reason, change === 'unmatched' ? 'no-matching-ids'
+        : change === 'remove' || change === 'move-out' || change === 'past-only' || change === 'duplicate'
+          ? 'turn-not-unique' : 'answer-not-confirmed', change);
+    }
   }
 });
 
-test('候補応答後の本文読み取り中に別IDへ変わった場合は照合を拒否する', async () => {
+test('Bridge応答後に読み取った現在本文のIDを使って照合する', async () => {
   const api = await import('../src/content/codexbridge-auto-watch-completion.ts') as Record<string, unknown>;
   const matchAfterBridge = api.matchCompletedAnswerAfterBridgeCandidates as
     ((request: () => Promise<unknown>, getPage: () => unknown, targetId: string, conversationId: string,
@@ -288,15 +307,15 @@ test('候補応答後の本文読み取り中に別IDへ変わった場合は照
   let reads = 0;
   body.cloneNode = (deep = false) => {
     const clone = cloneBody(deep);
-    if (reads++ === 2) clone.text = `ID ${THREAD_B}`;
+    if (reads++ === 0) clone.text = `現在の本文 ID ${THREAD_B}`;
     return clone;
   };
   const matched = await matchAfterBridge!(async () => ({
     ok: true, data: { connectionId: 'connection-A', threadIds: [THREAD_A, THREAD_B] },
   }), () => ({ document: h.document, pathname: h.window.location.pathname, targetId: 'target-1', conversationId: 'owner' }),
   'target-1', 'owner', notice);
-  assert.deepEqual(matched, { status: 'skipped', reason: 'dom-changed' });
-  assert.equal(reads >= 3, true);
+  assert.deepEqual(matched, { status: 'ready', connectionId: 'connection-A', threadIds: [THREAD_B], candidateThreadIds: [THREAD_A, THREAD_B] });
+  assert.equal(reads, 1);
 });
 
 test('Bridge照会後のSPA会話route変更では本文を照合しない', async () => {
@@ -322,7 +341,7 @@ test('Bridge照会後のSPA会話route変更では本文を照合しない', asy
   assert.deepEqual(matched, { status: 'skipped', reason: 'invalid-route' });
 });
 
-test('Bridge要求を先行し、本文snapshot後に候補応答・安定化読み取りを行う', async () => {
+test('Bridge要求を先行し、応答後に本文を一度だけ読む', async () => {
   const api = await import('../src/content/codexbridge-auto-watch-completion.ts') as Record<string, unknown>;
   const matchAfterBridge = api.matchCompletedAnswerAfterBridgeCandidates as
     ((request: () => Promise<unknown>, getPage: () => unknown, targetId: string, conversationId: string,
@@ -339,11 +358,11 @@ test('Bridge要求を先行し、本文snapshot後に候補応答・安定化読
   const matching = matchAfterBridge!(() => { order.push('bridge-request'); return candidates; },
     () => ({ document: h.document, pathname: h.window.location.pathname, targetId: 'target-1', conversationId: 'owner' }),
     'target-1', 'owner', notice);
-  assert.deepEqual(order, ['bridge-request', 'body-read']);
+  assert.deepEqual(order, ['bridge-request']);
   resolveCandidates({ ok: true, data: { connectionId: 'connection-A', threadIds: [THREAD_A, THREAD_B] } });
   assert.deepEqual(await matching,
-    { status: 'ready', connectionId: 'connection-A', threadIds: [THREAD_A] });
-  assert.deepEqual(order, ['bridge-request', 'body-read', 'body-read', 'body-read', 'body-read']);
+    { status: 'ready', connectionId: 'connection-A', threadIds: [THREAD_A], candidateThreadIds: [THREAD_A, THREAD_B] });
+  assert.deepEqual(order, ['bridge-request', 'body-read']);
 });
 
 test('回答本文のcode要素内にある完全一致IDも取得する', async () => {
@@ -361,7 +380,7 @@ test('回答本文のcode要素内にある完全一致IDも取得する', async
     ok: true, data: { connectionId: 'connection-A', threadIds: [THREAD_A, THREAD_B] },
   }), () => ({ document: h.document, pathname: h.window.location.pathname, targetId: 'target-1', conversationId: 'owner' }),
   'target-1', 'owner', notice);
-  assert.deepEqual(matched, { status: 'ready', connectionId: 'connection-A', threadIds: [THREAD_A] });
+  assert.deepEqual(matched, { status: 'ready', connectionId: 'connection-A', threadIds: [THREAD_A], candidateThreadIds: [THREAD_A, THREAD_B] });
 });
 
 test('Bridge照会待ちにSPA会話が切り替わったら本文を読まない', async () => {

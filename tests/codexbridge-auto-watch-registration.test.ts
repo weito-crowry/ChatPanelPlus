@@ -449,3 +449,48 @@ test('AnswerCompletionTrackerから実サービスまで、音声状態に関係
     unsubscribe();
   }
 });
+
+test('Bridge応答前に現在本文から候補IDが消えた場合は監視登録しない', async () => {
+  const auto = harness([liveThread(threadOneId, turnOneId)]);
+  await enable(auto);
+  let releaseCandidates!: () => void;
+  auto.fetchBarrier = new Promise<void>((resolve) => { releaseCandidates = resolve; });
+  let registration: Promise<number> | null = null;
+  const unsubscribe = subscribeCodexBridgeAutoWatchCompletion((notice) => {
+    registration = (async () => {
+      const candidateResponse = await auto.auto.getRunningCandidates(target.id, ownerA.ownerTabId, notice.conversationId,
+        notice.turnKey, notice.assistantMessageId);
+      if (!candidateResponse.ok) return 0;
+      const match = await matchCompletedAnswerAfterBridgeCandidates(async () => ({
+        ok: true, data: candidateResponse.data,
+      }), () => ({ document: stats.document as unknown as Document, pathname: stats.window.location.pathname,
+        targetId: target.id, conversationId: notice.conversationId }), target.id, notice.conversationId, notice);
+      if (match.status !== 'ready') return 0;
+      return auto.auto.registerCompletedAnswer(target.id, match.connectionId, ownerA.ownerTabId, notice.conversationId,
+        notice.turnKey, notice.assistantMessageId, match.threadIds);
+    })();
+  });
+  const stats = statisticsHarness(`/c/${ownerA.ownerConversationId}`, false, undefined, {
+    onAnswerCompleted: (event, conversationId) => {
+      publishCodexBridgeAutoWatchCompletion(stats.window.location.pathname, event, conversationId);
+    },
+  });
+  const active = turn('current-answer-turn', '質問', '', 'current-assistant-message', 'in_progress');
+  stats.document.root.append(active);
+  stats.controller.start();
+  await settle();
+  const body = active.querySelectorAll('[data-dil-message-id]')[0]!;
+  active.querySelectorAll('[data-talvt-turn-state]')[0]!.attributes['data-talvt-turn-state'] = 'complete';
+  body.text = `Bridge候補ID ${threadOneId}`;
+  FakeMutationObserver.latest?.notify(active, active);
+  while (auto.runningOnlyCalls === 0) await new Promise((resolve) => setImmediate(resolve));
+  body.text = '現在の本文に候補IDはない';
+  releaseCandidates();
+
+  assert.ok(registration);
+  assert.equal(await registration, 0);
+  assert.equal(auto.runningOnlyCalls, 1);
+  assert.deepEqual(await auto.monitor.list(), []);
+  stats.controller.stop();
+  unsubscribe();
+});
