@@ -1,19 +1,20 @@
 # メインパネル再設計 v2 — Phase進捗
 
-## 現在地と残工程（2026-11-24）
+## 現在地と残工程（2026-11-25）
 
 - Chrome実ロード元はユーザー確認済みのrepo直下`dist/`。C46文書更新はcommit `99defc201541b160b9feb267fd8b18618ac11296`で完了。追加C47の実装commitは`12d1e6d861349663706bfe7f9a1e886740cd21c8`。terminal event保存後のowner限定identity通知、C37確定回答取得、選択範囲を使わない末尾追記、会話別既定OFF設定を実装した。実装時の`pnpm test` 784/784、typecheck/lint/size/build/diff check PASS。2026-11-24、ユーザー報告によるrepo直下`dist/` reload/F5後のC47主要正常系は部分PASS。詳細は下記。未受入項目は専用手順と最終チェックリストに記録する。
 - 2026-11-24のC46ユーザー実機観測：10:00:42 JSTに回答完了検出、Bridge候補2件、コード装飾付き対象IDの本文照合1件、明示対象1件だけの監視登録。対照候補は未登録。対象終了後はA実行中0、B監視0、設定内監視0、C通知1。これはC46基本正常経路のPASSで、C46全項目やC38/C45全体のPASSではない。
 - C38はC46前後でA件数2→0を表示した部分観測。Aの独立手動更新有無、live schema、mode・target・失敗時の表示等は未確認。C45は対象watchの終了後にB/設定が0、C通知1となった部分観測。技術情報内のnotification identityは直接照合しておらず、厳密poll周期、音声、異常系、worker復旧等は未確認。2026-11-23に記録したC45のFAILと修正経路は履歴として保持し、今回の限定観測を専用C45再受入へ拡張しない。
-- C47主要正常系は部分PASSだが、OFF/過去event、watch起点、選択範囲、近接/同時完了、owner/SPA、音声/mute、IME/添付、取得失敗などは未受入。Issue #22/C50で最終回答templateを実装し、Chrome受入は別途NOT_RUNで記録する。現状を「メインパネルv2全体受入済み」やmerge-readyとは扱わず、残項目は`docs/panel-main-v2-final-acceptance-checklist.md`を参照する。
+- C47主要正常系は部分PASSだが、OFF/過去event、watch起点、選択範囲、近接/同時完了、owner/SPA、音声/mute、IME/添付、取得失敗などは未受入。Issue #22/C50で最終回答templateを実装し、2026-11-25のユーザー実機報告で自動反映の主要正常系をPASSとして記録。詳細未受入項目は専用手順と最終チェックリストを参照する。現状を「メインパネルv2全体受入済み」やmerge-readyとは扱わず、残項目は`docs/panel-main-v2-final-acceptance-checklist.md`を参照する。
 - Issue #25/C55: 共通MCP read serviceと5秒/30秒running snapshot更新を実装。自動テスト887/887、typecheck/lint/build、サイズ上限、差分チェックはPASS。Chrome実機はC55専用手順の`NOT_RUN`を維持し、C48〜C54の既存受入結果は変更していない。周期・TTL・backoffと残課題はIssue #25実装計画およびC55受入手順を参照。
+- 2026-11-25 15:56 JSTのユーザー実機報告に基づき、Issue #20/C52「複数デバイス同時再生」、Issue #21/C51「Codex専用終了音」、Issue #22/C50「自動反映テンプレート」の主要機能をPASSとして記録。個別デバイス切断・部分失敗・移行/import・export・mute・音源削除・境界・異常系等は報告されておらず、各専用受入記録と最終チェックリストでは詳細項目を`NOT_RUN`のまま維持する。既存の個別PASSは保持する。
 
 ### 残工程の推奨順
 
 1. **C47の未受入項目**：OFF・ON前event/reload、watch起点（手動/C46自動）、選択範囲、近接/同時完了、owner tab・別会話・SPA切替、音声OFF/mute、IME/添付/editor不可、pending/取得失敗と手動fallbackを専用手順どおり確認する。主要正常系の部分PASSと未確認項目は`docs/c47-terminal-answer-auto-reflect-acceptance.md`に記録。
 2. **C45/C38の未完了受入**：C45はterminal event identity・自動解除・前面約5秒監視を専用ケースで確認。C38はA一覧/件数更新、live schema、実行中/通常mode、Bridge未対応・取得失敗を確認する。今回の限定表示を全体PASSへ広げない。
 3. **その他の手動受入**：修正後未確認のC12/C29/C30、C31–C36、C44、C46の残ケース、C04、C06–C11、C13–C28、C39–C43をチェックリストの優先度に沿って実施。実測した個別ケースだけ更新し、未実施は`NOT_RUN`のままにする。
-4. **C52複数出力実機受入**：実装・自動検証は完了したがChrome手動項目は未実施。`docs/c52-multiple-output-devices-acceptance.md`の手順に沿って確認する。
+4. **C52複数出力の残項目**：複数デバイス同時再生の主要機能はユーザー報告でPASS。個別切断、部分/全失敗、既定出力、旧設定、mute/owner、JSON範囲等は未報告のままなので、必要な詳細ケースを`docs/c52-multiple-output-devices-acceptance.md`で確認する。
 5. **merge準備**：行別実機結果と残制約をレビューし、既知FAILの修正後受入とPhase 4 event総保持上限等の判断を整理してmerge可否を決める。C47/C52のChrome受入前は全体merge-readyとしない。この依頼ではmergeしない。
 
 ## 完了記録
