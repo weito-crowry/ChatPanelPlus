@@ -9,6 +9,7 @@
 - Issue #25/C55: 共通MCP read serviceと5秒/30秒running snapshot更新を実装。自動テスト887/887、typecheck/lint/build、サイズ上限、差分チェックはPASS。Chrome実機はC55専用手順の`NOT_RUN`を維持し、C48〜C54の既存受入結果は変更していない。周期・TTL・backoffと残課題はIssue #25実装計画およびC55受入手順を参照。
 - 2026-11-25 15:56 JSTのユーザー実機報告に基づき、Issue #20/C52「複数デバイス同時再生」、Issue #21/C51「Codex専用終了音」、Issue #22/C50「自動反映テンプレート」の主要機能をPASSとして記録。個別デバイス切断・部分失敗・移行/import・export・mute・音源削除・境界・異常系等は報告されておらず、各専用受入記録と最終チェックリストでは詳細項目を`NOT_RUN`のまま維持する。既存の個別PASSは保持する。
 - 2026-11-25の統合方針更新：branch一覧・merge履歴・Phase 0監査文書で既存の開発統合先`main`を確認。ユーザー承認により、残る実機確認を`NOT_RUN`のまま保持してローカル統合する。これは全体受入完了を意味しない。最新の個別状況は最終チェックリストの「統合時点の受入メモ」を参照する。
+- 2026-11-25、Issue #26/C56の主要正常経路をユーザー報告で部分PASSとして記録。新規Codexスレッドでマージを起動し、ChatGPT回答にはTurn IDだけを記載。ユーザーが監視開始を明示確認し、終了時にテンプレート付き最終回答が同じ会話へ反映された。異常系はNOT_RUN。Issue #23〜25の経過観察方針とC53〜C55の既存判定は変更しない。詳細は`docs/c56-live-turn-auto-watch-acceptance.md`と最終チェックリストC56行を参照。
 
 ### 残工程の推奨順
 
@@ -184,3 +185,10 @@
 - 同じ会話のlive owner、確認応答待ち、session storage errorをUIで区別する。pendingの新規terminal eventだけを現在ownerへidentity-onlyで送信し、requestedを保存してから送る。結果不明は再送せず、owner不在・mute不明時にskipした終端音を遅れて鳴らさない。
 - Chrome再起動時のtab ID変化は原因候補のままで、今回も原因確定の実測はしていない。C54手順は[`docs/c54-session-owner-rebind-acceptance.md`](c54-session-owner-rebind-acceptance.md)、全ケース`NOT_RUN`。C48〜C53の既存観測行は変更せず、C53未報告項目も`NOT_RUN`を維持する。
 - 自動検証：`pnpm test` 872/872 PASS、focused owner/delivery/handler/UI suite 39/39 PASS、`pnpm typecheck` PASS、`pnpm lint` PASS（check:size 301 files、各500行/32768 bytes以下）、独立`pnpm build` PASS、commit前の`git diff --check` PASS。Chrome reload/F5・browser restart・同一会話複数tabは未実施。
+
+## Issue #26 / C56 Live Turn ID単独一致（2026-11-25）
+
+- ユーザー報告では、新規Codexスレッドでマージを起動し、ChatGPT回答にThread IDを含めずTurn IDだけを記載した。ユーザーが監視開始を明示確認し、タスク終了時のテンプレート付き最終回答が起動元の同じ会話へ反映された。このTurn ID単独の監視開始と最終回答反映をC56主要正常経路の部分PASSとして記録する。
+- 非live/古いTurn ID、thread対応不一致、登録直前のTurn変更、partial/URL/alias衝突、別target、Bridge失敗、重複/競合、owner/route/connection変更などは未確認のため`NOT_RUN`。C56全体の受入完了とはしない。
+- 既存報告の自動検証は`pnpm test` 901件、`pnpm typecheck`、`pnpm lint`、`pnpm build`がPASS。本作業では再実行していない。詳細は`docs/c56-live-turn-auto-watch-acceptance.md`。
+- Issue #23〜25の経過観察方針を維持し、C53〜C55の既存受入判定は変更しない。
